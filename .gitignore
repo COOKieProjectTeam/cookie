@@ -1,0 +1,27 @@
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.tfvars
+!*.tfvars.example
+
+# Go
+bin/
+coverage.out
+.cache/
+
+# Gradle / Kotlin
+.gradle/
+**/build/
+local.properties
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl

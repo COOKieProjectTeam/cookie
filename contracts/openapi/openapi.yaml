@@ -1,0 +1,25 @@
+openapi: 3.1.0
+info:
+  title: COOKie API
+  version: 0.1.0
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      summary: Проверить доступность API
+      responses:
+        "200":
+          description: API доступен
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+components:
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
