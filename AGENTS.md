@@ -16,6 +16,10 @@ repository. Disposable integrations belong in `cookie-labs`.
 - Keep changes atomic across API implementation, OpenAPI contract and consumers.
 - OpenAPI is the source for generated Kotlin server transport interfaces/models
   and HTTP clients. Never hand-edit generated sources or duplicate their DTOs.
+- Generate one internal Kotlin/JVM client module per callee. A caller may depend
+  on it only when the edge is declared in `docs/architecture/model/sync-calls.yaml`.
+- Internal operations require authenticated workload identity and a callee-owned
+  operation allowlist; IP, DNS and caller-controlled headers never prove identity.
 - Keep business handlers handwritten behind generated transport interfaces.
 - Every deployable backend component owns its own liveness/readiness endpoints;
   the domain Health Data Service does not own operational probes.

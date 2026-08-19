@@ -8,6 +8,11 @@
   regenerate instead.
 - Generated server code stops at the transport boundary; domain use cases and
   handler implementations remain handwritten.
+- Internal OpenAPI contracts are owned by the callee and generate one shared
+  Kotlin/JVM client module per callee. Do not create aggregate or per-caller
+  implementations.
+- Every internal operation declares workload authentication, a stable permission
+  and user-context mode, and is backed by callee policy plus `sync-calls.yaml`.
 - The `health` tag belongs to Health Data Service domain operations. Operational
   liveness/readiness use the `system` tag and `runtime.yaml`.
 - Mark breaking changes explicitly in the pull request and coordinate client

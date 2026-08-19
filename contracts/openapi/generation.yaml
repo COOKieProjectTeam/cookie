@@ -3,7 +3,7 @@ status: accepted
 source_contracts:
   public: contracts/openapi/openapi.yaml
   runtime: contracts/openapi/runtime.yaml
-  internal_service_contracts: TBD
+  internal_service_contracts: contracts/openapi/internal/{service-id}.yaml
 
 generator:
   product: TBD
@@ -19,6 +19,9 @@ rules:
   server_business_logic_generation: forbidden
   stable_unique_operation_ids: required
   public_tag_owner_source: docs/architecture/model/services.yaml
+  internal_contract_owner: callee_service
+  internal_client_granularity: per_callee
+  aggregate_internal_client: forbidden
 
 targets:
   - id: kotlin_server_transport
@@ -48,14 +51,19 @@ targets:
     source: internal_service_contracts
     language: kotlin
     runtime: jvm
-    output: per_caller_build_directory
+    output: clients/{service-id}/build/generated/openapi
+    module_granularity: one_per_callee
     allowed_dependencies: docs/architecture/model/sync-calls.yaml
-    blocked_by: internal_service_contracts
+    access_policy: services/{service-id}/service.yaml
+    blocked_by: kotlin_backend_framework_decision
 
 ci:
   validate_openapi: required
   validate_local_refs: required
   validate_unique_operation_ids: required
   validate_tag_ownership: required
+  validate_internal_permissions: required_after_first_internal_contract
+  validate_internal_callers: required_after_first_internal_contract
+  validate_client_dependencies_against_sync_calls: required_after_gradle_bootstrap
   compile_generated_sources: required_after_gradle_bootstrap
   regeneration_diff_check: required_after_generator_selection

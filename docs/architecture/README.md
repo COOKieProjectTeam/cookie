@@ -13,7 +13,7 @@
 
 Если Miro и Git расходятся, нельзя молча выбирать одну версию: создаётся ADR или
 атомарное изменение модели и доски. Пользовательские решения от 2026-08-19,
-зафиксированные в ADR 0003/0004/0005/0006, имеют приоритет над более старым
+зафиксированные в ADR 0003/0004/0005/0006/0007, имеют приоритет над более старым
 содержимым доски.
 
 ## Reading order for an LLM
@@ -23,11 +23,12 @@
 3. `model/events.yaml` — event envelope и каталог сообщений.
 4. `model/sync-calls.yaml` — разрешённые синхронные зависимости.
 5. `http-contracts.md` — OpenAPI ownership и генерация transport-кода.
-6. `messaging.md` — точная семантика outbox/inbox.
-7. `observability.md` — правила наблюдаемости.
-8. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
-9. `miro-snapshot.md` — происхождение модели и найденные расхождения.
-10. `../adr/` — причины принятых решений.
+6. `service-access-control.md` — clients, workload identity и caller policies.
+7. `messaging.md` — точная семантика outbox/inbox.
+8. `observability.md` — правила наблюдаемости.
+9. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
+10. `miro-snapshot.md` — происхождение модели и найденные расхождения.
+11. `../adr/` — причины принятых решений.
 
 ## Non-negotiable invariants
 
@@ -38,12 +39,17 @@
 - Каждый stateful domain service использует transactional outbox и inbox.
 - Доставка at-least-once, поэтому consumers идемпотентны.
 - Синхронный вызов разрешён только если записан в `sync-calls.yaml`.
+- Internal operation доступна только authenticated workload из callee-owned
+  caller allowlist; network location и caller-controlled headers не являются
+  identity.
 - Redis хранит только ephemeral state, перечисленный в `services.yaml`.
 - Grafana — единая точка просмотра telemetry; конкретные data sources пока TBD.
 - Внешний клиент входит через Caddy; агрегированные mobile screens обслуживает
   Mobile BFF.
 - OpenAPI является источником generated server transport interfaces/models и
   HTTP clients; generated code вручную не изменяется.
+- Internal client создаётся один раз на callee в отдельном Gradle module; единый
+  aggregate clients artifact и per-caller реализации запрещены.
 - Kotlin-сервисы создаются через общий template и используют проверяемые build,
   runtime, observability, persistence, messaging и testing conventions.
 - Общая service platform не содержит business models или business services.
