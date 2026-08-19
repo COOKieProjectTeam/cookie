@@ -1,0 +1,161 @@
+schema_version: 1
+model_status: target
+updated_at: 2026-08-19
+source:
+  miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
+
+transport:
+  broker: nats_jetstream
+  guarantee: at_least_once
+  producer_pattern: transactional_outbox
+  consumer_pattern: idempotent_inbox
+  ordering: no global ordering assumption
+  subject_mapping: TBD
+  retry_policy: TBD
+  dead_letter_policy: TBD
+
+envelope:
+  required:
+    event_id: uuid
+    event_type: string
+    event_version: positive_integer
+    occurred_at: rfc3339_utc
+    producer: service_id
+    aggregate_type: string
+    aggregate_id: string
+    payload: object
+  optional:
+    aggregate_version: integer
+    correlation_id: uuid
+    causation_id: uuid
+    trace_id: string
+
+events:
+  - type: account.created
+    version: 1
+    producer: identity
+    consumers: [user, notification]
+    payload: [userId, accountMetadata]
+
+  - type: account.deletion.requested
+    version: 1
+    producer: identity
+    consumers:
+      - user
+      - food_catalog
+      - nutrition
+      - recipe
+      - shopping
+      - health
+      - progress
+      - notification
+      - media
+      - meal_planner
+    payload: [userId]
+
+  - type: account.deletion.completed
+    version: 1
+    producers:
+      - user
+      - food_catalog
+      - nutrition
+      - recipe
+      - shopping
+      - health
+      - progress
+      - notification
+      - media
+      - meal_planner
+    consumers: [identity]
+    payload: [userId, service]
+
+  - type: notification.email.requested
+    version: 1
+    producer: identity
+    consumers: [notification]
+    payload: [recipientEmail, template, code, expiresInMinutes]
+    security_note: payload contains sensitive delivery data and must not be logged
+
+  - type: user.profile.updated
+    version: 1
+    producer: user
+    consumers: [progress, notification]
+    payload: [userId, changedFields]
+
+  - type: user.goal.changed
+    version: 1
+    producer: user
+    consumers: [progress, notification]
+    payload: [userId, nutritionGoalVersion]
+
+  - type: user.goal_override.changed
+    version: 1
+    producer: user
+    consumers: [progress, notification]
+    payload: [userId, localDate, override]
+
+  - type: user.hydration_goal.changed
+    version: 1
+    producer: user
+    consumers: [progress]
+    payload: [userId, targetMl]
+
+  - type: nutrition.meal.created
+    version: 1
+    producer: nutrition
+    consumers: [notification]
+    payload: [mealId, userId, eatenAt, dishes]
+
+  - type: nutrition.meal.updated
+    version: 1
+    producer: nutrition
+    consumers: [notification]
+    payload: [mealId, changedFields]
+
+  - type: nutrition.meal.deleted
+    version: 1
+    producer: nutrition
+    consumers: [notification]
+    payload: [mealId]
+
+  - type: nutrition.day.changed
+    version: 1
+    producer: nutrition
+    consumers: [progress]
+    payload: [userId, localDate, nutritionTotals]
+
+  - type: nutrition.water.changed
+    version: 1
+    producer: nutrition
+    consumers: [progress, notification]
+    payload: [userId, localDate, totalMl]
+
+  - type: recipe.customization.updated
+    version: 1
+    producer: recipe
+    consumers: [shopping]
+    payload: [recipeId, userId, revision, ingredients]
+
+  - type: recipe.customization.deleted
+    version: 1
+    producer: recipe
+    consumers: [shopping]
+    payload: [recipeId, userId]
+
+  - type: health.weight.changed
+    version: 1
+    producer: health
+    consumers: [progress, notification]
+    payload: [userId, valueKg, measuredAt]
+
+  - type: health.activity.changed
+    version: 1
+    producer: health
+    consumers: [progress]
+    payload: [userId, localDate, steps, activeCalories]
+
+  - type: progress.day.updated
+    version: 1
+    producer: progress
+    consumers: [notification]
+    payload: [userId, localDate]

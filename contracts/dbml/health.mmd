@@ -1,0 +1,32 @@
+%% health service schema — derived from health.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  Sources {
+    uuid id PK
+    uuid user_id
+    varchar type
+    varchar device_id
+    timestamptz created_at
+    timestamptz last_sync_at
+  }
+
+  DailyActivitySources {
+    uuid user_id
+    date local_date
+    varchar source
+    integer steps
+    decimal active_calories
+    timestamptz source_updated_at
+    timestamptz received_at
+  }
+
+  WeightMeasurements {
+    uuid id PK
+    uuid user_id
+    decimal value_kg
+    timestamptz measured_at
+    varchar source
+    varchar external_id
+    timestamptz created_at
+    timestamptz updated_at
+  }

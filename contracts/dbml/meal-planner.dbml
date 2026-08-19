@@ -1,0 +1,51 @@
+// COOKie — meal planner service database schema
+//
+// This file contains only tables owned by the meal planner service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table jobs as Jobs {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  from_date date [not null]
+  to_date date [not null]
+  status varchar [not null, note: 'PENDING | RUNNING | COMPLETED | FAILED']
+  progress decimal(4,3) [null]
+  meal_plan_id uuid [null, note: 'logical ref -> meal_plans.id after successful generation']
+  created_at timestamptz [not null]
+  started_at timestamptz [null]
+  completed_at timestamptz [null]
+  error_code varchar [null]
+
+  Note: 'Service: Meal Planner'
+}
+
+Table plans as Plans {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  from_date date [not null]
+  to_date date [not null]
+  created_at timestamptz [not null]
+  algorithm_version varchar [not null]
+
+  Note: 'Service: Meal Planner'
+}
+
+Table plan_days as PlanDays {
+  id uuid [pk]
+  meal_plan_id uuid [not null, ref: > Plans.id]
+  local_date date [not null]
+
+  Note: 'Service: Meal Planner'
+}
+
+Table plan_items as PlanItems {
+  id uuid [pk]
+  meal_plan_day_id uuid [not null, ref: > PlanDays.id]
+  meal_type varchar [not null, note: 'BREAKFAST | LUNCH | DINNER | SNACK']
+  recipe_id uuid [not null, note: 'logical ref -> Recipe.recipes.id']
+  recipe_version integer [not null]
+  servings decimal(6,2) [not null]
+  position integer [not null]
+
+  Note: 'Service: Meal Planner'
+}

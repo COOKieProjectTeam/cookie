@@ -1,0 +1,72 @@
+%% user service schema — derived from user.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  Profiles {
+    uuid user_id PK
+    varchar sex
+    date birth_date
+    decimal height_cm
+    varchar activity_level
+    varchar timezone
+    varchar locale
+    boolean onboarding_completed
+    timestamptz created_at
+    timestamptz updated_at
+    bigint version
+  }
+
+  NutritionGoalVersions {
+    uuid id PK
+    uuid user_id
+    date effective_from
+    decimal target_weight_kg
+    decimal target_weight_change_per_week
+    decimal calorie_target
+    decimal protein_g
+    decimal fat_g
+    decimal carbs_g
+    decimal fiber_g
+    varchar source
+    timestamptz created_at
+  }
+
+  HydrationGoalVersions {
+    uuid id PK
+    uuid user_id
+    date effective_from
+    integer target_ml
+    varchar source
+    timestamptz created_at
+  }
+
+  DietPreferences {
+    uuid user_id
+    varchar diet_type
+  }
+
+  Allergies {
+    uuid user_id
+    varchar allergen
+  }
+
+  DailyGoalOverrides {
+    uuid id PK
+    uuid user_id
+    date local_date
+    decimal calorie_target
+    decimal protein_g
+    decimal fat_g
+    decimal carbs_g
+    decimal fiber_g
+    boolean unlimited_calories
+    varchar type
+    date cheat_month
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  Profiles ||--o{ NutritionGoalVersions : "user_id"
+  Profiles ||--o{ HydrationGoalVersions : "user_id"
+  Profiles ||--o{ DietPreferences : "user_id"
+  Profiles ||--o{ Allergies : "user_id"
+  Profiles ||--o{ DailyGoalOverrides : "user_id"

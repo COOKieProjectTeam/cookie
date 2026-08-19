@@ -1,0 +1,259 @@
+schema_version: 1
+model_status: target
+updated_at: 2026-08-19
+source:
+  miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
+  authority: docs/architecture/README.md
+
+defaults:
+  backend_runtime: kotlin_jvm
+  backend_framework: TBD
+  jdk_version: TBD
+  state_store: postgresql
+  event_bus: nats_jetstream
+  delivery_semantics: at_least_once
+  transactional_outbox: required
+  idempotent_inbox: required
+  database_access: owner_only
+
+infrastructure:
+  edge_gateway:
+    product: caddy
+  relational_database:
+    product: postgresql
+    rule: each stateful domain service owns an isolated database or schema
+    deployment_topology: TBD
+  event_bus:
+    product: nats_jetstream
+    stream_topology: TBD
+  ephemeral_store:
+    product: redis
+    rule: not a system of record; only declared uses are allowed
+  observability_ui:
+    product: grafana
+    metrics_backend: TBD
+    logs_backend: TBD
+    traces_backend: TBD
+  object_storage:
+    protocol: s3_compatible
+    product: TBD
+
+services:
+  - id: api_gateway
+    name: Caddy API Gateway
+    kind: edge
+    runtime: caddy
+    stateful: false
+    purpose: TLS termination, routing and edge rate limiting
+    redis:
+      - keyspace: rate_limit
+        data: short-lived counters by IP, account and route
+    inbound: [mobile_client]
+    outbound:
+      - mobile_bff
+      - identity
+      - user
+      - food_catalog
+      - nutrition
+      - recipe
+      - shopping
+      - health
+      - media
+      - meal_planner
+
+  - id: mobile_bff
+    name: Mobile BFF
+    kind: backend_for_frontend
+    runtime: kotlin_jvm
+    stateful: false
+    purpose: aggregate domain APIs into mobile screen responses such as /today
+    synchronous_dependencies: [user, progress, recipe, nutrition]
+
+  - id: identity
+    name: Identity Service
+    kind: domain_service
+    stateful: true
+    purpose: accounts, credentials, access/refresh sessions and OAuth identities
+    dbml: contracts/dbml/identity.dbml
+    publishes:
+      - account.created
+      - account.deletion.requested
+      - notification.email.requested
+    consumes:
+      - account.deletion.completed
+    external_dependencies: [yandex_id, vk_id]
+
+  - id: user
+    name: User Service
+    kind: domain_service
+    stateful: true
+    purpose: profile, onboarding, nutrition goals, allergies, diet and goal overrides
+    dbml: contracts/dbml/user.dbml
+    publishes:
+      - user.profile.updated
+      - user.goal.changed
+      - user.goal_override.changed
+      - user.hydration_goal.changed
+      - account.deletion.completed
+    consumes:
+      - account.created
+      - account.deletion.requested
+
+  - id: food_catalog
+    name: Food Catalog Service
+    kind: domain_service
+    stateful: true
+    purpose: custom foods and proxy search/barcode lookup in Open Food Facts
+    dbml: contracts/dbml/food-catalog.dbml
+    publishes: [account.deletion.completed]
+    consumes: [account.deletion.requested]
+    synchronous_dependencies: [open_food_facts]
+    redis:
+      - keyspace: off_search
+        data: Open Food Facts search response cache
+        ttl: 10m
+      - keyspace: off_barcode
+        data: Open Food Facts barcode response cache
+        ttl: 1h
+
+  - id: nutrition
+    name: Nutrition Service
+    kind: domain_service
+    stateful: true
+    purpose: food diary, meals, dishes, food entries, saved dishes and water
+    dbml: contracts/dbml/nutrition.dbml
+    publishes:
+      - nutrition.meal.created
+      - nutrition.meal.updated
+      - nutrition.meal.deleted
+      - nutrition.day.changed
+      - nutrition.water.changed
+      - account.deletion.completed
+    consumes: [account.deletion.requested]
+    synchronous_dependencies: [recipe, media]
+
+  - id: recipe
+    name: Recipe Service
+    kind: domain_service
+    stateful: true
+    purpose: recipes, versions, personal customizations, favorites and cooking history
+    dbml: contracts/dbml/recipe.dbml
+    publishes:
+      - recipe.customization.updated
+      - recipe.customization.deleted
+      - account.deletion.completed
+    consumes: [account.deletion.requested]
+    synchronous_dependencies: [media]
+
+  - id: shopping
+    name: Shopping Service
+    kind: domain_service
+    stateful: true
+    purpose: recipe cart, ingredient snapshots and shopping list
+    dbml: contracts/dbml/shopping.dbml
+    publishes: [account.deletion.completed]
+    consumes:
+      - recipe.customization.updated
+      - recipe.customization.deleted
+      - account.deletion.requested
+    synchronous_dependencies: [recipe]
+
+  - id: health
+    name: Health Service
+    kind: domain_service
+    stateful: true
+    purpose: activity and weight synchronization from platform health providers
+    dbml: contracts/dbml/health.dbml
+    publishes:
+      - health.activity.changed
+      - health.weight.changed
+      - account.deletion.completed
+    consumes: [account.deletion.requested]
+    external_dependencies: [apple_healthkit, android_health_connect]
+
+  - id: progress
+    name: Progress Service
+    kind: domain_service
+    stateful: true
+    purpose: event-driven daily nutrition and health progress read models
+    dbml: contracts/dbml/progress.dbml
+    publishes:
+      - progress.day.updated
+      - account.deletion.completed
+    consumes:
+      - account.deletion.requested
+      - nutrition.day.changed
+      - nutrition.water.changed
+      - health.activity.changed
+      - health.weight.changed
+      - user.profile.updated
+      - user.goal.changed
+      - user.goal_override.changed
+      - user.hydration_goal.changed
+
+  - id: notification
+    name: Notification Service
+    kind: domain_service
+    stateful: true
+    purpose: push, email, reminder scheduling and delivery state
+    dbml: contracts/dbml/notification.dbml
+    publishes: [account.deletion.completed]
+    consumes:
+      - notification.email.requested
+      - account.created
+      - account.deletion.requested
+      - nutrition.meal.created
+      - nutrition.meal.updated
+      - nutrition.meal.deleted
+      - nutrition.water.changed
+      - health.weight.changed
+      - user.profile.updated
+      - user.goal.changed
+      - user.goal_override.changed
+      - progress.day.updated
+    redis:
+      - keyspace: reminder_deadlines
+        data: ephemeral queue/index of due reminder deadlines
+    external_dependencies: [apns, fcm, smtp]
+
+  - id: media
+    name: Media Service
+    kind: domain_service
+    stateful: true
+    purpose: media metadata, ownership, lifecycle and pre-signed object access
+    dbml: contracts/dbml/media.dbml
+    publishes: [account.deletion.completed]
+    consumes: [account.deletion.requested]
+    synchronous_dependencies: [object_storage]
+
+  - id: meal_planner
+    name: Meal Planner Service
+    kind: domain_service
+    stateful: true
+    purpose: asynchronous generation and execution of 14-day meal plans
+    dbml: contracts/dbml/meal-planner.dbml
+    publishes: [account.deletion.completed]
+    consumes: [account.deletion.requested]
+    synchronous_dependencies: [user, recipe, shopping]
+
+external_systems:
+  - id: mobile_client
+    name: Kotlin Multiplatform mobile client
+  - id: open_food_facts
+    name: Open Food Facts
+  - id: object_storage
+    name: S3-compatible object storage
+  - id: yandex_id
+    name: Yandex ID
+  - id: vk_id
+    name: VK ID
+  - id: apple_healthkit
+    name: Apple HealthKit
+  - id: android_health_connect
+    name: Android Health Connect
+  - id: apns
+    name: Apple Push Notification service
+  - id: fcm
+    name: Firebase Cloud Messaging
+  - id: smtp
+    name: SMTP provider

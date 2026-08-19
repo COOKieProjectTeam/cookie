@@ -1,0 +1,43 @@
+// COOKie — progress service database schema
+//
+// This file contains only tables owned by the progress service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table daily_progress as DailyProgress {
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  local_date date [not null]
+  calories_consumed decimal(10,3)
+  protein_g decimal(10,3)
+  fat_g decimal(10,3)
+  carbs_g decimal(10,3)
+  fiber_g decimal(10,3)
+  water_ml integer
+  steps integer
+  active_calories decimal(10,3)
+  calorie_target decimal(10,3)
+  protein_target_g decimal(10,3)
+  fat_target_g decimal(10,3)
+  carbs_target_g decimal(10,3)
+  fiber_target_g decimal(10,3)
+  water_target_ml integer
+  unlimited_calories boolean [not null, default: false]
+  weight_kg decimal(6,2) [null]
+  food_logged boolean [not null, default: false]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, local_date) [pk]
+  }
+
+  Note: 'Service: Progress. Built entirely from NATS events (nutrition.*, health.*, user.*) — never queries other service DBs directly'
+}
+
+Table user_streaks as UserStreaks {
+  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
+  current_streak integer [not null, default: 0]
+  longest_streak integer [not null, default: 0]
+  last_logged_date date [null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Progress'
+}

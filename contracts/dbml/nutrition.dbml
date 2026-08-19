@@ -1,0 +1,126 @@
+// COOKie — nutrition service database schema
+//
+// This file contains only tables owned by the nutrition service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table meals as Meals {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  local_date date [not null]
+  eaten_at timestamptz [not null]
+  timezone varchar [not null]
+  client_generated_id uuid [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  indexes {
+    (user_id, client_generated_id) [unique]
+    (user_id, local_date) [name: 'idx_meals_user_date']
+    (user_id, eaten_at) [name: 'idx_meals_user_eaten_at']
+  }
+
+  Note: 'Service: Nutrition'
+}
+
+Table dishes as Dishes {
+  id uuid [pk]
+  meal_id uuid [not null, ref: > Meals.id]
+  name varchar [null]
+  source_type varchar [not null, note: 'MANUAL | RECIPE | SAVED_DISH | AI']
+  source_id uuid [null, note: 'logical ref -> Recipe.recipes.id or Nutrition.saved_dishes.id, no FK']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: Nutrition'
+}
+
+Table dish_media as DishMedia {
+  dish_id uuid [not null, ref: > Dishes.id]
+  media_id uuid [not null, note: 'logical ref -> Media.media_objects.id']
+  position integer [not null]
+
+  indexes {
+    (dish_id, media_id) [pk]
+  }
+
+  Note: 'Service: Nutrition'
+}
+
+Table food_entries as FoodEntries {
+  id uuid [pk]
+  dish_id uuid [not null, ref: > Dishes.id]
+  source_type varchar [not null, note: 'OPEN_FOOD_FACTS | CUSTOM | MANUAL | AI; provenance only, never resolved during diary writes']
+  source_external_id varchar [null]
+  name_snapshot varchar [not null]
+  brand_snapshot varchar [null]
+  base_unit varchar [not null, note: 'G | ML']
+  amount_base decimal(12,3) [not null]
+  display_unit varchar [not null, note: 'G | ML | PIECE']
+  display_quantity decimal(12,3) [not null]
+  piece_base_amount_snapshot decimal(10,3) [null]
+  calories_per_100_snapshot decimal(10,3) [null]
+  protein_per_100_snapshot decimal(10,3) [null]
+  fat_per_100_snapshot decimal(10,3) [null]
+  carbs_per_100_snapshot decimal(10,3) [null]
+  fiber_per_100_snapshot decimal(10,3) [null]
+  calories_total decimal(10,3) [not null]
+  protein_total decimal(10,3) [null]
+  fat_total decimal(10,3) [null]
+  carbs_total decimal(10,3) [null]
+  fiber_total decimal(10,3) [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: Nutrition. Client-provided editable snapshot; Nutrition validates and calculates totals locally. Future OFF/CustomFood/AI updates never mutate the entry and diary writes do not call Food Catalog'
+}
+
+Table saved_dishes as SavedDishes {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  name varchar [not null]
+  media_id uuid [null, note: 'logical ref -> Media.media_objects.id']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: Nutrition'
+}
+
+Table saved_dish_items as SavedDishItems {
+  id uuid [pk]
+  saved_dish_id uuid [not null, ref: > SavedDishes.id]
+  name_snapshot varchar [not null]
+  source_type varchar [not null]
+  source_id uuid [null, note: 'logical ref -> Food Catalog/Recipe, no FK']
+  base_unit varchar [not null]
+  amount_base decimal(12,3) [not null]
+  calories_per_100_snapshot decimal(10,3) [null]
+  protein_per_100_snapshot decimal(10,3) [null]
+  fat_per_100_snapshot decimal(10,3) [null]
+  carbs_per_100_snapshot decimal(10,3) [null]
+  fiber_per_100_snapshot decimal(10,3) [null]
+  position integer [not null]
+
+  Note: 'Service: Nutrition. Snapshot fields make saved-dish previews stable and avoid cross-service reads'
+}
+
+Table water_entries as WaterEntries {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  amount_ml integer [not null]
+  consumed_at timestamptz [not null]
+  local_date date [not null]
+  client_generated_id uuid [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, local_date) [name: 'idx_water_user_date']
+    (user_id, client_generated_id) [unique, note: 'Client-generated id is required by the API and makes POST idempotent']
+  }
+
+  Note: 'Service: Nutrition'
+}

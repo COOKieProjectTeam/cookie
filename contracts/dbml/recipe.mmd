@@ -1,0 +1,141 @@
+%% recipe service schema — derived from recipe.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  Ingredients {
+    uuid id PK
+    varchar name
+    varchar base_unit
+    decimal calories_per_100
+    decimal protein_per_100
+    decimal fat_per_100
+    decimal carbs_per_100
+    decimal fiber_per_100
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  IngredientAllergens {
+    uuid ingredient_id
+    varchar allergen
+  }
+
+  Recipes {
+    uuid id PK
+    varchar status
+    integer current_version
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  Versions {
+    uuid id PK
+    uuid recipe_id
+    integer version_number
+    varchar title
+    text description
+    decimal default_servings
+    integer prep_seconds
+    integer cook_seconds
+    varchar difficulty
+    timestamptz published_at
+  }
+
+  VersionNutrition {
+    uuid recipe_version_id PK
+    decimal calories_total
+    decimal protein_total
+    decimal fat_total
+    decimal carbs_total
+    decimal fiber_total
+    decimal calories_per_serving
+    decimal protein_per_serving
+    decimal fat_per_serving
+    decimal carbs_per_serving
+    decimal fiber_per_serving
+  }
+
+  VersionPhotos {
+    uuid recipe_version_id
+    uuid media_id
+    integer position
+  }
+
+  VersionIngredients {
+    uuid id PK
+    uuid recipe_version_id
+    uuid ingredient_id
+    decimal amount_base
+    integer position
+  }
+
+  Steps {
+    uuid id PK
+    uuid recipe_version_id
+    integer position
+    text text
+    integer duration_seconds
+  }
+
+  Tags {
+    uuid recipe_version_id
+    varchar tag_type
+    varchar tag_value
+  }
+
+  UserCustomizations {
+    uuid id PK
+    uuid user_id
+    uuid recipe_id
+    uuid base_recipe_version_id
+    bigint revision
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  CustomizationIngredients {
+    uuid customization_id
+    uuid ingredient_id
+    decimal amount_base
+    integer position
+  }
+
+  Favorites {
+    uuid user_id
+    uuid recipe_id
+    timestamptz created_at
+  }
+
+  Feedback {
+    uuid user_id
+    uuid recipe_id
+    varchar feedback
+    timestamptz updated_at
+  }
+
+  CookingSessions {
+    uuid id PK
+    uuid user_id
+    uuid recipe_id
+    integer recipe_version
+    bigint customization_revision
+    decimal servings
+    varchar status
+    timestamptz started_at
+    timestamptz completed_at
+  }
+
+  Ingredients ||--o{ IngredientAllergens : "ingredient_id"
+  Recipes ||--o{ Versions : "recipe_id"
+  Versions ||--|| VersionNutrition : "recipe_version_id"
+  Versions ||--o{ VersionPhotos : "recipe_version_id"
+  Versions ||--o{ VersionIngredients : "recipe_version_id"
+  Ingredients ||--o{ VersionIngredients : "ingredient_id"
+  Versions ||--o{ Steps : "recipe_version_id"
+  Versions ||--o{ Tags : "recipe_version_id"
+  Recipes ||--o{ UserCustomizations : "recipe_id"
+  Versions ||--o{ UserCustomizations : "base_recipe_version_id"
+  UserCustomizations ||--o{ CustomizationIngredients : "customization_id"
+  Ingredients ||--o{ CustomizationIngredients : "ingredient_id"
+  Recipes ||--o{ Favorites : "recipe_id"
+  Recipes ||--o{ Feedback : "recipe_id"
+  Recipes ||--o{ CookingSessions : "recipe_id"

@@ -1,0 +1,63 @@
+%% identity service schema — derived from identity.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  Accounts {
+    uuid id PK
+    varchar status
+    timestamptz created_at
+    timestamptz deletion_requested_at
+    timestamptz deleted_at
+  }
+
+  OAuthIdentities {
+    uuid id PK
+    uuid account_id
+    varchar provider
+    varchar provider_subject
+    varchar email
+    timestamptz created_at
+  }
+
+  EmailCredentials {
+    uuid account_id PK
+    varchar email UK
+    varchar password_hash
+    timestamptz email_verified_at
+    timestamptz password_changed_at
+    integer failed_login_count
+    timestamptz locked_until
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  AuthActionTokens {
+    uuid id PK
+    uuid account_id
+    varchar purpose
+    varchar token_hash UK
+    timestamptz expires_at
+    timestamptz consumed_at
+    timestamptz revoked_at
+    timestamptz created_at
+  }
+
+  RefreshSessions {
+    uuid id PK
+    uuid account_id
+    uuid family_id
+    varchar token_hash UK
+    varchar device_id
+    uuid replaced_by_session_id
+    timestamptz created_at
+    timestamptz expires_at
+    timestamptz last_used_at
+    timestamptz revoked_at
+    varchar revoke_reason
+    timestamptz reuse_detected_at
+  }
+
+  Accounts ||--o{ OAuthIdentities : "account_id"
+  Accounts ||--o| EmailCredentials : "account_id"
+  Accounts ||--o{ AuthActionTokens : "account_id"
+  Accounts ||--o{ RefreshSessions : "account_id"
+  RefreshSessions o|--o| RefreshSessions : "replaced_by_session_id"

@@ -1,0 +1,84 @@
+// COOKie — identity service database schema
+//
+// This file contains only tables owned by the identity service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table accounts as Accounts {
+  id uuid [pk]
+  status varchar [not null, note: 'PENDING_VERIFICATION | ACTIVE | DELETING | DELETED; account.created is emitted only on transition to ACTIVE']
+  created_at timestamptz [not null]
+  deletion_requested_at timestamptz [null]
+  deleted_at timestamptz [null]
+
+  Note: 'Service: Identity'
+}
+
+Table oauth_identities as OAuthIdentities {
+  id uuid [pk]
+  account_id uuid [not null, ref: > Accounts.id]
+  provider varchar [not null, note: 'YANDEX | VK | MAIL']
+  provider_subject varchar [not null]
+  email varchar [null]
+  created_at timestamptz [not null]
+
+  indexes {
+    (provider, provider_subject) [unique]
+  }
+
+  Note: 'Service: Identity'
+}
+
+Table email_credentials as EmailCredentials {
+  account_id uuid [pk, ref: - Accounts.id]
+  email varchar [not null, unique, note: 'canonical normalized email; application compares the canonical form']
+  password_hash varchar [not null, note: 'Argon2id encoded hash containing salt and parameters; plaintext is never stored']
+  email_verified_at timestamptz [null]
+  password_changed_at timestamptz [not null]
+  failed_login_count integer [not null, default: 0]
+  locked_until timestamptz [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Identity. One email/password credential per account; OAuth-only accounts have no row'
+}
+
+Table auth_action_tokens as AuthActionTokens {
+  id uuid [pk]
+  account_id uuid [not null, ref: > Accounts.id]
+  purpose varchar [not null, note: 'EMAIL_VERIFICATION | PASSWORD_RESET']
+  token_hash varchar [not null, unique, note: 'hash of a cryptographically random single-use token']
+  expires_at timestamptz [not null]
+  consumed_at timestamptz [null]
+  revoked_at timestamptz [null]
+  created_at timestamptz [not null]
+
+  indexes {
+    (account_id, purpose, created_at) [name: 'idx_auth_action_tokens_account_purpose']
+    (expires_at) [name: 'idx_auth_action_tokens_expires_at']
+  }
+
+  Note: 'Service: Identity. Tokens are short-lived, single-use and persisted in PostgreSQL; Redis is not a source of truth'
+}
+
+Table refresh_sessions as RefreshSessions {
+  id uuid [pk]
+  account_id uuid [not null, ref: > Accounts.id]
+  family_id uuid [not null, note: 'stable id for refresh rotation/replay detection']
+  token_hash varchar [not null, unique, note: 'hash only; raw refresh token exists only on the client']
+  device_id varchar [null]
+  replaced_by_session_id uuid [null, ref: > RefreshSessions.id]
+  created_at timestamptz [not null]
+  expires_at timestamptz [not null]
+  last_used_at timestamptz [null]
+  revoked_at timestamptz [null]
+  revoke_reason varchar [null, note: 'LOGOUT | LOGOUT_ALL | ROTATED | REPLAY_DETECTED | PASSWORD_CHANGED | ACCOUNT_DELETION']
+  reuse_detected_at timestamptz [null]
+
+  indexes {
+    (account_id, revoked_at) [name: 'idx_refresh_sessions_account_active']
+    (family_id) [name: 'idx_refresh_sessions_family']
+    (expires_at) [name: 'idx_refresh_sessions_expires_at']
+  }
+
+  Note: 'Service: Identity. Durable rotation state is kept in PostgreSQL; replay of a rotated token revokes its entire family'
+}

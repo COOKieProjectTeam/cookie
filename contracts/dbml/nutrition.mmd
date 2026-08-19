@@ -1,0 +1,100 @@
+%% nutrition service schema — derived from nutrition.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  Meals {
+    uuid id PK
+    uuid user_id
+    date local_date
+    timestamptz eaten_at
+    varchar timezone
+    uuid client_generated_id
+    timestamptz created_at
+    timestamptz updated_at
+    bigint version
+  }
+
+  Dishes {
+    uuid id PK
+    uuid meal_id
+    varchar name
+    varchar source_type
+    uuid source_id
+    timestamptz created_at
+    timestamptz updated_at
+    bigint version
+  }
+
+  DishMedia {
+    uuid dish_id
+    uuid media_id
+    integer position
+  }
+
+  FoodEntries {
+    uuid id PK
+    uuid dish_id
+    varchar source_type
+    varchar source_external_id
+    varchar name_snapshot
+    varchar brand_snapshot
+    varchar base_unit
+    decimal amount_base
+    varchar display_unit
+    decimal display_quantity
+    decimal piece_base_amount_snapshot
+    decimal calories_per_100_snapshot
+    decimal protein_per_100_snapshot
+    decimal fat_per_100_snapshot
+    decimal carbs_per_100_snapshot
+    decimal fiber_per_100_snapshot
+    decimal calories_total
+    decimal protein_total
+    decimal fat_total
+    decimal carbs_total
+    decimal fiber_total
+    timestamptz created_at
+    timestamptz updated_at
+    bigint version
+  }
+
+  SavedDishes {
+    uuid id PK
+    uuid user_id
+    varchar name
+    uuid media_id
+    timestamptz created_at
+    timestamptz updated_at
+    bigint version
+  }
+
+  SavedDishItems {
+    uuid id PK
+    uuid saved_dish_id
+    varchar name_snapshot
+    varchar source_type
+    uuid source_id
+    varchar base_unit
+    decimal amount_base
+    decimal calories_per_100_snapshot
+    decimal protein_per_100_snapshot
+    decimal fat_per_100_snapshot
+    decimal carbs_per_100_snapshot
+    decimal fiber_per_100_snapshot
+    integer position
+  }
+
+  WaterEntries {
+    uuid id PK
+    uuid user_id
+    integer amount_ml
+    timestamptz consumed_at
+    date local_date
+    uuid client_generated_id
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  Meals ||--o{ Dishes : "meal_id"
+  Dishes ||--o{ DishMedia : "dish_id"
+  Dishes ||--o{ FoodEntries : "dish_id"
+  SavedDishes ||--o{ SavedDishItems : "saved_dish_id"

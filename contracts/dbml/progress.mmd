@@ -1,0 +1,33 @@
+%% progress service schema — derived from progress.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  DailyProgress {
+    uuid user_id
+    date local_date
+    decimal calories_consumed
+    decimal protein_g
+    decimal fat_g
+    decimal carbs_g
+    decimal fiber_g
+    integer water_ml
+    integer steps
+    decimal active_calories
+    decimal calorie_target
+    decimal protein_target_g
+    decimal fat_target_g
+    decimal carbs_target_g
+    decimal fiber_target_g
+    integer water_target_ml
+    boolean unlimited_calories
+    decimal weight_kg
+    boolean food_logged
+    timestamptz updated_at
+  }
+
+  UserStreaks {
+    uuid user_id PK
+    integer current_streak
+    integer longest_streak
+    date last_logged_date
+    timestamptz updated_at
+  }

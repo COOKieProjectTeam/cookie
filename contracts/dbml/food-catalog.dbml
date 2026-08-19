@@ -1,0 +1,33 @@
+// COOKie — food catalog service database schema
+//
+// This file contains only tables owned by the food catalog service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table custom_foods as CustomFoods {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  name varchar [not null]
+  brand varchar [null]
+  base_unit varchar [not null, note: 'G | ML']
+  calories_per_100 decimal(10,3)
+  protein_per_100 decimal(10,3)
+  fat_per_100 decimal(10,3)
+  carbs_per_100 decimal(10,3)
+  fiber_per_100 decimal(10,3)
+  archived boolean [not null, default: false]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: Food Catalog. Open Food Facts data is NOT persisted — Redis cache only (off:search:<hash> TTL 10m, off:barcode:<code> TTL 1h)'
+}
+
+Table custom_food_serving as CustomFoodServing {
+  food_id uuid [pk, ref: - CustomFoods.id]
+  name varchar [not null, default: 'piece']
+  base_amount decimal(10,3) [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Food Catalog'
+}

@@ -1,0 +1,64 @@
+schema_version: 1
+model_status: target
+updated_at: 2026-08-19
+source:
+  miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
+
+rules:
+  - calls not listed here are forbidden until the model is updated
+  - callers must set timeouts and propagate trace context
+  - a synchronous failure must not be hidden by writing another service database
+  - cross-service transactions are forbidden
+
+calls:
+  - caller: mobile_bff
+    callee: user
+    purpose: profile and current goal for /today
+  - caller: mobile_bff
+    callee: progress
+    purpose: daily progress for /today
+  - caller: mobile_bff
+    callee: recipe
+    purpose: recommended recipes for /today
+  - caller: mobile_bff
+    callee: nutrition
+    purpose: daily diary for /today
+
+  - caller: meal_planner
+    callee: shopping
+    purpose: create asynchronous add-to-cart import job and poll its status
+  - caller: meal_planner
+    callee: recipe
+    purpose: retrieve and filter recipe candidates for plan generation
+  - caller: meal_planner
+    callee: user
+    purpose: retrieve current profile, goals, diet and allergies
+
+  - caller: nutrition
+    callee: recipe
+    purpose: resolve a personalized immutable recipe snapshot before creating a dish
+  - caller: nutrition
+    callee: media
+    purpose: validate ownership/readiness and resolve media URLs for dishes
+  - caller: shopping
+    callee: recipe
+    purpose: retrieve recipe version and ingredient snapshot
+  - caller: recipe
+    callee: media
+    purpose: resolve temporary recipe photo URLs
+
+  - caller: food_catalog
+    callee: open_food_facts
+    purpose: product search and barcode lookup; responses are cached in Redis
+  - caller: media
+    callee: object_storage
+    purpose: create pre-signed URLs, verify uploaded object metadata and delete objects
+  - caller: mobile_client
+    callee: object_storage
+    purpose: direct pre-signed PUT/GET without proxying bytes through backend services
+  - caller: notification
+    callees: [apns, fcm]
+    purpose: send push notification
+  - caller: identity
+    callees: [yandex_id, vk_id]
+    purpose: exchange OAuth authorization code and resolve external identity

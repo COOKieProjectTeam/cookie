@@ -1,0 +1,48 @@
+// COOKie — health service database schema
+//
+// This file contains only tables owned by the health service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table sources as Sources {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  type varchar [not null, note: 'APPLE_HEALTH | HEALTH_CONNECT']
+  device_id varchar [null]
+  created_at timestamptz [not null]
+  last_sync_at timestamptz [null]
+
+  Note: 'Service: Health'
+}
+
+Table daily_activity_sources as DailyActivitySources {
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  local_date date [not null]
+  source varchar [not null]
+  steps integer
+  active_calories decimal(10,3)
+  source_updated_at timestamptz [not null]
+  received_at timestamptz [not null]
+
+  indexes {
+    (user_id, local_date, source) [pk]
+  }
+
+  Note: 'Service: Health'
+}
+
+Table weight_measurements as WeightMeasurements {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  value_kg decimal(6,2) [not null]
+  measured_at timestamptz [not null]
+  source varchar [not null, note: 'MANUAL | APPLE_HEALTH']
+  external_id varchar [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, source, external_id) [unique]
+  }
+
+  Note: 'Service: Health'
+}

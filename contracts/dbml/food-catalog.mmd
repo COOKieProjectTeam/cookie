@@ -1,0 +1,29 @@
+%% food-catalog service schema — derived from food-catalog.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  CustomFoods {
+    uuid id PK
+    uuid user_id
+    varchar name
+    varchar brand
+    varchar base_unit
+    decimal calories_per_100
+    decimal protein_per_100
+    decimal fat_per_100
+    decimal carbs_per_100
+    decimal fiber_per_100
+    boolean archived
+    timestamptz created_at
+    timestamptz updated_at
+    bigint version
+  }
+
+  CustomFoodServing {
+    uuid food_id PK
+    varchar name
+    decimal base_amount
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  CustomFoods ||--|| CustomFoodServing : "food_id"

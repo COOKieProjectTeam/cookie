@@ -1,0 +1,179 @@
+// COOKie — recipe service database schema
+//
+// This file contains only tables owned by the recipe service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table ingredients as Ingredients {
+  id uuid [pk]
+  name varchar [not null]
+  base_unit varchar [not null, note: 'G | ML']
+  calories_per_100 decimal(10,3)
+  protein_per_100 decimal(10,3)
+  fat_per_100 decimal(10,3)
+  carbs_per_100 decimal(10,3)
+  fiber_per_100 decimal(10,3)
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Recipe. Canonical cooking ingredient — distinct from Food Catalog product'
+}
+
+Table ingredient_allergens as IngredientAllergens {
+  ingredient_id uuid [not null, ref: > Ingredients.id]
+  allergen varchar [not null]
+
+  indexes {
+    (ingredient_id, allergen) [pk]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table recipes as Recipes {
+  id uuid [pk]
+  status varchar [not null, note: 'DRAFT | PUBLISHED | ARCHIVED']
+  current_version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Recipe'
+}
+
+Table versions as Versions {
+  id uuid [pk]
+  recipe_id uuid [not null, ref: > Recipes.id]
+  version_number integer [not null]
+  title varchar [not null]
+  description text
+  default_servings decimal(6,2) [not null]
+  prep_seconds integer
+  cook_seconds integer
+  difficulty varchar [note: 'EASY | MEDIUM | HARD']
+  published_at timestamptz [null]
+
+  indexes {
+    (recipe_id, version_number) [unique]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table version_nutrition as VersionNutrition {
+  recipe_version_id uuid [pk, ref: - Versions.id]
+  calories_total decimal(10,3)
+  protein_total decimal(10,3)
+  fat_total decimal(10,3)
+  carbs_total decimal(10,3)
+  fiber_total decimal(10,3)
+  calories_per_serving decimal(10,3)
+  protein_per_serving decimal(10,3)
+  fat_per_serving decimal(10,3)
+  carbs_per_serving decimal(10,3)
+  fiber_per_serving decimal(10,3)
+
+  Note: 'Service: Recipe. Precomputed snapshot at publish time — GET does not recalculate every time'
+}
+
+Table version_photos as VersionPhotos {
+  recipe_version_id uuid [not null, ref: > Versions.id]
+  media_id uuid [not null, note: 'logical ref -> Media.media_objects.id']
+  position integer [not null]
+
+  indexes {
+    (recipe_version_id, media_id) [pk]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table version_ingredients as VersionIngredients {
+  id uuid [pk]
+  recipe_version_id uuid [not null, ref: > Versions.id]
+  ingredient_id uuid [not null, ref: > Ingredients.id]
+  amount_base decimal(12,3) [not null]
+  position integer [not null]
+
+  Note: 'Service: Recipe'
+}
+
+Table steps as Steps {
+  id uuid [pk]
+  recipe_version_id uuid [not null, ref: > Versions.id]
+  position integer [not null]
+  text text [not null]
+  duration_seconds integer [null]
+
+  Note: 'Service: Recipe'
+}
+
+Table tags as Tags {
+  recipe_version_id uuid [not null, ref: > Versions.id]
+  tag_type varchar [not null]
+  tag_value varchar [not null]
+
+  Note: 'Service: Recipe'
+}
+
+Table customizations as UserCustomizations {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  recipe_id uuid [not null, ref: > Recipes.id]
+  base_recipe_version_id uuid [not null, ref: > Versions.id]
+  revision bigint [not null, default: 1]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, recipe_id) [unique]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table customization_ingredients as CustomizationIngredients {
+  customization_id uuid [not null, ref: > UserCustomizations.id]
+  ingredient_id uuid [not null, ref: > Ingredients.id]
+  amount_base decimal(12,3) [not null]
+  position integer [not null]
+
+  Note: 'Service: Recipe'
+}
+
+Table favorites as Favorites {
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  recipe_id uuid [not null, ref: > Recipes.id]
+  created_at timestamptz [not null]
+
+  indexes {
+    (user_id, recipe_id) [pk]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table feedback as Feedback {
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  recipe_id uuid [not null, ref: > Recipes.id]
+  feedback varchar [not null, note: 'LIKE | DO_NOT_RECOMMEND']
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, recipe_id) [pk]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table cooking_sessions as CookingSessions {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  recipe_id uuid [not null, ref: > Recipes.id]
+  recipe_version integer [not null]
+  customization_revision bigint [null]
+  servings decimal(6,2) [not null]
+  status varchar [not null, note: 'IN_PROGRESS | COMPLETED | CANCELLED']
+  started_at timestamptz [not null]
+  completed_at timestamptz [null]
+
+  Note: 'Service: Recipe'
+}

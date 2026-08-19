@@ -1,29 +1,24 @@
-# Agent instructions — Go API
+# Agent instructions — backend migration stub
 
 ## Scope
 
-These rules apply to `apps/api/`.
+These rules apply to `apps/api/`. This directory currently contains the legacy
+Go health-check bootstrap. The accepted target is Kotlin/JVM backend services;
+see `docs/adr/0003-kotlin-backend.md` and `docs/architecture/`.
 
-## Design
+## Migration rule
 
-- Keep entry points in `cmd/` and non-public implementation in `internal/`.
-- Organize new code by business capability, not by generic controller/service
-  buckets.
-- Use `net/http` conventions and explicit dependency injection.
-- Pass `context.Context` through request-scoped work.
-- Add timeouts to network clients and servers.
-- Return stable JSON errors; never expose internal errors or secrets.
-- Treat `contracts/openapi/openapi.yaml` as the external API contract.
+- Do not add product behavior to the Go implementation.
+- Preserve the health-check only until the Kotlin runtime replaces it.
+- New service boundaries and dependencies must match
+  `docs/architecture/model/services.yaml`.
+- Public HTTP behavior must match `contracts/openapi/openapi.yaml`.
+- Published and consumed events must match
+  `docs/architecture/model/events.yaml`.
+- Every stateful service must implement the outbox/inbox protocol from
+  `docs/architecture/messaging.md`.
 
-## Tests
-
-- Add table-driven unit tests for domain behavior.
-- Test handlers with `httptest`.
-- Prefer fakes at owned boundaries; use integration tests for databases and
-  external protocols when they are introduced.
-- A bug fix must include a failing regression test where practical.
-
-## Commands
+## Temporary verification
 
 ```bash
 make test

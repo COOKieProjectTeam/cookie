@@ -1,0 +1,19 @@
+// COOKie — media service database schema
+//
+// This file contains only tables owned by the media service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table objects as MediaObjects {
+  id uuid [pk]
+  owner_user_id uuid [null, note: 'logical ref -> Identity.accounts.id']
+  purpose varchar [not null, note: 'DISH_PHOTO | RECIPE_PHOTO | SAVED_DISH_PHOTO']
+  storage_key varchar [not null]
+  content_type varchar [not null]
+  size_bytes bigint [not null]
+  status varchar [not null, note: 'PENDING | READY | DELETED']
+  created_at timestamptz [not null]
+  completed_at timestamptz [null]
+  deleted_at timestamptz [null]
+
+  Note: 'Service: Media. Binary lives in S3-compatible Object Storage, not PostgreSQL'
+}

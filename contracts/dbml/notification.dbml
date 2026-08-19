@@ -1,0 +1,59 @@
+// COOKie — notification service database schema
+//
+// This file contains only tables owned by the notification service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table push_devices as PushDevices {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  platform varchar [not null, note: 'IOS | ANDROID']
+  device_id varchar [not null]
+  push_token varchar [not null]
+  enabled boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, device_id) [unique]
+  }
+
+  Note: 'Service: Notification'
+}
+
+Table settings as Settings {
+  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
+  water_enabled boolean [not null, default: true]
+  food_enabled boolean [not null, default: true]
+  food_inactive_minutes integer [not null, default: 240]
+  weigh_enabled boolean [not null, default: true]
+  weigh_time time
+  goal_warning_enabled boolean [not null, default: true]
+  quiet_start time
+  quiet_end time
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Notification'
+}
+
+Table state as State {
+  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
+  last_meal_at timestamptz [null]
+  last_water_at timestamptz [null]
+  next_food_reminder_at timestamptz [null]
+  next_water_reminder_at timestamptz [null]
+  timezone varchar [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Notification. Redis food_reminders sorted-set can be rebuilt from this table if Redis is lost'
+}
+
+Table delivery as Delivery {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  type varchar [not null]
+  sent_at timestamptz [not null]
+  status varchar [not null, note: 'SENT | FAILED']
+  provider_message_id varchar [null]
+
+  Note: 'Service: Notification'
+}

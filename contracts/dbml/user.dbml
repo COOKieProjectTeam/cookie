@@ -1,0 +1,97 @@
+// COOKie — user service database schema
+//
+// This file contains only tables owned by the user service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table profiles as Profiles {
+  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id, no FK']
+  sex varchar
+  birth_date date
+  height_cm decimal(5,2)
+  activity_level varchar [note: 'LOW | MODERATE | HIGH']
+  timezone varchar
+  locale varchar
+  onboarding_completed boolean [not null, default: false]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: User'
+}
+
+Table nutrition_goal_versions as NutritionGoalVersions {
+  id uuid [pk]
+  user_id uuid [not null, ref: > Profiles.user_id]
+  effective_from date [not null]
+  target_weight_kg decimal(6,2)
+  target_weight_change_per_week decimal(4,2)
+  calorie_target decimal(8,2) [not null]
+  protein_g decimal(8,2)
+  fat_g decimal(8,2)
+  carbs_g decimal(8,2)
+  fiber_g decimal(8,2)
+  source varchar [not null, note: 'CALCULATED | MANUAL']
+  created_at timestamptz [not null]
+
+  indexes {
+    (user_id, effective_from) [name: 'idx_goal_versions_user_date']
+  }
+
+  Note: 'Service: User'
+}
+
+Table hydration_goal_versions as HydrationGoalVersions {
+  id uuid [pk]
+  user_id uuid [not null, ref: > Profiles.user_id]
+  effective_from date [not null]
+  target_ml integer [not null]
+  source varchar [not null, note: 'CALCULATED | MANUAL']
+  created_at timestamptz [not null]
+
+  Note: 'Service: User'
+}
+
+Table diet_preferences as DietPreferences {
+  user_id uuid [not null, ref: > Profiles.user_id]
+  diet_type varchar [not null, note: 'BALANCED | HIGH_PROTEIN | VEGETARIAN | VEGAN | PESCATARIAN | LOW_CARB | KETO | MEDITERRANEAN | GLUTEN_FREE | LACTOSE_FREE']
+
+  indexes {
+    (user_id, diet_type) [pk]
+  }
+
+  Note: 'Service: User'
+}
+
+Table allergies as Allergies {
+  user_id uuid [not null, ref: > Profiles.user_id]
+  allergen varchar [not null, note: 'GLUTEN | CRUSTACEANS | EGGS | FISH | PEANUTS | SOY | MILK | TREE_NUTS | CELERY | MUSTARD | SESAME | SULPHITES | LUPIN | MOLLUSCS']
+
+  indexes {
+    (user_id, allergen) [pk]
+  }
+
+  Note: 'Service: User'
+}
+
+Table daily_goal_overrides as DailyGoalOverrides {
+  id uuid [pk]
+  user_id uuid [not null, ref: > Profiles.user_id]
+  local_date date [not null]
+  calorie_target decimal(8,2) [null]
+  protein_g decimal(8,2) [null]
+  fat_g decimal(8,2) [null]
+  carbs_g decimal(8,2) [null]
+  fiber_g decimal(8,2) [null]
+  unlimited_calories boolean [not null, default: false]
+  type varchar [not null, note: 'CUSTOM | CHEAT_DAY']
+  cheat_month date [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, local_date) [unique]
+    (user_id, cheat_month) [unique, note: 'WHERE type = CHEAT_DAY — enforces 1 cheat day per month at DB level']
+  }
+
+  Note: 'Service: User'
+}

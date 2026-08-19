@@ -1,0 +1,71 @@
+// COOKie — shopping service database schema
+//
+// This file contains only tables owned by the shopping service.
+// Cross-service references are logical IDs only; never add cross-service foreign keys.
+
+Table carts as Carts {
+  id uuid [pk]
+  user_id uuid [not null, unique, note: 'logical ref -> Identity.accounts.id']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Shopping'
+}
+
+Table cart_recipe_items as CartRecipeItems {
+  id uuid [pk]
+  cart_id uuid [not null, ref: > Carts.id]
+  recipe_id uuid [not null, note: 'logical ref -> Recipe.recipes.id']
+  recipe_version integer [not null]
+  customization_revision bigint [null]
+  recipe_title_snapshot varchar [not null]
+  servings decimal(6,2) [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Shopping'
+}
+
+Table cart_import_jobs as CartImportJobs {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  meal_plan_id uuid [not null, note: 'logical ref -> Meal Planner.meal_plans.id']
+  from_date date [not null]
+  to_date date [not null]
+  status varchar [not null, note: 'PENDING | RUNNING | COMPLETED | FAILED']
+  cart_id uuid [null, ref: > Carts.id]
+  error_code varchar [null]
+  created_at timestamptz [not null]
+  completed_at timestamptz [null]
+
+  indexes {
+    (user_id, created_at) [name: 'idx_cart_import_jobs_user_created']
+  }
+
+  Note: 'Service: Shopping. Tracks asynchronous imports from Meal Planner and provides a pollable result'
+}
+
+Table cart_recipe_ingredients as CartRecipeIngredients {
+  cart_recipe_item_id uuid [not null, ref: > CartRecipeItems.id]
+  ingredient_id uuid [not null, note: 'logical ref -> Recipe.ingredients.id']
+  ingredient_name_snapshot varchar [not null]
+  base_amount_for_item decimal(12,3) [not null]
+  base_unit varchar [not null]
+
+  Note: 'Service: Shopping. Snapshot — never joins to Recipe DB'
+}
+
+Table adjustments as Adjustments {
+  cart_id uuid [not null, ref: > Carts.id]
+  ingredient_id uuid [not null, note: 'logical ref -> Recipe.ingredients.id']
+  have_deduction decimal(12,3) [not null, default: 0]
+  extra_amount decimal(12,3) [not null, default: 0]
+  bought boolean [not null, default: false]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (cart_id, ingredient_id) [pk]
+  }
+
+  Note: 'Service: Shopping. required_amount is NOT stored — derived from shopping_cart_recipe_ingredients'
+}

@@ -1,12 +1,52 @@
-openapi: 3.1.0
+openapi: 3.0.3
 info:
   title: COOKie API
   version: 0.1.0
+  description: >
+    Публичный контракт мобильного/админ клиента к API Gateway / Mobile BFF.
+    Все ручки проходят через Gateway; клиент никогда не обращается к
+    внутренним сервисам, PostgreSQL, Redis или NATS напрямую.
+servers:
+  - url: https://api.cookie.app/v1
+    description: Production
+  - url: http://127.0.0.1:8080/v1
+    description: Local
+tags:
+  - name: system
+    description: Service availability.
+  - name: auth
+    description: Authentication and account lifecycle.
+  - name: profile
+    description: Profile, goals, and dietary preferences.
+  - name: food
+    description: Food catalog and product lookup.
+  - name: diary
+    description: Meals, food entries, saved dishes, and water.
+  - name: recipes
+    description: Recipe discovery, personalization, and cooking.
+  - name: shopping
+    description: Shopping cart and ingredient list.
+  - name: health
+    description: Activity and weight measurements.
+  - name: progress
+    description: Event-driven nutrition and health progress read models.
+  - name: notifications
+    description: Push devices and notification preferences.
+  - name: media
+    description: Media upload, retrieval, and deletion.
+  - name: meal-plan
+    description: Asynchronous meal-plan generation and execution.
+  - name: bff
+    description: Aggregated Mobile BFF screens.
+
 paths:
+  # ---------------------------------------------------------------- system
   /healthz:
     get:
+      tags: [system]
       operationId: getHealth
       summary: Проверить доступность API
+      security: []
       responses:
         "200":
           description: API доступен
@@ -14,12 +54,4348 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+
+  # ---------------------------------------------------------------- bff
+  /today:
+    get:
+      tags: [bff]
+      operationId: getToday
+      summary: Агрегированный экран "Сегодня" (Mobile BFF)
+      parameters:
+        - $ref: "#/components/parameters/DateQuery"
+      responses:
+        "200":
+          description: Сводка дня
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TodaySummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------- auth
+  /auth/email/register:
+    post:
+      tags: [auth]
+      operationId: registerWithEmail
+      summary: Зарегистрироваться по email и паролю
+      description: >-
+        Создаёт аккаунт с неподтверждённым email и отправляет одноразовую ссылку
+        подтверждения. Ответ одинаков для нового и уже зарегистрированного email,
+        чтобы не раскрывать наличие аккаунта. Токены выдаются только после
+        подтверждения email.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailRegistrationRequest"
+      responses:
+        "202":
+          description: Если действие допустимо, письмо подтверждения будет отправлено
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/email/login:
+    post:
+      tags: [auth]
+      operationId: loginWithEmail
+      summary: Войти по email и паролю
+      description: >-
+        Возвращает одинаковую ошибку для неизвестного email, неверного пароля,
+        неподтверждённого email и недоступного аккаунта, чтобы не позволять
+        перечислять зарегистрированные адреса.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailLoginRequest"
+      responses:
+        "200":
+          description: Токены выданы, refresh-сессия создана
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPairWithUser"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Неверные учётные данные
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/email/verification/confirm:
+    post:
+      tags: [auth]
+      operationId: confirmEmail
+      summary: Подтвердить email одноразовым токеном
+      description: >-
+        Одноразово поглощает verification token, помечает email подтверждённым и
+        создаёт первую refresh-сессию.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailVerificationConfirmRequest"
+      responses:
+        "200":
+          description: Email подтверждён, токены выданы
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPairWithUser"
+        "400":
+          description: Токен недействителен, уже использован или истёк
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/email/verification/resend:
+    post:
+      tags: [auth]
+      operationId: resendEmailVerification
+      summary: Повторно отправить подтверждение email
+      description: >-
+        Всегда возвращает одинаковый ответ независимо от существования аккаунта и
+        состояния email. Предыдущие неиспользованные verification tokens отзываются.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailActionRequest"
+      responses:
+        "202":
+          description: Если действие допустимо, письмо будет отправлено
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/password/reset/request:
+    post:
+      tags: [auth]
+      operationId: requestPasswordReset
+      summary: Запросить восстановление пароля
+      description: >-
+        Всегда возвращает одинаковый ответ. Для подтверждённого email создаётся
+        короткоживущий одноразовый токен и отправляется ссылка восстановления.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailActionRequest"
+      responses:
+        "202":
+          description: Если действие допустимо, письмо будет отправлено
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/password/reset/confirm:
+    post:
+      tags: [auth]
+      operationId: confirmPasswordReset
+      summary: Установить новый пароль по одноразовому токену
+      description: >-
+        Поглощает reset token, меняет password hash и отзывает все refresh-сессии.
+        После успешного сброса пользователь входит обычным способом.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetConfirmRequest"
+      responses:
+        "204":
+          description: Пароль изменён, все refresh-сессии отозваны
+        "400":
+          description: Токен недействителен, уже использован или истёк
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/password/change:
+    post:
+      tags: [auth]
+      operationId: changePassword
+      summary: Изменить пароль авторизованного пользователя
+      description: >-
+        Проверяет текущий пароль, сохраняет новый Argon2id hash и отзывает все
+        refresh-сессии. Текущий access token остаётся действителен только до своего
+        короткого срока истечения; клиент должен войти заново.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChangeRequest"
+      responses:
+        "204":
+          description: Пароль изменён, все refresh-сессии отозваны
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/oauth/exchange:
+    post:
+      tags: [auth]
+      operationId: exchangeOAuthCode
+      summary: Обменять authorization code провайдера на токены COOKie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OAuthExchangeRequest"
+      responses:
+        "200":
+          description: Токены выданы
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPairWithUser"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Код авторизации недействителен или просрочен
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshSession
+      summary: Обновить пару токенов (refresh token rotation)
+      description: >-
+        Одноразово использует текущий refresh token и возвращает новую пару.
+        Повторное использование уже ротированного токена считается replay:
+        Identity отзывает всё семейство refresh-сессии.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: Новая пара токенов
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "401":
+          description: Refresh token недействителен, отозван, уже использован или истёк
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Завершить одну сессию
+      description: Refresh token сам аутентифицирует завершаемую сессию.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: Сессия завершена
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/logout-all:
+    post:
+      tags: [auth]
+      operationId: logoutAllDevices
+      summary: Завершить все сессии пользователя
+      responses:
+        "200":
+          description: Все сессии завершены
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account:
+    delete:
+      tags: [auth]
+      operationId: deleteAccount
+      summary: Инициировать удаление аккаунта (async, координируется через события)
+      responses:
+        "202":
+          description: Запрос на удаление принят. Публикуется account.deletion.requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/deletion:
+    get:
+      tags: [auth]
+      operationId: getAccountDeletionStatus
+      summary: Получить состояние асинхронного удаления аккаунта
+      responses:
+        "200":
+          description: Текущее состояние аккаунта
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------- profile
+  /me/onboarding:
+    post:
+      tags: [profile]
+      operationId: completeOnboarding
+      summary: Завершить онбординг и рассчитать первоначальную норму
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnboardingRequest"
+      responses:
+        "200":
+          description: Профиль и рассчитанная цель
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/profile:
+    get:
+      tags: [profile]
+      operationId: getProfile
+      summary: Получить профиль пользователя
+      responses:
+        "200":
+          description: Профиль
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [profile]
+      operationId: updateProfile
+      summary: Частично обновить профиль
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfilePatch"
+      responses:
+        "200":
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/goals/current:
+    get:
+      tags: [profile]
+      operationId: getCurrentGoal
+      summary: Получить текущую цель по КБЖУ
+      responses:
+        "200":
+          description: Текущая цель
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NutritionGoal"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [profile]
+      operationId: setCurrentGoal
+      summary: Задать новую цель (создаёт новую версию, не перезаписывает старую)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NutritionGoalInput"
+      responses:
+        "200":
+          description: Новая версия цели создана
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NutritionGoal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/goals/history:
+    get:
+      tags: [profile]
+      operationId: getGoalHistory
+      summary: Получить историю версий цели
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Список версий цели
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalHistoryPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/goals/overrides/{date}:
+    parameters:
+      - $ref: "#/components/parameters/DatePath"
+    put:
+      tags: [profile]
+      operationId: setDailyGoalOverride
+      summary: Задать override целей на конкретный день (в т.ч. cheat day)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DailyGoalOverrideInput"
+      responses:
+        "200":
+          description: Override создан/обновлён
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyGoalOverride"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Лимит cheat day на месяц уже достигнут
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: CHEAT_DAY_LIMIT_REACHED
+                message: Only one cheat day is allowed per calendar month.
+    delete:
+      tags: [profile]
+      operationId: deleteDailyGoalOverride
+      summary: Удалить override на день
+      responses:
+        "204":
+          description: Override удалён
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------- food
+  /foods/search:
+    get:
+      tags: [food]
+      operationId: searchFoods
+      summary: Поиск продуктов (custom foods + Open Food Facts)
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Результаты поиска
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FoodSearchResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /foods/barcodes/{barcode}:
+    get:
+      tags: [food]
+      operationId: getFoodByBarcode
+      summary: Найти продукт по штрихкоду через Open Food Facts
+      parameters:
+        - name: barcode
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Найденный продукт
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenFoodFactsItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /foods/custom:
+    get:
+      tags: [food]
+      operationId: listCustomFoods
+      summary: Список пользовательских продуктов
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Список продуктов
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomFoodPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [food]
+      operationId: createCustomFood
+      summary: Создать пользовательский продукт
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomFoodInput"
+      responses:
+        "201":
+          description: Продукт создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomFood"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /foods/custom/{foodId}:
+    parameters:
+      - name: foodId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [food]
+      operationId: getCustomFood
+      summary: Получить пользовательский продукт
+      responses:
+        "200":
+          description: Продукт
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomFood"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [food]
+      operationId: updateCustomFood
+      summary: Частично обновить пользовательский продукт
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomFoodPatch"
+      responses:
+        "200":
+          description: Обновлённый продукт
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomFood"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [food]
+      operationId: deleteCustomFood
+      summary: Удалить пользовательский продукт (soft delete / archived)
+      responses:
+        "204":
+          description: Продукт архивирован
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------- diary
+  /diary/days/{date}:
+    get:
+      tags: [diary]
+      operationId: getDiaryDay
+      summary: Получить дневник за день
+      parameters:
+        - $ref: "#/components/parameters/DatePath"
+      responses:
+        "200":
+          description: Дневник дня
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiaryDay"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /diary/meals:
+    post:
+      tags: [diary]
+      operationId: createMeal
+      summary: Создать приём пищи целиком (meal + dishes + items)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MealInput"
+      responses:
+        "200":
+          description: Ранее созданный приём пищи возвращён по clientGeneratedId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealCreatedResponse"
+        "201":
+          description: Приём пищи создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealCreatedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /diary/meals/{mealId}:
+    parameters:
+      - name: mealId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [diary]
+      operationId: updateMeal
+      summary: Изменить приём пищи (optimistic locking по version)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MealPatch"
+      responses:
+        "200":
+          description: Обновлённый приём пищи
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [diary]
+      operationId: deleteMeal
+      summary: Удалить приём пищи
+      parameters:
+        - $ref: "#/components/parameters/IfMatchVersion"
+      responses:
+        "204":
+          description: Приём пищи удалён
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /diary/meals/{mealId}/dishes:
+    parameters:
+      - name: mealId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [diary]
+      operationId: addDishToMeal
+      summary: Добавить блюдо в приём пищи
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DishInput"
+      responses:
+        "201":
+          description: Блюдо создано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dish"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /diary/dishes/{dishId}:
+    parameters:
+      - name: dishId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [diary]
+      operationId: updateDish
+      summary: Изменить блюдо
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DishPatch"
+      responses:
+        "200":
+          description: Обновлённое блюдо
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dish"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [diary]
+      operationId: deleteDish
+      summary: Удалить блюдо
+      parameters:
+        - $ref: "#/components/parameters/IfMatchVersion"
+      responses:
+        "204":
+          description: Блюдо удалено
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /diary/dishes/{dishId}/items:
+    parameters:
+      - name: dishId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [diary]
+      operationId: addFoodEntry
+      summary: Добавить редактируемый снапшот продукта в блюдо
+      description: >-
+        Клиент передаёт данные продукта и КБЖУ на 100 г/мл целиком. Nutrition
+        сохраняет собственный снапшот и не обращается к Food Catalog при записи.
+        Поле source используется только как provenance и не считается доверенным
+        источником нутриентов.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FoodEntryInput"
+      responses:
+        "201":
+          description: Запись создана со снапшотом нутриентов
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FoodEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /diary/items/{itemId}:
+    parameters:
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [diary]
+      operationId: updateFoodEntry
+      summary: Изменить количество или снапшот записи о еде
+      description: >-
+        Позволяет исправить название, бренд, размер порции и КБЖУ даже после
+        создания записи. Nutrition пересчитывает итоговые нутриенты из актуального
+        снапшота и количества; повторного resolve в Food Catalog нет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FoodEntryPatch"
+      responses:
+        "200":
+          description: Обновлённая запись
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FoodEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [diary]
+      operationId: deleteFoodEntry
+      summary: Удалить запись о еде
+      parameters:
+        - $ref: "#/components/parameters/IfMatchVersion"
+      responses:
+        "204":
+          description: Запись удалена
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /diary/recent-foods:
+    get:
+      tags: [diary]
+      operationId: getRecentFoods
+      summary: Недавно использованные продукты
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Список недавних продуктов
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecentFoodsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /diary/recipe:
+    post:
+      tags: [diary]
+      operationId: addRecipeToDiary
+      summary: Добавить рецепт в дневник (создаёт снапшот через Recipe Service)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddRecipeToDiaryInput"
+      responses:
+        "201":
+          description: Приём пищи и блюдо из рецепта созданы
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealCreatedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /saved-dishes:
+    get:
+      tags: [diary]
+      operationId: listSavedDishes
+      summary: Список сохранённых блюд
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Список
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedDishPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [diary]
+      operationId: createSavedDish
+      summary: Сохранить блюдо как шаблон
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedDishInput"
+      responses:
+        "201":
+          description: Сохранённое блюдо создано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedDish"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /saved-dishes/{savedDishId}:
+    parameters:
+      - name: savedDishId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [diary]
+      operationId: getSavedDish
+      summary: Получить сохранённое блюдо
+      responses:
+        "200":
+          description: Сохранённое блюдо
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedDish"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    patch:
+      tags: [diary]
+      operationId: updateSavedDish
+      summary: Изменить сохранённое блюдо
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedDishPatch"
+      responses:
+        "200":
+          description: Обновлённое сохранённое блюдо
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedDish"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [diary]
+      operationId: deleteSavedDish
+      summary: Удалить сохранённое блюдо (soft delete)
+      parameters:
+        - $ref: "#/components/parameters/IfMatchVersion"
+      responses:
+        "204":
+          description: Удалено
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /saved-dishes/{savedDishId}/consume:
+    parameters:
+      - name: savedDishId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [diary]
+      operationId: consumeSavedDish
+      summary: Добавить сохранённое блюдо в дневник (создаёт копию, не ссылку)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [localDate, eatenAt]
+              properties:
+                localDate:
+                  type: string
+                  format: date
+                eatenAt:
+                  type: string
+                  format: date-time
+      responses:
+        "201":
+          description: Новый приём пищи/блюдо создано как копия
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /water:
+    get:
+      tags: [diary]
+      operationId: listWaterEntries
+      summary: Получить записи о воде за день
+      parameters:
+        - $ref: "#/components/parameters/DateQuery"
+      responses:
+        "200":
+          description: Список записей о воде
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WaterEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [diary]
+      operationId: addWaterEntry
+      summary: Добавить запись о выпитой воде
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WaterEntryInput"
+      responses:
+        "200":
+          description: Ранее созданная запись возвращена по clientGeneratedId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WaterEntry"
+        "201":
+          description: Запись создана
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WaterEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /water/{waterEntryId}:
+    parameters:
+      - name: waterEntryId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [diary]
+      operationId: updateWaterEntry
+      summary: Изменить запись о воде
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WaterEntryPatch"
+      responses:
+        "200":
+          description: Обновлённая запись
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WaterEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [diary]
+      operationId: deleteWaterEntry
+      summary: Удалить запись о воде
+      responses:
+        "204":
+          description: Удалена
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------- recipes
+  /recipes:
+    get:
+      tags: [recipes]
+      operationId: listRecipes
+      summary: Список рецептов с фильтрами
+      parameters:
+        - name: mealType
+          in: query
+          schema:
+            $ref: "#/components/schemas/MealType"
+        - name: diet
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            uniqueItems: true
+            items:
+              $ref: "#/components/schemas/DietType"
+        - name: maxCookingMinutes
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: maxCalories
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: minProteinG
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+        - name: difficulty
+          in: query
+          schema:
+            $ref: "#/components/schemas/Difficulty"
+        - name: favorite
+          in: query
+          schema:
+            type: boolean
+        - name: liked
+          in: query
+          schema:
+            type: boolean
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [TOTAL_TIME_ASC, CALORIES_ASC, CALORIES_DESC, PROTEIN_DESC]
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Страница рецептов
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipeSummaryPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /recipes/{recipeId}:
+    parameters:
+      - name: recipeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [recipes]
+      operationId: getRecipe
+      summary: Получить рецепт (персонализированный, с учётом кастомизации пользователя)
+      responses:
+        "200":
+          description: Рецепт
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recipe"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /ingredients/search:
+    get:
+      tags: [recipes]
+      operationId: searchIngredients
+      summary: Поиск канонических ингредиентов (для редактирования рецепта)
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Результаты поиска
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngredientPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /recipes/{recipeId}/customization:
+    parameters:
+      - name: recipeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [recipes]
+      operationId: setRecipeCustomization
+      summary: Задать пользовательскую кастомизацию ингредиентов рецепта
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecipeCustomizationInput"
+      responses:
+        "200":
+          description: Рецепт с пересчитанным КБЖУ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recipe"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [recipes]
+      operationId: deleteRecipeCustomization
+      summary: Сбросить кастомизацию, вернуться к оригинальному рецепту
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRevision"
+      responses:
+        "204":
+          description: Кастомизация удалена
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /recipes/{recipeId}/favorite:
+    parameters:
+      - name: recipeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [recipes]
+      operationId: setRecipeFavorite
+      summary: Добавить/убрать рецепт из избранного
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [favorite]
+              properties:
+                favorite:
+                  type: boolean
+      responses:
+        "200":
+          description: Статус обновлён
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipeUserState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /recipes/{recipeId}/feedback:
+    parameters:
+      - name: recipeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [recipes]
+      operationId: setRecipeFeedback
+      summary: Оставить фидбек по рекомендации (не влияет на favorite)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [feedback]
+              properties:
+                feedback:
+                  type: string
+                  enum: [LIKE, DO_NOT_RECOMMEND, NONE]
+      responses:
+        "200":
+          description: Фидбек сохранён
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipeUserState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /recipes/{recipeId}/cooking-sessions:
+    parameters:
+      - name: recipeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [recipes]
+      operationId: startCookingSession
+      summary: Начать готовку по рецепту
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [servings]
+              properties:
+                servings:
+                  type: number
+                  format: double
+                  minimum: 0.1
+      responses:
+        "201":
+          description: Сессия готовки создана
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookingSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /cooking-sessions/{sessionId}/complete:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [recipes]
+      operationId: completeCookingSession
+      summary: Завершить сессию готовки
+      responses:
+        "200":
+          description: Сессия завершена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookingSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /cooking-sessions/{sessionId}/cancel:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [recipes]
+      operationId: cancelCookingSession
+      summary: Отменить незавершённую сессию готовки
+      responses:
+        "200":
+          description: Сессия отменена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookingSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /cooking-history:
+    get:
+      tags: [recipes]
+      operationId: getCookingHistory
+      summary: История сессий готовки
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Страница истории
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CookingSession"
+                  nextCursor:
+                    type: string
+                    nullable: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------- shopping
+  /cart:
+    get:
+      tags: [shopping]
+      operationId: getCart
+      summary: Получить корзину рецептов и список покупок
+      responses:
+        "200":
+          description: Корзина
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /cart/recipes:
+    post:
+      tags: [shopping]
+      operationId: addRecipeToCart
+      summary: Добавить рецепт в корзину (снапшот ингредиентов через Recipe Service)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              required: [recipeId, servings]
+              properties:
+                recipeId:
+                  type: string
+                  format: uuid
+                servings:
+                  type: number
+                  format: double
+                  minimum: 0.1
+      responses:
+        "201":
+          description: Рецепт добавлен в корзину
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cartRecipe:
+                    $ref: "#/components/schemas/CartRecipe"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /cart/recipes/{cartRecipeId}:
+    parameters:
+      - name: cartRecipeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [shopping]
+      operationId: updateCartRecipeServings
+      summary: Изменить количество порций рецепта в корзине
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [servings]
+              properties:
+                servings:
+                  type: number
+                  format: double
+                  minimum: 0.1
+      responses:
+        "200":
+          description: Обновлённая позиция корзины
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartRecipe"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [shopping]
+      operationId: removeCartRecipe
+      summary: Удалить рецепт из корзины
+      responses:
+        "204":
+          description: Удалено
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /cart/ingredients/{ingredientId}:
+    parameters:
+      - name: ingredientId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [shopping]
+      operationId: adjustShoppingIngredient
+      summary: Скорректировать позицию списка покупок (что уже есть/докупить)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                haveDeduction:
+                  type: number
+                  format: double
+                  minimum: 0
+                extraAmount:
+                  type: number
+                  format: double
+                  minimum: 0
+      responses:
+        "200":
+          description: Обновлённая позиция. buyAmount = max(required-haveDeduction,0)+extraAmount
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShoppingListItem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /cart/ingredients/{ingredientId}/bought:
+    parameters:
+      - name: ingredientId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [shopping]
+      operationId: setIngredientBought
+      summary: >
+        Отметить позицию купленной. Если требуемое количество выросло после
+        отметки, сервер автоматически сбрасывает bought=false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bought]
+              properties:
+                bought:
+                  type: boolean
+      responses:
+        "200":
+          description: Статус обновлён
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShoppingListItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------- health
+  /health/activity/{date}:
+    parameters:
+      - $ref: "#/components/parameters/DatePath"
+    put:
+      tags: [health]
+      operationId: syncDailyActivity
+      summary: Синхронизировать агрегированную активность за день (Apple Health / Health Connect)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DailyActivityInput"
+      responses:
+        "200":
+          description: Активность сохранена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyActivity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /health/weight:
+    get:
+      tags: [health]
+      operationId: listWeightMeasurements
+      summary: Получить историю измерений веса
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Список измерений
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeightMeasurementPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [health]
+      operationId: addWeightMeasurement
+      summary: Создать ручное измерение или idempotent upsert измерения внешнего источника
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WeightMeasurementInput"
+      responses:
+        "200":
+          description: Измерение внешнего источника обновлено по externalId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeightMeasurement"
+        "201":
+          description: Измерение сохранено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeightMeasurement"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /health/weight/{weightId}:
+    parameters:
+      - name: weightId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [health]
+      operationId: updateWeightMeasurement
+      summary: Изменить измерение веса (только для source=MANUAL)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WeightMeasurementPatch"
+      responses:
+        "200":
+          description: Обновлённое измерение
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeightMeasurement"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [health]
+      operationId: deleteWeightMeasurement
+      summary: Удалить измерение веса (только для source=MANUAL)
+      responses:
+        "204":
+          description: Удалено
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------- progress
+  /progress/days/{date}:
+    parameters:
+      - $ref: "#/components/parameters/DatePath"
+    get:
+      tags: [progress]
+      operationId: getDailyProgress
+      summary: Получить прогресс за день (read model)
+      responses:
+        "200":
+          description: Прогресс дня
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyProgress"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /progress:
+    get:
+      tags: [progress]
+      operationId: getProgressRange
+      summary: Получить прогресс за диапазон до 366 дней и агрегированную сводку
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Диапазон + сводка
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProgressRange"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /progress/weight:
+    get:
+      tags: [progress]
+      operationId: getWeightProgress
+      summary: Точки веса за диапазон до 366 дней (read model)
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Точки веса
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                          format: date
+                        weightKg:
+                          type: number
+                          format: double
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------- notifications
+  /notifications/devices:
+    post:
+      tags: [notifications]
+      operationId: registerDevice
+      summary: Зарегистрировать push-токен устройства
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushDeviceInput"
+      responses:
+        "200":
+          description: Токен существующего устройства обновлён
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushDevice"
+        "201":
+          description: Устройство зарегистрировано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushDevice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /notifications/devices/{deviceId}:
+    parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [notifications]
+      operationId: unregisterDevice
+      summary: Удалить push-токен устройства
+      responses:
+        "204":
+          description: Удалено
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /notifications/settings:
+    get:
+      tags: [notifications]
+      operationId: getNotificationSettings
+      summary: Получить настройки уведомлений
+      responses:
+        "200":
+          description: Настройки
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [notifications]
+      operationId: updateNotificationSettings
+      summary: Частично обновить настройки уведомлений
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationSettingsPatch"
+      responses:
+        "200":
+          description: Обновлённые настройки
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------- media
+  /media/uploads:
+    post:
+      tags: [media]
+      operationId: createMediaUpload
+      summary: Запросить presigned URL для загрузки медиа
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaUploadRequest"
+      responses:
+        "201":
+          description: Presigned URL выдан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaUpload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /media/{mediaId}/complete:
+    parameters:
+      - name: mediaId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [media]
+      operationId: completeMediaUpload
+      summary: Подтвердить завершение загрузки в Object Storage
+      responses:
+        "200":
+          description: Медиа готово
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaObject"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /media/{mediaId}:
+    parameters:
+      - name: mediaId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [media]
+      operationId: getMedia
+      summary: Получить метаданные и временный URL медиа-объекта
+      responses:
+        "200":
+          description: Медиа-объект
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaObject"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [media]
+      operationId: deleteMedia
+      summary: Удалить медиа-объект
+      responses:
+        "204":
+          description: Удалено
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------- meal-plan
+  /meal-plan-generations:
+    post:
+      tags: [meal-plan]
+      operationId: startMealPlanGeneration
+      summary: Запустить асинхронную генерацию плана питания (premium)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MealPlanGenerationInput"
+      responses:
+        "202":
+          description: Задача принята
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealPlanJob"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Требуется premium-подписка
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /meal-plan-generations/{jobId}:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [meal-plan]
+      operationId: getMealPlanGenerationStatus
+      summary: Получить статус генерации плана
+      responses:
+        "200":
+          description: Статус задачи
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealPlanJob"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /meal-plans/{planId}:
+    parameters:
+      - name: planId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [meal-plan]
+      operationId: getMealPlan
+      summary: Получить план питания
+      responses:
+        "200":
+          description: План
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealPlan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /meal-plans/{planId}/items/{itemId}/replace:
+    parameters:
+      - name: planId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [meal-plan]
+      operationId: replaceMealPlanItem
+      summary: Заменить рецепт в позиции плана (учитывает DO_NOT_RECOMMEND, аллергии, диету, БЖУ)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MealPlanItemReplacementInput"
+      responses:
+        "200":
+          description: Обновлённая позиция плана
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealPlanItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /meal-plans/{planId}/ingredients:
+    parameters:
+      - name: planId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [meal-plan]
+      operationId: getMealPlanIngredients
+      summary: Предпросмотр ингредиентов плана за диапазон дней
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Список ингредиентов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ingredients:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PlanIngredient"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /meal-plans/{planId}/add-to-cart:
+    parameters:
+      - name: planId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [meal-plan]
+      operationId: addMealPlanToCart
+      summary: Добавить рецепты плана за диапазон дней в корзину покупок (batch)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to]
+              properties:
+                from:
+                  type: string
+                  format: date
+                to:
+                  type: string
+                  format: date
+      responses:
+        "202":
+          description: Создана отслеживаемая задача импорта в корзину
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartImportJob"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /cart/import-jobs/{jobId}:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [shopping]
+      operationId: getCartImportJob
+      summary: Получить статус асинхронного импорта плана в корзину
+      responses:
+        "200":
+          description: Статус импорта
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartImportJob"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+security:
+  - bearerAuth: []
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    DatePath:
+      name: date
+      in: path
+      required: true
+      schema:
+        type: string
+        format: date
+    DateQuery:
+      name: date
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IfMatchVersion:
+      name: If-Match-Version
+      in: header
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    IfMatchRevision:
+      name: If-Match-Revision
+      in: header
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+
+  responses:
+    BadRequest:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Конфликт версий (optimistic locking) или бизнес-правило
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Слишком много запросов; повторите позднее
+      headers:
+        Retry-After:
+          description: Число секунд до следующей разрешённой попытки
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
   schemas:
+    # ------------------------------------------------------------ common
     Health:
       type: object
       required: [status]
       properties:
         status:
           type: string
-          const: ok
+          enum: [ok]
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: INVALID_AMOUNT
+        message:
+          type: string
+          example: Amount must be greater than zero.
+        details:
+          type: object
+          additionalProperties: true
+        requestId:
+          type: string
+          format: uuid
+
+    Amount:
+      type: object
+      required: [value, unit]
+      properties:
+        value:
+          type: number
+          format: double
+        unit:
+          type: string
+          enum: [G, ML, PIECE]
+
+    Nutrition:
+      type: object
+      required: [calories, proteinG, fatG, carbsG, fiberG]
+      properties:
+        calories:
+          type: number
+          format: double
+        proteinG:
+          type: number
+          nullable: true
+          format: double
+        fatG:
+          type: number
+          nullable: true
+          format: double
+        carbsG:
+          type: number
+          nullable: true
+          format: double
+        fiberG:
+          type: number
+          nullable: true
+          format: double
+
+    NutritionInput:
+      type: object
+      required: [calories]
+      properties:
+        calories:
+          type: number
+          minimum: 0
+        proteinG:
+          type: number
+          nullable: true
+          minimum: 0
+        fatG:
+          type: number
+          nullable: true
+          minimum: 0
+        carbsG:
+          type: number
+          nullable: true
+          minimum: 0
+        fiberG:
+          type: number
+          nullable: true
+          minimum: 0
+
+    MealType:
+      type: string
+      enum: [BREAKFAST, LUNCH, DINNER, SNACK]
+
+    DietType:
+      type: string
+      enum:
+        - BALANCED
+        - HIGH_PROTEIN
+        - VEGETARIAN
+        - VEGAN
+        - PESCATARIAN
+        - LOW_CARB
+        - KETO
+        - MEDITERRANEAN
+        - GLUTEN_FREE
+        - LACTOSE_FREE
+
+    Allergen:
+      type: string
+      enum:
+        - GLUTEN
+        - CRUSTACEANS
+        - EGGS
+        - FISH
+        - PEANUTS
+        - SOY
+        - MILK
+        - TREE_NUTS
+        - CELERY
+        - MUSTARD
+        - SESAME
+        - SULPHITES
+        - LUPIN
+        - MOLLUSCS
+
+    Difficulty:
+      type: string
+      enum: [EASY, MEDIUM, HARD]
+
+    ActivityLevel:
+      type: string
+      enum: [LOW, MODERATE, HIGH]
+
+    Sex:
+      type: string
+      enum: [MALE, FEMALE]
+
+    # ------------------------------------------------------------ bff
+    TodaySummary:
+      type: object
+      required: [date, goal, consumed, activity, water, meals, suggestedRecipes]
+      properties:
+        date:
+          type: string
+          format: date
+        goal:
+          type: object
+          properties:
+            calories:
+              type: number
+            proteinG:
+              type: number
+            fatG:
+              type: number
+            carbsG:
+              type: number
+            fiberG:
+              type: number
+            unlimitedCalories:
+              type: boolean
+        consumed:
+          $ref: "#/components/schemas/Nutrition"
+        activity:
+          type: object
+          properties:
+            steps:
+              type: integer
+            activeCalories:
+              type: number
+        water:
+          type: object
+          properties:
+            consumedMl:
+              type: integer
+            targetMl:
+              type: integer
+        meals:
+          type: array
+          items:
+            $ref: "#/components/schemas/Meal"
+        suggestedRecipes:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecipeSummary"
+
+    # ------------------------------------------------------------ auth
+    AccountDeletionStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ACTIVE, DELETING, DELETED]
+        requestedAt:
+          type: string
+          nullable: true
+          format: date-time
+        deletedAt:
+          type: string
+          nullable: true
+          format: date-time
+
+    OAuthExchangeRequest:
+      type: object
+      required: [provider, authorizationCode, redirectUri, codeVerifier]
+      properties:
+        provider:
+          type: string
+          enum: [YANDEX, VK, MAIL]
+        authorizationCode:
+          type: string
+        redirectUri:
+          type: string
+          format: uri
+        codeVerifier:
+          type: string
+        deviceId:
+          type: string
+          maxLength: 255
+
+    EmailAddress:
+      type: string
+      format: email
+      maxLength: 254
+      description: Email нормализуется и сравнивается без учёта регистра домена.
+
+    Password:
+      type: string
+      format: password
+      writeOnly: true
+      minLength: 12
+      maxLength: 128
+      description: >-
+        Разрешены пробелы и Unicode; требования к составу символов не навязываются.
+        На сервере хранится только Argon2id encoded hash с солью и параметрами.
+
+    EmailRegistrationRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          $ref: "#/components/schemas/EmailAddress"
+        password:
+          $ref: "#/components/schemas/Password"
+        locale:
+          type: string
+          maxLength: 35
+
+    EmailLoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          $ref: "#/components/schemas/EmailAddress"
+        password:
+          $ref: "#/components/schemas/Password"
+        deviceId:
+          type: string
+          maxLength: 255
+
+    EmailActionRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          $ref: "#/components/schemas/EmailAddress"
+
+    EmailVerificationConfirmRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 32
+          maxLength: 512
+        deviceId:
+          type: string
+          maxLength: 255
+
+    PasswordResetConfirmRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token:
+          type: string
+          minLength: 32
+          maxLength: 512
+        newPassword:
+          $ref: "#/components/schemas/Password"
+
+    PasswordChangeRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          $ref: "#/components/schemas/Password"
+        newPassword:
+          $ref: "#/components/schemas/Password"
+
+    TokenPair:
+      type: object
+      description: >-
+        Access token — короткоживущий JWT и не хранится на сервере. Refresh token —
+        случайный opaque secret; клиент хранит его в Keychain/Keystore, а Identity
+        сохраняет в PostgreSQL только hash и состояние rotation family.
+      required: [accessToken, accessTokenExpiresIn, refreshToken, refreshTokenExpiresIn]
+      properties:
+        accessToken:
+          type: string
+        accessTokenExpiresIn:
+          type: integer
+          description: seconds
+          example: 900
+        refreshToken:
+          type: string
+        refreshTokenExpiresIn:
+          type: integer
+          description: seconds
+
+    TokenPairWithUser:
+      allOf:
+        - $ref: "#/components/schemas/TokenPair"
+        - type: object
+          required: [user]
+          properties:
+            user:
+              type: object
+              required: [id, newUser]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                newUser:
+                  type: boolean
+
+    # ------------------------------------------------------------ profile
+    OnboardingRequest:
+      type: object
+      required:
+        - sex
+        - birthDate
+        - heightCm
+        - activityLevel
+        - currentWeightKg
+        - targetWeightKg
+        - targetWeightChangeKgPerWeek
+      properties:
+        sex:
+          $ref: "#/components/schemas/Sex"
+        birthDate:
+          type: string
+          format: date
+        heightCm:
+          type: number
+          format: double
+        activityLevel:
+          $ref: "#/components/schemas/ActivityLevel"
+        currentWeightKg:
+          type: number
+          format: double
+          description: Сохраняется как первое ручное измерение веса в Health Service.
+        targetWeightKg:
+          type: number
+          format: double
+        targetWeightChangeKgPerWeek:
+          type: number
+          format: double
+        dietPreferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/DietType"
+        allergies:
+          type: array
+          items:
+            $ref: "#/components/schemas/Allergen"
+
+    OnboardingResponse:
+      type: object
+      required: [profile, goal, hydrationGoalMl, onboardingCompleted, initialWeightMeasurement]
+      properties:
+        profile:
+          $ref: "#/components/schemas/Profile"
+        goal:
+          $ref: "#/components/schemas/NutritionGoal"
+        hydrationGoalMl:
+          type: integer
+        onboardingCompleted:
+          type: boolean
+        initialWeightMeasurement:
+          $ref: "#/components/schemas/WeightMeasurement"
+
+    Profile:
+      type: object
+      required: [sex, birthDate, heightCm, activityLevel, timezone, locale, dietPreferences, allergies, onboardingCompleted, version]
+      properties:
+        sex:
+          $ref: "#/components/schemas/Sex"
+        birthDate:
+          type: string
+          format: date
+        heightCm:
+          type: number
+          format: double
+        activityLevel:
+          $ref: "#/components/schemas/ActivityLevel"
+        timezone:
+          type: string
+        locale:
+          type: string
+        dietPreferences:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DietType"
+        allergies:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Allergen"
+        onboardingCompleted:
+          type: boolean
+        version:
+          type: integer
+
+    ProfilePatch:
+      type: object
+      required: [version]
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        heightCm:
+          type: number
+          format: double
+        activityLevel:
+          $ref: "#/components/schemas/ActivityLevel"
+        timezone:
+          type: string
+        locale:
+          type: string
+        dietPreferences:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DietType"
+        allergies:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Allergen"
+
+    NutritionGoalInput:
+      type: object
+      required: [calories, proteinG, fatG, carbsG, fiberG]
+      properties:
+        calories:
+          type: number
+          minimum: 0
+        proteinG:
+          type: number
+          minimum: 0
+        fatG:
+          type: number
+          minimum: 0
+        carbsG:
+          type: number
+          minimum: 0
+        fiberG:
+          type: number
+          minimum: 0
+        targetWeightKg:
+          type: number
+          format: double
+        targetWeightChangeKgPerWeek:
+          type: number
+          format: double
+
+    NutritionGoal:
+      allOf:
+        - $ref: "#/components/schemas/NutritionGoalInput"
+        - type: object
+          required: [id, effectiveFrom, source]
+          properties:
+            id:
+              type: string
+              format: uuid
+            effectiveFrom:
+              type: string
+              format: date
+            source:
+              type: string
+              enum: [CALCULATED, MANUAL]
+
+    GoalHistoryPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NutritionGoal"
+        nextCursor:
+          type: string
+          nullable: true
+
+    DailyGoalOverrideInput:
+      oneOf:
+        - type: object
+          required: [type, calories]
+          properties:
+            type:
+              type: string
+              enum: [CUSTOM]
+            calories:
+              type: number
+              minimum: 0
+            proteinG:
+              type: number
+              nullable: true
+              minimum: 0
+            fatG:
+              type: number
+              nullable: true
+              minimum: 0
+            carbsG:
+              type: number
+              nullable: true
+              minimum: 0
+            fiberG:
+              type: number
+              nullable: true
+              minimum: 0
+            unlimitedCalories:
+              type: boolean
+              default: false
+        - type: object
+          required: [type, unlimitedCalories]
+          properties:
+            type:
+              type: string
+              enum: [CHEAT_DAY]
+            unlimitedCalories:
+              type: boolean
+              enum: [true]
+
+    DailyGoalOverride:
+      allOf:
+        - $ref: "#/components/schemas/DailyGoalOverrideInput"
+        - type: object
+          required: [id, localDate]
+          properties:
+            id:
+              type: string
+              format: uuid
+            localDate:
+              type: string
+              format: date
+
+    # ------------------------------------------------------------ food
+    Serving:
+      type: object
+      required: [name, baseAmount]
+      properties:
+        name:
+          type: string
+          default: piece
+        baseAmount:
+          type: number
+          format: double
+
+    FoodSearchResult:
+      type: object
+      required: [custom, openFoodFacts, nextCursor]
+      properties:
+        custom:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomFoodSummary"
+        openFoodFacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenFoodFactsItem"
+        nextCursor:
+          type: string
+          nullable: true
+
+    CustomFoodSummary:
+      type: object
+      required: [id, source, name, brand, nutritionPer100, baseUnit, serving]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          type: string
+          enum: [CUSTOM]
+        name:
+          type: string
+        brand:
+          type: string
+          nullable: true
+        nutritionPer100:
+          $ref: "#/components/schemas/Nutrition"
+        baseUnit:
+          type: string
+          enum: [G, ML]
+        serving:
+          $ref: "#/components/schemas/Serving"
+
+    OpenFoodFactsItem:
+      type: object
+      required: [source, barcode, name, brand, baseUnit, nutritionPer100]
+      properties:
+        source:
+          type: string
+          enum: [OPEN_FOOD_FACTS]
+        barcode:
+          type: string
+        name:
+          type: string
+        brand:
+          type: string
+          nullable: true
+        baseUnit:
+          type: string
+          enum: [G, ML]
+        nutritionPer100:
+          $ref: "#/components/schemas/Nutrition"
+
+    CustomFoodInput:
+      type: object
+      required: [name, baseUnit, nutritionPer100]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        brand:
+          type: string
+          nullable: true
+          maxLength: 200
+        baseUnit:
+          type: string
+          enum: [G, ML]
+        nutritionPer100:
+          $ref: "#/components/schemas/NutritionInput"
+        serving:
+          $ref: "#/components/schemas/Serving"
+
+    CustomFoodPatch:
+      type: object
+      required: [version]
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        brand:
+          type: string
+          nullable: true
+        nutritionPer100:
+          $ref: "#/components/schemas/NutritionInput"
+        serving:
+          $ref: "#/components/schemas/Serving"
+
+    CustomFood:
+      type: object
+      required: [id, source, name, brand, nutritionPer100, baseUnit, serving, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          type: string
+          enum: [CUSTOM]
+        name:
+          type: string
+        brand:
+          type: string
+          nullable: true
+        nutritionPer100:
+          $ref: "#/components/schemas/Nutrition"
+        baseUnit:
+          type: string
+          enum: [G, ML]
+        serving:
+          $ref: "#/components/schemas/Serving"
+        version:
+          type: integer
+
+    CustomFoodPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomFood"
+        nextCursor:
+          type: string
+          nullable: true
+
+    # ------------------------------------------------------------ diary
+    FoodRef:
+      description: >-
+        Неизменяемая ссылка на происхождение данных. Используется для аналитики и
+        повторного выбора, но не для получения или проверки КБЖУ во время записи
+        в дневник: переданный клиентом снапшот остаётся редактируемым.
+      oneOf:
+        - type: object
+          required: [type, id]
+          properties:
+            type:
+              type: string
+              enum: [CUSTOM]
+            id:
+              type: string
+              format: uuid
+        - type: object
+          required: [type, barcode]
+          properties:
+            type:
+              type: string
+              enum: [OPEN_FOOD_FACTS]
+            barcode:
+              type: string
+              minLength: 1
+              maxLength: 32
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [MANUAL]
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [AI]
+            recognitionId:
+              type: string
+              nullable: true
+              format: uuid
+      discriminator:
+        propertyName: type
+
+    FoodEntryInput:
+      type: object
+      description: >-
+        Полный редактируемый снапшот продукта. Его можно получить из Food Catalog,
+        ручного ввода или AI, затем скорректировать до отправки. Nutrition валидирует
+        значения, сохраняет снапшот и вычисляет nutrition для указанного amount без
+        синхронного вызова Food Catalog. Для unit=PIECE нужно передать serving.
+      required: [source, name, baseUnit, amount, nutritionPer100]
+      properties:
+        source:
+          $ref: "#/components/schemas/FoodRef"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        brand:
+          type: string
+          nullable: true
+          maxLength: 200
+        baseUnit:
+          type: string
+          enum: [G, ML]
+        serving:
+          $ref: "#/components/schemas/Serving"
+        amount:
+          $ref: "#/components/schemas/Amount"
+        nutritionPer100:
+          $ref: "#/components/schemas/NutritionInput"
+
+    FoodEntry:
+      type: object
+      description: >-
+        Сохранённый снапшот. nutrition содержит итог для amount, а
+        nutritionPer100 — редактируемую основу расчёта.
+      required: [id, source, name, baseUnit, amount, nutritionPer100, nutrition, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          $ref: "#/components/schemas/FoodRef"
+        name:
+          type: string
+        brand:
+          type: string
+          nullable: true
+        baseUnit:
+          type: string
+          enum: [G, ML]
+        serving:
+          $ref: "#/components/schemas/Serving"
+        amount:
+          $ref: "#/components/schemas/Amount"
+        nutritionPer100:
+          $ref: "#/components/schemas/Nutrition"
+        nutrition:
+          $ref: "#/components/schemas/Nutrition"
+        version:
+          type: integer
+
+    FoodEntryPatch:
+      type: object
+      description: >-
+        Частичное изменение сохранённого снапшота. source не меняется: он хранит
+        происхождение первоначальных данных, а не их текущую редакцию. При изменении
+        amount, serving или nutritionPer100 Nutrition заново вычисляет nutrition.
+      required: [version]
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        brand:
+          type: string
+          nullable: true
+          maxLength: 200
+        baseUnit:
+          type: string
+          enum: [G, ML]
+        serving:
+          $ref: "#/components/schemas/Serving"
+        amount:
+          $ref: "#/components/schemas/Amount"
+        nutritionPer100:
+          $ref: "#/components/schemas/NutritionInput"
+
+    DishInput:
+      type: object
+      required: [items]
+      properties:
+        name:
+          type: string
+        mediaIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/FoodEntryInput"
+
+    DishPatch:
+      type: object
+      required: [version]
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        mediaIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    Dish:
+      type: object
+      required: [id, mealId, name, photos, items, nutrition, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        mealId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          nullable: true
+        photos:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              url:
+                type: string
+                format: uri
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/FoodEntry"
+        nutrition:
+          $ref: "#/components/schemas/Nutrition"
+        version:
+          type: integer
+
+    MealInput:
+      type: object
+      required: [clientGeneratedId, localDate, eatenAt, dishes]
+      properties:
+        clientGeneratedId:
+          type: string
+          format: uuid
+        localDate:
+          type: string
+          format: date
+        eatenAt:
+          type: string
+          format: date-time
+        dishes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/DishInput"
+
+    MealPatch:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+        eatenAt:
+          type: string
+          format: date-time
+        localDate:
+          type: string
+          format: date
+
+    Meal:
+      type: object
+      required: [id, localDate, eatenAt, timezone, dishes, nutrition, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        localDate:
+          type: string
+          format: date
+        eatenAt:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+        dishes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Dish"
+        nutrition:
+          $ref: "#/components/schemas/Nutrition"
+        version:
+          type: integer
+
+    MealCreatedResponse:
+      type: object
+      required: [meal, dayTotals]
+      properties:
+        meal:
+          $ref: "#/components/schemas/Meal"
+        dayTotals:
+          $ref: "#/components/schemas/Nutrition"
+
+    DiaryDay:
+      type: object
+      required: [date, meals, total]
+      properties:
+        date:
+          type: string
+          format: date
+        meals:
+          type: array
+          items:
+            $ref: "#/components/schemas/Meal"
+        total:
+          $ref: "#/components/schemas/Nutrition"
+
+    RecentFoodsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [name, lastUsedAt, previousAmount, source]
+            properties:
+              name:
+                type: string
+              lastUsedAt:
+                type: string
+                format: date-time
+              previousAmount:
+                $ref: "#/components/schemas/Amount"
+              source:
+                $ref: "#/components/schemas/FoodRef"
+
+    AddRecipeToDiaryInput:
+      type: object
+      required: [recipeId, servings, localDate, eatenAt]
+      properties:
+        recipeId:
+          type: string
+          format: uuid
+        servings:
+          type: number
+          format: double
+        localDate:
+          type: string
+          format: date
+        eatenAt:
+          type: string
+          format: date-time
+
+    SavedDishInput:
+      type: object
+      required: [name, items]
+      properties:
+        name:
+          type: string
+        mediaId:
+          type: string
+          nullable: true
+          format: uuid
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/FoodEntryInput"
+
+    SavedDishPatch:
+      type: object
+      required: [version]
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        mediaId:
+          type: string
+          nullable: true
+          format: uuid
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/FoodEntryInput"
+
+    SavedDish:
+      type: object
+      required: [id, name, items, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        mediaId:
+          type: string
+          nullable: true
+          format: uuid
+        media:
+          $ref: "#/components/schemas/MediaObject"
+        items:
+          type: array
+          items:
+            type: object
+            required: [source, name, amount, nutrition]
+            properties:
+              source:
+                $ref: "#/components/schemas/FoodRef"
+              name:
+                type: string
+              amount:
+                $ref: "#/components/schemas/Amount"
+              nutrition:
+                $ref: "#/components/schemas/Nutrition"
+        version:
+          type: integer
+
+    SavedDishPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedDish"
+        nextCursor:
+          type: string
+          nullable: true
+
+    WaterEntryInput:
+      type: object
+      required: [clientGeneratedId, amountMl, consumedAt, localDate]
+      properties:
+        amountMl:
+          type: integer
+          minimum: 1
+        consumedAt:
+          type: string
+          format: date-time
+        localDate:
+          type: string
+          format: date
+        clientGeneratedId:
+          type: string
+          format: uuid
+
+    WaterEntry:
+      type: object
+      required: [id, amountMl, consumedAt, localDate]
+      properties:
+        id:
+          type: string
+          format: uuid
+        amountMl:
+          type: integer
+        consumedAt:
+          type: string
+          format: date-time
+        localDate:
+          type: string
+          format: date
+
+    WaterEntryPatch:
+      type: object
+      minProperties: 1
+      properties:
+        amountMl:
+          type: integer
+          minimum: 1
+        consumedAt:
+          type: string
+          format: date-time
+
+    # ------------------------------------------------------------ recipes
+    IngredientRef:
+      type: object
+      required: [id, name, baseUnit]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        baseUnit:
+          type: string
+          enum: [G, ML]
+
+    RecipeIngredientAmount:
+      type: object
+      required: [value, unit]
+      properties:
+        value:
+          type: number
+          minimum: 0
+        unit:
+          type: string
+          enum: [G, ML]
+
+    IngredientPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IngredientRef"
+        nextCursor:
+          type: string
+          nullable: true
+
+    RecipeTime:
+      type: object
+      required: [preparationSeconds, cookingSeconds, totalSeconds]
+      properties:
+        preparationSeconds:
+          type: integer
+        cookingSeconds:
+          type: integer
+        totalSeconds:
+          type: integer
+
+    RecipeSummary:
+      type: object
+      required: [id, title, coverPhotoUrl, time, difficulty, nutritionPerServing]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        coverPhotoUrl:
+          type: string
+          nullable: true
+          format: uri
+        time:
+          $ref: "#/components/schemas/RecipeTime"
+        difficulty:
+          $ref: "#/components/schemas/Difficulty"
+        nutritionPerServing:
+          $ref: "#/components/schemas/Nutrition"
+
+    RecipeSummaryPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecipeSummary"
+        nextCursor:
+          type: string
+          nullable: true
+
+    RecipeStep:
+      type: object
+      required: [position, text, durationSeconds]
+      properties:
+        position:
+          type: integer
+        text:
+          type: string
+        durationSeconds:
+          type: integer
+          nullable: true
+
+    RecipeIngredientLine:
+      type: object
+      required: [ingredient, amount]
+      properties:
+        ingredient:
+          $ref: "#/components/schemas/IngredientRef"
+        amount:
+          $ref: "#/components/schemas/RecipeIngredientAmount"
+
+    RecipeUserState:
+      type: object
+      required: [favorite, feedback, customized, customization]
+      properties:
+        favorite:
+          type: boolean
+        feedback:
+          type: string
+          enum: [LIKE, DO_NOT_RECOMMEND, NONE]
+        customized:
+          type: boolean
+        customization:
+          type: object
+          nullable: true
+          properties:
+            basedOnVersion:
+              type: integer
+            revision:
+              type: integer
+              minimum: 0
+            updateAvailable:
+              type: boolean
+
+    Recipe:
+      type: object
+      required: [id, version, title, description, photos, servings, time, difficulty, mealTypes, dietTags, nutritionPerServing, ingredients, steps, userState]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        photos:
+          type: array
+          items:
+            type: string
+            format: uri
+        servings:
+          type: number
+        time:
+          $ref: "#/components/schemas/RecipeTime"
+        difficulty:
+          $ref: "#/components/schemas/Difficulty"
+        mealTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MealType"
+        dietTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/DietType"
+        nutritionPerServing:
+          $ref: "#/components/schemas/Nutrition"
+        ingredients:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecipeIngredientLine"
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecipeStep"
+        userState:
+          $ref: "#/components/schemas/RecipeUserState"
+
+    RecipeCustomizationInput:
+      type: object
+      required: [recipeVersion, revision, ingredients]
+      properties:
+        recipeVersion:
+          type: integer
+          minimum: 1
+        revision:
+          type: integer
+          minimum: 0
+        ingredients:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [ingredientId, amount]
+            properties:
+              ingredientId:
+                type: string
+                format: uuid
+              amount:
+                $ref: "#/components/schemas/RecipeIngredientAmount"
+
+    CookingSession:
+      type: object
+      required: [id, status, recipe, recipeVersion, customizationRevision, servings, startedAt, completedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [IN_PROGRESS, COMPLETED, CANCELLED]
+        recipe:
+          $ref: "#/components/schemas/RecipeSummary"
+        recipeVersion:
+          type: integer
+        customizationRevision:
+          type: integer
+          nullable: true
+        servings:
+          type: number
+          minimum: 0.1
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          nullable: true
+          format: date-time
+
+    # ------------------------------------------------------------ shopping
+    CartRecipe:
+      type: object
+      required: [id, recipeId, recipeVersion, customizationRevision, title, servings]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipeId:
+          type: string
+          format: uuid
+        recipeVersion:
+          type: integer
+        customizationRevision:
+          type: integer
+          nullable: true
+        title:
+          type: string
+        servings:
+          type: number
+          format: double
+
+    ShoppingListItem:
+      type: object
+      required: [ingredient, requiredAmount, haveDeduction, extraAmount, buyAmount, bought]
+      properties:
+        ingredient:
+          $ref: "#/components/schemas/IngredientRef"
+        requiredAmount:
+          $ref: "#/components/schemas/Amount"
+        haveDeduction:
+          $ref: "#/components/schemas/Amount"
+        extraAmount:
+          $ref: "#/components/schemas/Amount"
+        buyAmount:
+          $ref: "#/components/schemas/Amount"
+        bought:
+          type: boolean
+
+    Cart:
+      type: object
+      required: [recipes, shoppingList]
+      properties:
+        recipes:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartRecipe"
+        shoppingList:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShoppingListItem"
+
+    # ------------------------------------------------------------ health
+    DailyActivityInput:
+      type: object
+      required: [source, steps, activeCalories, sourceUpdatedAt]
+      properties:
+        source:
+          type: string
+          enum: [APPLE_HEALTH, HEALTH_CONNECT]
+        steps:
+          type: integer
+          minimum: 0
+        activeCalories:
+          type: number
+          minimum: 0
+        sourceUpdatedAt:
+          type: string
+          format: date-time
+
+    DailyActivity:
+      type: object
+      required: [date, source, steps, activeCalories, sourceUpdatedAt]
+      properties:
+        date:
+          type: string
+          format: date
+        source:
+          type: string
+          enum: [APPLE_HEALTH, HEALTH_CONNECT]
+        steps:
+          type: integer
+        activeCalories:
+          type: number
+        sourceUpdatedAt:
+          type: string
+          format: date-time
+
+    WeightMeasurementPatch:
+      type: object
+      minProperties: 1
+      properties:
+        valueKg:
+          type: number
+          format: double
+          minimum: 1
+        measuredAt:
+          type: string
+          format: date-time
+
+    WeightMeasurementInput:
+      oneOf:
+        - type: object
+          required: [valueKg, measuredAt, source]
+          properties:
+            valueKg:
+              type: number
+              format: double
+              minimum: 1
+            measuredAt:
+              type: string
+              format: date-time
+            source:
+              type: string
+              enum: [MANUAL]
+        - type: object
+          required: [valueKg, measuredAt, source, externalId]
+          properties:
+            valueKg:
+              type: number
+              format: double
+              minimum: 1
+            measuredAt:
+              type: string
+              format: date-time
+            source:
+              type: string
+              enum: [APPLE_HEALTH]
+            externalId:
+              type: string
+              minLength: 1
+      discriminator:
+        propertyName: source
+
+    WeightMeasurement:
+      allOf:
+        - $ref: "#/components/schemas/WeightMeasurementInput"
+        - type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              format: uuid
+
+    WeightMeasurementPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeightMeasurement"
+        nextCursor:
+          type: string
+          nullable: true
+
+    # ------------------------------------------------------------ progress
+    DailyProgress:
+      type: object
+      required: [date, calories, protein, fat, carbs, fiber, water, activity, weightKg]
+      properties:
+        date:
+          type: string
+          format: date
+        calories:
+          type: object
+          required: [consumed, target, burned, unlimitedCalories]
+          properties:
+            consumed:
+              type: number
+            target:
+              type: number
+            burned:
+              type: number
+            unlimitedCalories:
+              type: boolean
+        protein:
+          type: object
+          properties:
+            consumedG:
+              type: number
+            targetG:
+              type: number
+        fat:
+          type: object
+          properties:
+            consumedG:
+              type: number
+            targetG:
+              type: number
+        carbs:
+          type: object
+          properties:
+            consumedG:
+              type: number
+            targetG:
+              type: number
+        fiber:
+          type: object
+          properties:
+            consumedG:
+              type: number
+            targetG:
+              type: number
+        water:
+          type: object
+          properties:
+            consumedMl:
+              type: integer
+            targetMl:
+              type: integer
+        activity:
+          type: object
+          properties:
+            steps:
+              type: integer
+            activeCalories:
+              type: number
+        weightKg:
+          type: number
+          nullable: true
+
+    ProgressRange:
+      type: object
+      required: [days, summary]
+      properties:
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailyProgress"
+        summary:
+          type: object
+          required: [averageCalories, averageProteinG, averageFatG, averageCarbsG, averageFiberG, weightChangeKg, averageWaterMl]
+          properties:
+            averageCalories:
+              type: number
+            averageProteinG:
+              type: number
+            averageFatG:
+              type: number
+            averageCarbsG:
+              type: number
+            averageFiberG:
+              type: number
+            weightChangeKg:
+              type: number
+            averageWaterMl:
+              type: number
+
+    # ------------------------------------------------------------ notifications
+    PushDeviceInput:
+      type: object
+      required: [platform, token, deviceId]
+      properties:
+        platform:
+          type: string
+          enum: [IOS, ANDROID]
+        token:
+          type: string
+          minLength: 1
+        deviceId:
+          type: string
+          minLength: 1
+          maxLength: 255
+
+    PushDevice:
+      allOf:
+        - $ref: "#/components/schemas/PushDeviceInput"
+        - type: object
+          required: [id, enabled]
+          properties:
+            id:
+              type: string
+              format: uuid
+            enabled:
+              type: boolean
+
+    NotificationSettings:
+      type: object
+      required: [water, food, weighIn, goalWarning, quietHours]
+      properties:
+        water:
+          type: object
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+        food:
+          type: object
+          required: [enabled, inactiveForMinutes]
+          properties:
+            enabled:
+              type: boolean
+            inactiveForMinutes:
+              type: integer
+        weighIn:
+          type: object
+          required: [enabled, time]
+          properties:
+            enabled:
+              type: boolean
+            time:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+              example: "08:00"
+        goalWarning:
+          type: object
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+        quietHours:
+          type: object
+          required: [start, end]
+          properties:
+            start:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+              example: "23:00"
+            end:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+              example: "08:00"
+
+    NotificationSettingsPatch:
+      type: object
+      minProperties: 1
+      properties:
+        water:
+          type: object
+          minProperties: 1
+          properties:
+            enabled:
+              type: boolean
+        food:
+          type: object
+          minProperties: 1
+          properties:
+            enabled:
+              type: boolean
+            inactiveForMinutes:
+              type: integer
+              minimum: 1
+        weighIn:
+          type: object
+          minProperties: 1
+          properties:
+            enabled:
+              type: boolean
+            time:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+        goalWarning:
+          type: object
+          minProperties: 1
+          properties:
+            enabled:
+              type: boolean
+        quietHours:
+          type: object
+          minProperties: 1
+          properties:
+            start:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+            end:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+
+    # ------------------------------------------------------------ media
+    MediaUploadRequest:
+      type: object
+      required: [contentType, purpose, sizeBytes]
+      properties:
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        purpose:
+          type: string
+          enum: [DISH_PHOTO, RECIPE_PHOTO, SAVED_DISH_PHOTO]
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 10485760
+
+    MediaUpload:
+      type: object
+      required: [mediaId, uploadUrl, uploadMethod, uploadHeaders, expiresAt]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        uploadUrl:
+          type: string
+          format: uri
+        uploadMethod:
+          type: string
+          enum: [PUT]
+        uploadHeaders:
+          type: object
+          additionalProperties:
+            type: string
+        expiresAt:
+          type: string
+          format: date-time
+
+    MediaObject:
+      type: object
+      required: [id, purpose, contentType, sizeBytes, status, url]
+      properties:
+        id:
+          type: string
+          format: uuid
+        purpose:
+          type: string
+          enum: [DISH_PHOTO, RECIPE_PHOTO, SAVED_DISH_PHOTO]
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [PENDING, READY, DELETED]
+        url:
+          type: string
+          nullable: true
+          format: uri
+
+    # ------------------------------------------------------------ meal-plan
+    MealPlanGenerationInput:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        excludedRecipeIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+
+    # ------------------------------------------------------------ meal-plan
+    MealPlanJob:
+      type: object
+      required: [jobId, from, to, status, progress, mealPlanId, errorCode, createdAt, startedAt, completedAt]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [PENDING, RUNNING, COMPLETED, FAILED]
+        progress:
+          type: number
+          nullable: true
+          format: double
+          minimum: 0
+          maximum: 1
+        mealPlanId:
+          type: string
+          nullable: true
+          format: uuid
+        errorCode:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          nullable: true
+          format: date-time
+        completedAt:
+          type: string
+          nullable: true
+          format: date-time
+
+    MealPlanItem:
+      type: object
+      required: [id, type, recipe, servings]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/MealType"
+        recipe:
+          $ref: "#/components/schemas/RecipeSummary"
+        servings:
+          type: number
+
+    MealPlanDay:
+      type: object
+      required: [date, meals]
+      properties:
+        date:
+          type: string
+          format: date
+        meals:
+          type: array
+          items:
+            $ref: "#/components/schemas/MealPlanItem"
+
+    MealPlan:
+      type: object
+      required: [id, from, to, days]
+      properties:
+        id:
+          type: string
+          format: uuid
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/MealPlanDay"
+
+    PlanIngredient:
+      type: object
+      required: [ingredientId, name, amount, unit]
+      properties:
+        ingredientId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        amount:
+          type: number
+        unit:
+          type: string
+          enum: [G, ML]
+
+    MealPlanItemReplacementInput:
+      type: object
+      required: [excludedRecipeIds]
+      properties:
+        excludedRecipeIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+
+    CartImportJob:
+      type: object
+      required: [jobId, status, cartId, errorCode, createdAt, completedAt]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDING, RUNNING, COMPLETED, FAILED]
+        cartId:
+          type: string
+          nullable: true
+          format: uuid
+        errorCode:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          nullable: true
+          format: date-time

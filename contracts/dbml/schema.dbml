@@ -1,0 +1,818 @@
+// COOKie — database-per-service schema, DBML for dbdiagram.io
+//
+// IMPORTANT: there are NO cross-service foreign keys in this project.
+// Each service owns its own PostgreSQL database. References between
+// services (e.g. Nutrition.food_entries.source_id -> Recipe/CustomFood)
+// are logical IDs only, resolved via REST or NATS events — never SQL joins.
+// Grouping below (via `Note`) marks which tables belong to which service;
+// `Ref` lines only connect tables WITHIN the same service.
+
+//////////////////////////////////////////////////////////////////////////
+// IDENTITY SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table identity_accounts as IDA {
+  id uuid [pk]
+  status varchar [not null, note: 'PENDING_VERIFICATION | ACTIVE | DELETING | DELETED; account.created is emitted only on transition to ACTIVE']
+  created_at timestamptz [not null]
+  deletion_requested_at timestamptz [null]
+  deleted_at timestamptz [null]
+
+  Note: 'Service: Identity'
+}
+
+Table identity_oauth_identities as IDO {
+  id uuid [pk]
+  account_id uuid [not null, ref: > IDA.id]
+  provider varchar [not null, note: 'YANDEX | VK | MAIL']
+  provider_subject varchar [not null]
+  email varchar [null]
+  created_at timestamptz [not null]
+
+  indexes {
+    (provider, provider_subject) [unique]
+  }
+
+  Note: 'Service: Identity'
+}
+
+Table identity_email_credentials as IDE {
+  account_id uuid [pk, ref: - IDA.id]
+  email varchar [not null, unique, note: 'canonical normalized email; application compares the canonical form']
+  password_hash varchar [not null, note: 'Argon2id encoded hash containing salt and parameters; plaintext is never stored']
+  email_verified_at timestamptz [null]
+  password_changed_at timestamptz [not null]
+  failed_login_count integer [not null, default: 0]
+  locked_until timestamptz [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Identity. One email/password credential per account; OAuth-only accounts have no row'
+}
+
+Table identity_auth_action_tokens as IDAT {
+  id uuid [pk]
+  account_id uuid [not null, ref: > IDA.id]
+  purpose varchar [not null, note: 'EMAIL_VERIFICATION | PASSWORD_RESET']
+  token_hash varchar [not null, unique, note: 'hash of a cryptographically random single-use token']
+  expires_at timestamptz [not null]
+  consumed_at timestamptz [null]
+  revoked_at timestamptz [null]
+  created_at timestamptz [not null]
+
+  indexes {
+    (account_id, purpose, created_at) [name: 'idx_identity_auth_action_tokens_account_purpose']
+    (expires_at) [name: 'idx_identity_auth_action_tokens_expires_at']
+  }
+
+  Note: 'Service: Identity. Tokens are short-lived, single-use and persisted in PostgreSQL; Redis is not a source of truth'
+}
+
+Table identity_refresh_sessions as IDR {
+  id uuid [pk]
+  account_id uuid [not null, ref: > IDA.id]
+  family_id uuid [not null, note: 'stable id for refresh rotation/replay detection']
+  token_hash varchar [not null, unique, note: 'hash only; raw refresh token exists only on the client']
+  device_id varchar [null]
+  replaced_by_session_id uuid [null, ref: > IDR.id]
+  created_at timestamptz [not null]
+  expires_at timestamptz [not null]
+  last_used_at timestamptz [null]
+  revoked_at timestamptz [null]
+  revoke_reason varchar [null, note: 'LOGOUT | LOGOUT_ALL | ROTATED | REPLAY_DETECTED | PASSWORD_CHANGED | ACCOUNT_DELETION']
+  reuse_detected_at timestamptz [null]
+
+  indexes {
+    (account_id, revoked_at) [name: 'idx_identity_refresh_sessions_account_active']
+    (family_id) [name: 'idx_identity_refresh_sessions_family']
+    (expires_at) [name: 'idx_identity_refresh_sessions_expires_at']
+  }
+
+  Note: 'Service: Identity. Durable rotation state is kept in PostgreSQL; replay of a rotated token revokes its entire family'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// USER SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table user_profiles as UP {
+  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id, no FK']
+  sex varchar
+  birth_date date
+  height_cm decimal(5,2)
+  activity_level varchar [note: 'LOW | MODERATE | HIGH']
+  timezone varchar
+  locale varchar
+  onboarding_completed boolean [not null, default: false]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: User'
+}
+
+Table user_nutrition_goal_versions as UNG {
+  id uuid [pk]
+  user_id uuid [not null, ref: > UP.user_id]
+  effective_from date [not null]
+  target_weight_kg decimal(6,2)
+  target_weight_change_per_week decimal(4,2)
+  calorie_target decimal(8,2) [not null]
+  protein_g decimal(8,2)
+  fat_g decimal(8,2)
+  carbs_g decimal(8,2)
+  fiber_g decimal(8,2)
+  source varchar [not null, note: 'CALCULATED | MANUAL']
+  created_at timestamptz [not null]
+
+  indexes {
+    (user_id, effective_from) [name: 'idx_goal_versions_user_date']
+  }
+
+  Note: 'Service: User'
+}
+
+Table user_hydration_goal_versions as UHG {
+  id uuid [pk]
+  user_id uuid [not null, ref: > UP.user_id]
+  effective_from date [not null]
+  target_ml integer [not null]
+  source varchar [not null, note: 'CALCULATED | MANUAL']
+  created_at timestamptz [not null]
+
+  Note: 'Service: User'
+}
+
+Table user_diet_preferences as UDP {
+  user_id uuid [not null, ref: > UP.user_id]
+  diet_type varchar [not null, note: 'BALANCED | HIGH_PROTEIN | VEGETARIAN | VEGAN | PESCATARIAN | LOW_CARB | KETO | MEDITERRANEAN | GLUTEN_FREE | LACTOSE_FREE']
+
+  indexes {
+    (user_id, diet_type) [pk]
+  }
+
+  Note: 'Service: User'
+}
+
+Table user_allergies as UA {
+  user_id uuid [not null, ref: > UP.user_id]
+  allergen varchar [not null, note: 'GLUTEN | CRUSTACEANS | EGGS | FISH | PEANUTS | SOY | MILK | TREE_NUTS | CELERY | MUSTARD | SESAME | SULPHITES | LUPIN | MOLLUSCS']
+
+  indexes {
+    (user_id, allergen) [pk]
+  }
+
+  Note: 'Service: User'
+}
+
+Table user_daily_goal_overrides as UDO {
+  id uuid [pk]
+  user_id uuid [not null, ref: > UP.user_id]
+  local_date date [not null]
+  calorie_target decimal(8,2) [null]
+  protein_g decimal(8,2) [null]
+  fat_g decimal(8,2) [null]
+  carbs_g decimal(8,2) [null]
+  fiber_g decimal(8,2) [null]
+  unlimited_calories boolean [not null, default: false]
+  type varchar [not null, note: 'CUSTOM | CHEAT_DAY']
+  cheat_month date [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, local_date) [unique]
+    (user_id, cheat_month) [unique, note: 'WHERE type = CHEAT_DAY — enforces 1 cheat day per month at DB level']
+  }
+
+  Note: 'Service: User'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// FOOD CATALOG SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table food_catalog_custom_foods as FCF {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  name varchar [not null]
+  brand varchar [null]
+  base_unit varchar [not null, note: 'G | ML']
+  calories_per_100 decimal(10,3)
+  protein_per_100 decimal(10,3)
+  fat_per_100 decimal(10,3)
+  carbs_per_100 decimal(10,3)
+  fiber_per_100 decimal(10,3)
+  archived boolean [not null, default: false]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: Food Catalog. Open Food Facts data is NOT persisted — Redis cache only (off:search:<hash> TTL 10m, off:barcode:<code> TTL 1h)'
+}
+
+Table food_catalog_custom_food_serving as FCS {
+  food_id uuid [pk, ref: - FCF.id]
+  name varchar [not null, default: 'piece']
+  base_amount decimal(10,3) [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Food Catalog'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// NUTRITION SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table nutrition_meals as NM {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  local_date date [not null]
+  eaten_at timestamptz [not null]
+  timezone varchar [not null]
+  client_generated_id uuid [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  indexes {
+    (user_id, client_generated_id) [unique]
+    (user_id, local_date) [name: 'idx_meals_user_date']
+    (user_id, eaten_at) [name: 'idx_meals_user_eaten_at']
+  }
+
+  Note: 'Service: Nutrition'
+}
+
+Table nutrition_dishes as ND {
+  id uuid [pk]
+  meal_id uuid [not null, ref: > NM.id]
+  name varchar [null]
+  source_type varchar [not null, note: 'MANUAL | RECIPE | SAVED_DISH | AI']
+  source_id uuid [null, note: 'logical ref -> Recipe.recipes.id or Nutrition.saved_dishes.id, no FK']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: Nutrition'
+}
+
+Table nutrition_dish_media as NDM {
+  dish_id uuid [not null, ref: > ND.id]
+  media_id uuid [not null, note: 'logical ref -> Media.media_objects.id']
+  position integer [not null]
+
+  indexes {
+    (dish_id, media_id) [pk]
+  }
+
+  Note: 'Service: Nutrition'
+}
+
+Table nutrition_food_entries as NF {
+  id uuid [pk]
+  dish_id uuid [not null, ref: > ND.id]
+  source_type varchar [not null, note: 'OPEN_FOOD_FACTS | CUSTOM | MANUAL | AI; provenance only, never resolved during diary writes']
+  source_external_id varchar [null]
+  name_snapshot varchar [not null]
+  brand_snapshot varchar [null]
+  base_unit varchar [not null, note: 'G | ML']
+  amount_base decimal(12,3) [not null]
+  display_unit varchar [not null, note: 'G | ML | PIECE']
+  display_quantity decimal(12,3) [not null]
+  piece_base_amount_snapshot decimal(10,3) [null]
+  calories_per_100_snapshot decimal(10,3) [null]
+  protein_per_100_snapshot decimal(10,3) [null]
+  fat_per_100_snapshot decimal(10,3) [null]
+  carbs_per_100_snapshot decimal(10,3) [null]
+  fiber_per_100_snapshot decimal(10,3) [null]
+  calories_total decimal(10,3) [not null]
+  protein_total decimal(10,3) [null]
+  fat_total decimal(10,3) [null]
+  carbs_total decimal(10,3) [null]
+  fiber_total decimal(10,3) [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: Nutrition. Client-provided editable snapshot; Nutrition validates and calculates totals locally. Future OFF/CustomFood/AI updates never mutate the entry and diary writes do not call Food Catalog'
+}
+
+Table nutrition_saved_dishes as NSD {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  name varchar [not null]
+  media_id uuid [null, note: 'logical ref -> Media.media_objects.id']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null, default: 1]
+
+  Note: 'Service: Nutrition'
+}
+
+Table nutrition_saved_dish_items as NSI {
+  id uuid [pk]
+  saved_dish_id uuid [not null, ref: > NSD.id]
+  name_snapshot varchar [not null]
+  source_type varchar [not null]
+  source_id uuid [null, note: 'logical ref -> Food Catalog/Recipe, no FK']
+  base_unit varchar [not null]
+  amount_base decimal(12,3) [not null]
+  calories_per_100_snapshot decimal(10,3) [null]
+  protein_per_100_snapshot decimal(10,3) [null]
+  fat_per_100_snapshot decimal(10,3) [null]
+  carbs_per_100_snapshot decimal(10,3) [null]
+  fiber_per_100_snapshot decimal(10,3) [null]
+  position integer [not null]
+
+  Note: 'Service: Nutrition. Snapshot fields make saved-dish previews stable and avoid cross-service reads'
+}
+
+Table nutrition_water_entries as NW {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  amount_ml integer [not null]
+  consumed_at timestamptz [not null]
+  local_date date [not null]
+  client_generated_id uuid [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, local_date) [name: 'idx_water_user_date']
+    (user_id, client_generated_id) [unique, note: 'Client-generated id is required by the API and makes POST idempotent']
+  }
+
+  Note: 'Service: Nutrition'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// RECIPE SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table recipe_ingredients as RI {
+  id uuid [pk]
+  name varchar [not null]
+  base_unit varchar [not null, note: 'G | ML']
+  calories_per_100 decimal(10,3)
+  protein_per_100 decimal(10,3)
+  fat_per_100 decimal(10,3)
+  carbs_per_100 decimal(10,3)
+  fiber_per_100 decimal(10,3)
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Recipe. Canonical cooking ingredient — distinct from Food Catalog product'
+}
+
+Table recipe_ingredient_allergens as RIA {
+  ingredient_id uuid [not null, ref: > RI.id]
+  allergen varchar [not null]
+
+  indexes {
+    (ingredient_id, allergen) [pk]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table recipes as R {
+  id uuid [pk]
+  status varchar [not null, note: 'DRAFT | PUBLISHED | ARCHIVED']
+  current_version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_versions as RV {
+  id uuid [pk]
+  recipe_id uuid [not null, ref: > R.id]
+  version_number integer [not null]
+  title varchar [not null]
+  description text
+  default_servings decimal(6,2) [not null]
+  prep_seconds integer
+  cook_seconds integer
+  difficulty varchar [note: 'EASY | MEDIUM | HARD']
+  published_at timestamptz [null]
+
+  indexes {
+    (recipe_id, version_number) [unique]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_version_nutrition as RVN {
+  recipe_version_id uuid [pk, ref: - RV.id]
+  calories_total decimal(10,3)
+  protein_total decimal(10,3)
+  fat_total decimal(10,3)
+  carbs_total decimal(10,3)
+  fiber_total decimal(10,3)
+  calories_per_serving decimal(10,3)
+  protein_per_serving decimal(10,3)
+  fat_per_serving decimal(10,3)
+  carbs_per_serving decimal(10,3)
+  fiber_per_serving decimal(10,3)
+
+  Note: 'Service: Recipe. Precomputed snapshot at publish time — GET does not recalculate every time'
+}
+
+Table recipe_version_photos as RVP {
+  recipe_version_id uuid [not null, ref: > RV.id]
+  media_id uuid [not null, note: 'logical ref -> Media.media_objects.id']
+  position integer [not null]
+
+  indexes {
+    (recipe_version_id, media_id) [pk]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_version_ingredients as RVI {
+  id uuid [pk]
+  recipe_version_id uuid [not null, ref: > RV.id]
+  ingredient_id uuid [not null, ref: > RI.id]
+  amount_base decimal(12,3) [not null]
+  position integer [not null]
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_steps as RS {
+  id uuid [pk]
+  recipe_version_id uuid [not null, ref: > RV.id]
+  position integer [not null]
+  text text [not null]
+  duration_seconds integer [null]
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_tags as RT {
+  recipe_version_id uuid [not null, ref: > RV.id]
+  tag_type varchar [not null]
+  tag_value varchar [not null]
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_user_customizations as RUC {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  recipe_id uuid [not null, ref: > R.id]
+  base_recipe_version_id uuid [not null, ref: > RV.id]
+  revision bigint [not null, default: 1]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, recipe_id) [unique]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_customization_ingredients as RCI {
+  customization_id uuid [not null, ref: > RUC.id]
+  ingredient_id uuid [not null, ref: > RI.id]
+  amount_base decimal(12,3) [not null]
+  position integer [not null]
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_favorites as RF {
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  recipe_id uuid [not null, ref: > R.id]
+  created_at timestamptz [not null]
+
+  indexes {
+    (user_id, recipe_id) [pk]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_feedback as RFB {
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  recipe_id uuid [not null, ref: > R.id]
+  feedback varchar [not null, note: 'LIKE | DO_NOT_RECOMMEND']
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, recipe_id) [pk]
+  }
+
+  Note: 'Service: Recipe'
+}
+
+Table recipe_cooking_sessions as RCS {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  recipe_id uuid [not null, ref: > R.id]
+  recipe_version integer [not null]
+  customization_revision bigint [null]
+  servings decimal(6,2) [not null]
+  status varchar [not null, note: 'IN_PROGRESS | COMPLETED | CANCELLED']
+  started_at timestamptz [not null]
+  completed_at timestamptz [null]
+
+  Note: 'Service: Recipe'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// SHOPPING SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table shopping_carts as SC {
+  id uuid [pk]
+  user_id uuid [not null, unique, note: 'logical ref -> Identity.accounts.id']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Shopping'
+}
+
+Table shopping_cart_recipe_items as SCR {
+  id uuid [pk]
+  cart_id uuid [not null, ref: > SC.id]
+  recipe_id uuid [not null, note: 'logical ref -> Recipe.recipes.id']
+  recipe_version integer [not null]
+  customization_revision bigint [null]
+  recipe_title_snapshot varchar [not null]
+  servings decimal(6,2) [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Shopping'
+}
+
+Table shopping_cart_import_jobs as SCIJ {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  meal_plan_id uuid [not null, note: 'logical ref -> Meal Planner.meal_plans.id']
+  from_date date [not null]
+  to_date date [not null]
+  status varchar [not null, note: 'PENDING | RUNNING | COMPLETED | FAILED']
+  cart_id uuid [null, ref: > SC.id]
+  error_code varchar [null]
+  created_at timestamptz [not null]
+  completed_at timestamptz [null]
+
+  indexes {
+    (user_id, created_at) [name: 'idx_cart_import_jobs_user_created']
+  }
+
+  Note: 'Service: Shopping. Tracks asynchronous imports from Meal Planner and provides a pollable result'
+}
+
+Table shopping_cart_recipe_ingredients as SCI {
+  cart_recipe_item_id uuid [not null, ref: > SCR.id]
+  ingredient_id uuid [not null, note: 'logical ref -> Recipe.ingredients.id']
+  ingredient_name_snapshot varchar [not null]
+  base_amount_for_item decimal(12,3) [not null]
+  base_unit varchar [not null]
+
+  Note: 'Service: Shopping. Snapshot — never joins to Recipe DB'
+}
+
+Table shopping_adjustments as SA {
+  cart_id uuid [not null, ref: > SC.id]
+  ingredient_id uuid [not null, note: 'logical ref -> Recipe.ingredients.id']
+  have_deduction decimal(12,3) [not null, default: 0]
+  extra_amount decimal(12,3) [not null, default: 0]
+  bought boolean [not null, default: false]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (cart_id, ingredient_id) [pk]
+  }
+
+  Note: 'Service: Shopping. required_amount is NOT stored — derived from shopping_cart_recipe_ingredients'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// HEALTH SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table health_sources as HS {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  type varchar [not null, note: 'APPLE_HEALTH | HEALTH_CONNECT']
+  device_id varchar [null]
+  created_at timestamptz [not null]
+  last_sync_at timestamptz [null]
+
+  Note: 'Service: Health'
+}
+
+Table health_daily_activity_sources as HDA {
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  local_date date [not null]
+  source varchar [not null]
+  steps integer
+  active_calories decimal(10,3)
+  source_updated_at timestamptz [not null]
+  received_at timestamptz [not null]
+
+  indexes {
+    (user_id, local_date, source) [pk]
+  }
+
+  Note: 'Service: Health'
+}
+
+Table health_weight_measurements as HW {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  value_kg decimal(6,2) [not null]
+  measured_at timestamptz [not null]
+  source varchar [not null, note: 'MANUAL | APPLE_HEALTH']
+  external_id varchar [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, source, external_id) [unique]
+  }
+
+  Note: 'Service: Health'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// PROGRESS SERVICE (event-driven read model)
+//////////////////////////////////////////////////////////////////////////
+
+Table progress_daily_progress as PDP {
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  local_date date [not null]
+  calories_consumed decimal(10,3)
+  protein_g decimal(10,3)
+  fat_g decimal(10,3)
+  carbs_g decimal(10,3)
+  fiber_g decimal(10,3)
+  water_ml integer
+  steps integer
+  active_calories decimal(10,3)
+  calorie_target decimal(10,3)
+  protein_target_g decimal(10,3)
+  fat_target_g decimal(10,3)
+  carbs_target_g decimal(10,3)
+  fiber_target_g decimal(10,3)
+  water_target_ml integer
+  unlimited_calories boolean [not null, default: false]
+  weight_kg decimal(6,2) [null]
+  food_logged boolean [not null, default: false]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, local_date) [pk]
+  }
+
+  Note: 'Service: Progress. Built entirely from NATS events (nutrition.*, health.*, user.*) — never queries other service DBs directly'
+}
+
+Table progress_user_streaks as PUS {
+  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
+  current_streak integer [not null, default: 0]
+  longest_streak integer [not null, default: 0]
+  last_logged_date date [null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Progress'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// NOTIFICATION SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table notification_push_devices as NPD {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  platform varchar [not null, note: 'IOS | ANDROID']
+  device_id varchar [not null]
+  push_token varchar [not null]
+  enabled boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (user_id, device_id) [unique]
+  }
+
+  Note: 'Service: Notification'
+}
+
+Table notification_settings as NST {
+  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
+  water_enabled boolean [not null, default: true]
+  food_enabled boolean [not null, default: true]
+  food_inactive_minutes integer [not null, default: 240]
+  weigh_enabled boolean [not null, default: true]
+  weigh_time time
+  goal_warning_enabled boolean [not null, default: true]
+  quiet_start time
+  quiet_end time
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Notification'
+}
+
+Table notification_state as NS {
+  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
+  last_meal_at timestamptz [null]
+  last_water_at timestamptz [null]
+  next_food_reminder_at timestamptz [null]
+  next_water_reminder_at timestamptz [null]
+  timezone varchar [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Service: Notification. Redis food_reminders sorted-set can be rebuilt from this table if Redis is lost'
+}
+
+Table notification_delivery as ND2 {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  type varchar [not null]
+  sent_at timestamptz [not null]
+  status varchar [not null, note: 'SENT | FAILED']
+  provider_message_id varchar [null]
+
+  Note: 'Service: Notification'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// MEDIA SERVICE
+//////////////////////////////////////////////////////////////////////////
+
+Table media_objects as MO {
+  id uuid [pk]
+  owner_user_id uuid [null, note: 'logical ref -> Identity.accounts.id']
+  purpose varchar [not null, note: 'DISH_PHOTO | RECIPE_PHOTO | SAVED_DISH_PHOTO']
+  storage_key varchar [not null]
+  content_type varchar [not null]
+  size_bytes bigint [not null]
+  status varchar [not null, note: 'PENDING | READY | DELETED']
+  created_at timestamptz [not null]
+  completed_at timestamptz [null]
+  deleted_at timestamptz [null]
+
+  Note: 'Service: Media. Binary lives in S3-compatible Object Storage, not PostgreSQL'
+}
+
+//////////////////////////////////////////////////////////////////////////
+// MEAL PLANNER SERVICE (premium)
+//////////////////////////////////////////////////////////////////////////
+
+Table meal_planner_jobs as MPJ {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  from_date date [not null]
+  to_date date [not null]
+  status varchar [not null, note: 'PENDING | RUNNING | COMPLETED | FAILED']
+  progress decimal(4,3) [null]
+  meal_plan_id uuid [null, note: 'logical ref -> meal_plans.id after successful generation']
+  created_at timestamptz [not null]
+  started_at timestamptz [null]
+  completed_at timestamptz [null]
+  error_code varchar [null]
+
+  Note: 'Service: Meal Planner'
+}
+
+Table meal_plans as MP {
+  id uuid [pk]
+  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  from_date date [not null]
+  to_date date [not null]
+  created_at timestamptz [not null]
+  algorithm_version varchar [not null]
+
+  Note: 'Service: Meal Planner'
+}
+
+Table meal_plan_days as MPD {
+  id uuid [pk]
+  meal_plan_id uuid [not null, ref: > MP.id]
+  local_date date [not null]
+
+  Note: 'Service: Meal Planner'
+}
+
+Table meal_plan_items as MPI {
+  id uuid [pk]
+  meal_plan_day_id uuid [not null, ref: > MPD.id]
+  meal_type varchar [not null, note: 'BREAKFAST | LUNCH | DINNER | SNACK']
+  recipe_id uuid [not null, note: 'logical ref -> Recipe.recipes.id']
+  recipe_version integer [not null]
+  servings decimal(6,2) [not null]
+  position integer [not null]
+
+  Note: 'Service: Meal Planner'
+}

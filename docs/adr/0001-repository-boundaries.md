@@ -1,11 +1,11 @@
 # ADR 0001: границы репозиториев
 
-- Status: accepted
+- Status: accepted; backend language superseded by ADR 0003
 - Date: 2026-08-10
 
 ## Decision
 
-Исполняемый продукт хранится в одном монорепозитории: Go API, Kotlin
+Исполняемый продукт хранится в одном монорепозитории: backend, Kotlin
 Multiplatform client, API-контракты и Terraform. Исследования и требования
 хранятся в приватном `cookie-product`, одноразовые эксперименты — в
 `cookie-labs`.

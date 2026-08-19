@@ -1,0 +1,15 @@
+%% media service schema — derived from media.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  MediaObjects {
+    uuid id PK
+    uuid owner_user_id
+    varchar purpose
+    varchar storage_key
+    varchar content_type
+    bigint size_bytes
+    varchar status
+    timestamptz created_at
+    timestamptz completed_at
+    timestamptz deleted_at
+  }

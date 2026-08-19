@@ -1,0 +1,56 @@
+%% shopping service schema — derived from shopping.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  Carts {
+    uuid id PK
+    uuid user_id UK
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  CartRecipeItems {
+    uuid id PK
+    uuid cart_id
+    uuid recipe_id
+    integer recipe_version
+    bigint customization_revision
+    varchar recipe_title_snapshot
+    decimal servings
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  CartImportJobs {
+    uuid id PK
+    uuid user_id
+    uuid meal_plan_id
+    date from_date
+    date to_date
+    varchar status
+    uuid cart_id
+    varchar error_code
+    timestamptz created_at
+    timestamptz completed_at
+  }
+
+  CartRecipeIngredients {
+    uuid cart_recipe_item_id
+    uuid ingredient_id
+    varchar ingredient_name_snapshot
+    decimal base_amount_for_item
+    varchar base_unit
+  }
+
+  Adjustments {
+    uuid cart_id
+    uuid ingredient_id
+    decimal have_deduction
+    decimal extra_amount
+    boolean bought
+    timestamptz updated_at
+  }
+
+  Carts ||--o{ CartRecipeItems : "cart_id"
+  Carts ||--o{ CartImportJobs : "cart_id"
+  CartRecipeItems ||--o{ CartRecipeIngredients : "cart_recipe_item_id"
+  Carts ||--o{ Adjustments : "cart_id"

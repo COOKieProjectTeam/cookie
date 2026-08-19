@@ -1,0 +1,44 @@
+%% meal-planner service schema — derived from meal-planner.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  Jobs {
+    uuid id PK
+    uuid user_id
+    date from_date
+    date to_date
+    varchar status
+    decimal progress
+    uuid meal_plan_id
+    timestamptz created_at
+    timestamptz started_at
+    timestamptz completed_at
+    varchar error_code
+  }
+
+  Plans {
+    uuid id PK
+    uuid user_id
+    date from_date
+    date to_date
+    timestamptz created_at
+    varchar algorithm_version
+  }
+
+  PlanDays {
+    uuid id PK
+    uuid meal_plan_id
+    date local_date
+  }
+
+  PlanItems {
+    uuid id PK
+    uuid meal_plan_day_id
+    varchar meal_type
+    uuid recipe_id
+    integer recipe_version
+    decimal servings
+    integer position
+  }
+
+  Plans ||--o{ PlanDays : "meal_plan_id"
+  PlanDays ||--o{ PlanItems : "meal_plan_day_id"

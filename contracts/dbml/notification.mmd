@@ -1,0 +1,45 @@
+%% notification service schema — derived from notification.dbml
+%% Cross-service references are intentionally omitted.
+erDiagram
+  PushDevices {
+    uuid id PK
+    uuid user_id
+    varchar platform
+    varchar device_id
+    varchar push_token
+    boolean enabled
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  Settings {
+    uuid user_id PK
+    boolean water_enabled
+    boolean food_enabled
+    integer food_inactive_minutes
+    boolean weigh_enabled
+    time weigh_time
+    boolean goal_warning_enabled
+    time quiet_start
+    time quiet_end
+    timestamptz updated_at
+  }
+
+  State {
+    uuid user_id PK
+    timestamptz last_meal_at
+    timestamptz last_water_at
+    timestamptz next_food_reminder_at
+    timestamptz next_water_reminder_at
+    varchar timezone
+    timestamptz updated_at
+  }
+
+  Delivery {
+    uuid id PK
+    uuid user_id
+    varchar type
+    timestamptz sent_at
+    varchar status
+    varchar provider_message_id
+  }
