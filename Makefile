@@ -17,7 +17,7 @@ fmt:
 	gofmt -w $$(find apps/api -name '*.go' -type f)
 
 openapi-generate:
-	./gradlew :backend:services:identity:openApiGenerate :backend:services:identity:generateRuntimeOpenApi generateKmpPublicClient
+	./gradlew :backend:services:identity:openApiGenerate :backend:services:identity:generateRuntimeOpenApi bundlePublicOpenApi validateBundledPublicOpenApi generateKmpPublicClient
 
 compose-up:
 	$(COMPOSE) -f deploy/docker/compose.yaml up --build

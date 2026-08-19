@@ -11,7 +11,7 @@
 | `backend/services/identity` | Kotlin/JVM Identity Service v1 (email/password) |
 | `backend/platform` | тонкие Kotlin runtime/test starters |
 | `backend/tools/notification-sink` | локальная расшифровка email-событий и доставка в Mailpit |
-| `contracts/openapi` | публичный контракт API |
+| `contracts/openapi/public` | активные публичные контракты по одному на сервис |
 | `infra/terraform` | инфраструктура и окружения |
 | `deploy/docker` | локальная контейнерная сборка |
 | `docs/adr` | технические решения |
@@ -26,7 +26,9 @@ outbox и idempotent inbox для обмена событиями через NAT
 наблюдаемости.
 
 HTTP transport следует contract-first подходу: server interfaces и клиенты
-генерируются из OpenAPI, а сгенерированный код не редактируется вручную.
+генерируются из service-owned OpenAPI. Общий mobile/gateway bundle автоматически
+собирается только из активных сервисных контрактов; сгенерированный код не
+редактируется вручную.
 
 Начинать чтение архитектуры следует с
 [`docs/architecture/README.md`](docs/architecture/README.md). Первым production

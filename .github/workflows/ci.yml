@@ -27,7 +27,7 @@ jobs:
           distribution: temurin
           java-version: "25"
       - uses: gradle/actions/setup-gradle@v5
-      - run: ./gradlew :backend:services:identity:check :backend:tools:notification-sink:check
+      - run: ./gradlew :backend:services:identity:check :backend:tools:notification-sink:check generateKmpPublicClient
 
   terraform:
     runs-on: ubuntu-latest

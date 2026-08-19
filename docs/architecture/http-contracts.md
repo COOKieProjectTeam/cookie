@@ -4,7 +4,9 @@
 
 | Contract | Scope | Owner |
 |---|---|---|
-| `contracts/openapi/openapi.yaml` | Public application API | Caddy routes to tag owner |
+| `contracts/openapi/public/<service-id>.yaml` | Implemented public API of one service | Deployable service |
+| `build/generated/openapi/bundled/public.yaml` | Generated active mobile/gateway API | Repository build |
+| `contracts/openapi/planned.yaml` | Non-active API roadmap; never used for generation | Product architecture |
 | `contracts/openapi/runtime.yaml` | Per-component liveness/readiness | Each deployable component |
 | `contracts/openapi/internal/<service-id>.yaml` | Whitelisted synchronous calls | Callee service |
 | `contracts/openapi/generation.yaml` | Generation policy and targets | Repository build |
@@ -12,11 +14,21 @@
 The `health` tag means domain health data. The `system` tag means operational
 availability. They must never share an owner because their names sound similar.
 
-## Tag ownership
+## Per-service ownership and bundle
 
-Public operations are assigned by `openapi_tags` in
-`model/services.yaml`. An operation with an unknown tag or multiple conflicting
-owners fails contract validation.
+Each implemented service owns one public source contract named by `service-id`.
+Adding a file to `contracts/openapi/public/` requires a compiling generated
+server interface and handwritten handler in that service. Future operations stay
+in `planned.yaml` and cannot appear in generated clients.
+
+`bundlePublicOpenApi` merges active service contracts into disposable build
+output. It rejects duplicate routes and conflicting tags, components, server
+definitions or top-level security defaults. The KMP client and gateway-facing
+validation consume this generated bundle, never the roadmap contract.
+
+Public operations remain assigned by `openapi_tags` in `model/services.yaml`.
+An operation with an unknown tag or multiple conflicting owners fails contract
+validation.
 
 ## Generated boundary
 
@@ -52,13 +64,14 @@ and must be backed by `model/sync-calls.yaml`. Full enforcement rules are in
 
 ## Required CI gates
 
-1. Parse and validate every OpenAPI document.
-2. Require globally unique and stable `operationId` values per document.
-3. Resolve every local `$ref`.
-4. Verify public tags have exactly one owner.
-5. Run all generation targets using a pinned generator version.
-6. Compile generated server interfaces and clients.
-7. Fail if regeneration changes tracked files or generated contract tests fail.
-8. Verify every internal permission and caller against callee policy and the
+1. Parse and validate every active per-service OpenAPI document.
+2. Generate and validate the active public bundle.
+3. Require globally unique and stable `operationId` values in the bundle.
+4. Resolve every local `$ref`.
+5. Verify public tags have exactly one owner.
+6. Run all generation targets using a pinned generator version.
+7. Compile generated server interfaces and clients.
+8. Fail if regeneration changes tracked files or generated contract tests fail.
+9. Verify every internal permission and caller against callee policy and the
    synchronous dependency model.
-9. Reject internal routes exposed by public gateway configuration.
+10. Reject internal routes exposed by public gateway configuration.

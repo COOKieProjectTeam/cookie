@@ -2,7 +2,7 @@
 
 Identity v1 supports email/password registration, email confirmation, login,
 refresh rotation, idempotent logout and ES256 JWKS. The public transport is
-generated from the `auth` tag in `contracts/openapi/openapi.yaml`; generated
+generated from the service-owned `contracts/openapi/public/identity.yaml`; generated
 sources live under `build/generated` and are never committed.
 
 ## Local run

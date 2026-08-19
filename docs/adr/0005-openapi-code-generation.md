@@ -3,6 +3,8 @@
 - Status: accepted
 - Date: 2026-08-19
 
+Public contract ownership and active bundle generation are clarified by ADR 0010.
+
 ## Context
 
 Публичный API обслуживается несколькими Kotlin/JVM-сервисами и используется
@@ -32,7 +34,7 @@ Generated sources размещаются в Gradle build directories и не к�
 
 Operational endpoints отделены от домена:
 
-- public `/healthz` в `openapi.yaml` принадлежит API Gateway;
+- public `/healthz` в service-owned public contract принадлежит API Gateway;
 - `/healthz` и `/readyz` каждого backend-компонента определены в `runtime.yaml`;
 - Health Data Service обслуживает activity/weight API под tag `health`, но не
   probes других сервисов.

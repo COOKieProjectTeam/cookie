@@ -9,7 +9,7 @@ stateful: true
 database: identity
 openapi_tags: [auth]
 public_openapi:
-  source: contracts/openapi/openapi.yaml
+  source: contracts/openapi/public/identity.yaml
   tag: auth
 runtime_openapi: contracts/openapi/runtime.yaml
 messaging:

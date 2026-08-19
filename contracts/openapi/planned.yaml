@@ -1,9 +1,11 @@
 openapi: 3.0.3
+x-contract-status: roadmap-only
 info:
-  title: COOKie API
+  title: COOKie API roadmap (non-active)
   version: 0.2.0
   description: >
-    Публичный контракт мобильного/админ клиента к API Gateway / Mobile BFF.
+    Неактивный roadmap целевого API; этот файл не используется для генерации
+    server interfaces или клиентов. Публичный контракт мобильного/админ клиента к API Gateway / Mobile BFF.
     Все ручки проходят через Gateway; клиент никогда не обращается к
     внутренним сервисам, PostgreSQL, Redis или NATS напрямую.
 servers:

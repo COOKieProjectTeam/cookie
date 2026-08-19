@@ -32,15 +32,16 @@ val generatedRuntime = layout.buildDirectory.dir("generated/openapi/runtime")
 
 openApiGenerate {
     generatorName.set("kotlin-spring")
-    inputSpec.set(rootProject.layout.projectDirectory.file("contracts/openapi/openapi.yaml").asFile.absolutePath)
+    cleanupOutput.set(true)
+    inputSpec.set(rootProject.layout.projectDirectory.file("contracts/openapi/public/identity.yaml").asFile.absolutePath)
     outputDir.set(generatedPublic.get().asFile.absolutePath)
     apiPackage.set("com.cookie.identity.generated.api")
     modelPackage.set("com.cookie.identity.generated.model")
     packageName.set("com.cookie.identity.generated")
     globalProperties.set(
         mapOf(
-            "apis" to "Auth",
-            "models" to "EmailRegistrationRequest,EmailLoginRequest,EmailActionRequest,EmailVerificationConfirmRequest,RefreshTokenRequest,TokenPair,TokenPairWithUser,AuthenticatedUser,JsonWebKeySet,JsonWebKey,Error",
+            "apis" to "",
+            "models" to "",
             "supportingFiles" to "ApiUtil.kt",
         ),
     )
@@ -60,7 +61,7 @@ openApiGenerate {
 }
 
 openApiValidate {
-    inputSpec.set(rootProject.layout.projectDirectory.file("contracts/openapi/openapi.yaml").asFile.absolutePath)
+    inputSpec.set(rootProject.layout.projectDirectory.file("contracts/openapi/public/identity.yaml").asFile.absolutePath)
 }
 
 val validateRuntimeOpenApi = tasks.register<ValidateTask>("validateRuntimeOpenApi") {
@@ -69,6 +70,7 @@ val validateRuntimeOpenApi = tasks.register<ValidateTask>("validateRuntimeOpenAp
 
 tasks.register<GenerateTask>("generateRuntimeOpenApi") {
     generatorName.set("kotlin-spring")
+    cleanupOutput.set(true)
     inputSpec.set(rootProject.layout.projectDirectory.file("contracts/openapi/runtime.yaml").asFile.absolutePath)
     outputDir.set(generatedRuntime.get().asFile.absolutePath)
     apiPackage.set("com.cookie.identity.generated.runtime.api")
