@@ -19,7 +19,7 @@ authentication, timeouts, telemetry и обработки ошибок. При �
 ### Per-callee clients
 
 Для каждого синхронно вызываемого сервиса создаётся отдельный Kotlin/JVM client
-module в `clients/<callee>`. Client и server transport генерируются из одного
+module в `backend/clients/<callee>`. Client и server transport генерируются из одного
 internal OpenAPI contract, которым владеет callee.
 
 Caller зависит только от нужного client module. Единый `cookie-all-clients`
@@ -31,7 +31,7 @@ caller преобразует их в собственные модели чер
 `docs/architecture/model/sync-calls.yaml` остаётся coarse-grained архитектурным
 allowlist: `caller -> callee`, purpose и требования к деградации.
 
-`services/<callee>/service.yaml` содержит callee-owned operation policy:
+`backend/services/<callee>/service.yaml` содержит callee-owned operation policy:
 
 - internal OpenAPI operations;
 - semantic permission;

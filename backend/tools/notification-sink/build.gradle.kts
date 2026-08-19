@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":platform:starter-messaging"))
+    implementation(project(":backend:platform:starter-messaging"))
     implementation("org.springframework.boot:spring-boot-starter")
     implementation("com.nimbusds:nimbus-jose-jwt:10.7")
     implementation("org.eclipse.angus:jakarta.mail:2.0.4")

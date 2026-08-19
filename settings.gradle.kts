@@ -17,10 +17,10 @@ rootProject.name = "cookie"
 includeBuild("build-logic")
 
 include(
-    "platform:starter-web",
-    "platform:starter-postgres",
-    "platform:starter-messaging",
-    "platform:starter-testing",
-    "services:identity",
-    "tools:notification-sink",
+    "backend:platform:starter-web",
+    "backend:platform:starter-postgres",
+    "backend:platform:starter-messaging",
+    "backend:platform:starter-testing",
+    "backend:services:identity",
+    "backend:tools:notification-sink",
 )

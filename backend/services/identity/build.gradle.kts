@@ -7,9 +7,9 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":platform:starter-web"))
-    implementation(project(":platform:starter-postgres"))
-    implementation(project(":platform:starter-messaging"))
+    implementation(project(":backend:platform:starter-web"))
+    implementation(project(":backend:platform:starter-postgres"))
+    implementation(project(":backend:platform:starter-messaging"))
 
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.security:spring-security-crypto")
@@ -20,7 +20,7 @@ dependencies {
 
     runtimeOnly("org.postgresql:postgresql")
 
-    testImplementation(project(":platform:starter-testing"))
+    testImplementation(project(":backend:platform:starter-testing"))
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")

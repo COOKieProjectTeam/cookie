@@ -8,9 +8,9 @@
 |---|---|
 | `apps/api` | временный legacy Go health-check без продуктовой логики |
 | `apps/mobile` | общий iOS/Android-клиент на Kotlin Multiplatform |
-| `services/identity` | Kotlin/JVM Identity Service v1 (email/password) |
-| `platform` | тонкие Kotlin runtime/test starters |
-| `tools/notification-sink` | локальная расшифровка email-событий и доставка в Mailpit |
+| `backend/services/identity` | Kotlin/JVM Identity Service v1 (email/password) |
+| `backend/platform` | тонкие Kotlin runtime/test starters |
+| `backend/tools/notification-sink` | локальная расшифровка email-событий и доставка в Mailpit |
 | `contracts/openapi` | публичный контракт API |
 | `infra/terraform` | инфраструктура и окружения |
 | `deploy/docker` | локальная контейнерная сборка |

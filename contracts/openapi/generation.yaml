@@ -61,10 +61,10 @@ targets:
     source: internal_service_contracts
     language: kotlin
     runtime: jvm
-    output: clients/{service-id}/build/generated/openapi
+    output: backend/clients/{service-id}/build/generated/openapi
     module_granularity: one_per_callee
     allowed_dependencies: docs/architecture/model/sync-calls.yaml
-    access_policy: services/{service-id}/service.yaml
+    access_policy: backend/services/{service-id}/service.yaml
 
 ci:
   validate_openapi: required

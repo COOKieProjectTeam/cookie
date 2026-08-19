@@ -18,20 +18,17 @@ COOKie. Она не заменяет доменную архитектуру и 
 Целевой build layout:
 
 ```text
-build-logic/                 # Gradle convention plugins
-platform/
-  starter-web/               # HTTP runtime, errors, request context, probes
-  starter-http-client/       # timeouts, identity, tracing and safe telemetry
-  starter-security/          # workload and user context enforcement
-  starter-observability/     # logs, metrics and tracing conventions
-  starter-postgres/          # datasource, migrations and transaction support
-  starter-messaging/         # NATS, event envelope, outbox and inbox runtime
-  starter-testing/           # reusable test fixtures and mandatory suites
-service-template/            # generator/template inputs
-clients/
-  <callee>/                  # generated shared Kotlin/JVM internal client
-services/
-  <service-id>/
+build-logic/                         # Gradle convention plugins
+backend/services/<service-id>/       # independently deployable domain service
+backend/platform/starter-web/        # HTTP runtime, errors, request context, probes
+backend/platform/starter-http-client/ # timeouts, identity, tracing and safe telemetry
+backend/platform/starter-security/   # workload and user context enforcement
+backend/platform/starter-observability/ # logs, metrics and tracing conventions
+backend/platform/starter-postgres/   # datasource, migrations and transaction support
+backend/platform/starter-messaging/  # NATS, event envelope, outbox and inbox runtime
+backend/platform/starter-testing/    # reusable test fixtures and mandatory suites
+backend/tools/                       # backend development and operations applications
+backend/clients/<callee>/            # created only with the first real consumer
 contracts/
 deploy/
 infra/
@@ -46,7 +43,7 @@ infra/
 Минимальная структура domain service:
 
 ```text
-services/<service-id>/
+backend/services/<service-id>/
   build.gradle.kts
   service.yaml
   src/main/kotlin/<package>/

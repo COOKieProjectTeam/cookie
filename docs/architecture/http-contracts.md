@@ -40,7 +40,7 @@ change OpenAPI, generator configuration or templates and regenerate.
 
 ## Internal clients and access
 
-Internal server transport and `clients/<callee>` are generated from the same
+Internal server transport and `backend/clients/<callee>` are generated from the same
 callee-owned contract. Callers depend on the shared per-callee module and keep
 transport-to-domain mapping in a local adapter. A single aggregate clients
 artifact and independent per-caller client implementations are forbidden.

@@ -16,8 +16,9 @@ repository. Disposable integrations belong in `cookie-labs`.
 - Keep changes atomic across API implementation, OpenAPI contract and consumers.
 - OpenAPI is the source for generated Kotlin server transport interfaces/models
   and HTTP clients. Never hand-edit generated sources or duplicate their DTOs.
-- Generate one internal Kotlin/JVM client module per callee. A caller may depend
-  on it only when the edge is declared in `docs/architecture/model/sync-calls.yaml`.
+- Generate one internal Kotlin/JVM client module per callee under
+  `backend/clients/<callee>`. A caller may depend on it only when the edge is
+  declared in `docs/architecture/model/sync-calls.yaml`.
 - Internal operations require authenticated workload identity and a callee-owned
   operation allowlist; IP, DNS and caller-controlled headers never prove identity.
 - Keep business handlers handwritten behind generated transport interfaces.
@@ -44,7 +45,7 @@ make test
 GOCACHE="$PWD/.cache/go-build" GOENV="$PWD/.cache/go-env/goenv" go vet ./apps/api/...
 terraform fmt -check -recursive infra/terraform
 terraform -chdir=infra/terraform/environments/dev validate
-docker compose -f deploy/docker/compose.yaml config
+docker-compose -f deploy/docker/compose.yaml config
 ```
 
 Identity and platform Kotlin checks are mandatory. Go checks remain temporary
