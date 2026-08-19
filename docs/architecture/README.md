@@ -13,8 +13,8 @@
 
 Если Miro и Git расходятся, нельзя молча выбирать одну версию: создаётся ADR или
 атомарное изменение модели и доски. Пользовательские решения от 2026-08-19,
-зафиксированные в ADR 0003/0004/0005, имеют приоритет над более старым содержимым
-доски.
+зафиксированные в ADR 0003/0004/0005/0006, имеют приоритет над более старым
+содержимым доски.
 
 ## Reading order for an LLM
 
@@ -25,8 +25,9 @@
 5. `http-contracts.md` — OpenAPI ownership и генерация transport-кода.
 6. `messaging.md` — точная семантика outbox/inbox.
 7. `observability.md` — правила наблюдаемости.
-8. `miro-snapshot.md` — происхождение модели и найденные расхождения.
-9. `../adr/` — причины принятых решений.
+8. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
+9. `miro-snapshot.md` — происхождение модели и найденные расхождения.
+10. `../adr/` — причины принятых решений.
 
 ## Non-negotiable invariants
 
@@ -43,6 +44,9 @@
   Mobile BFF.
 - OpenAPI является источником generated server transport interfaces/models и
   HTTP clients; generated code вручную не изменяется.
+- Kotlin-сервисы создаются через общий template и используют проверяемые build,
+  runtime, observability, persistence, messaging и testing conventions.
+- Общая service platform не содержит business models или business services.
 - Health Data Service владеет доменными данными здоровья, но никогда не владеет
   `/healthz` или `/readyz` других компонентов.
 - Неуказанные framework, JDK version, retry limits, stream topology и telemetry
