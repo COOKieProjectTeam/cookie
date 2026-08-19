@@ -270,10 +270,9 @@ authentication или operation authorization.
 access:
   messaging:
     publish:
-      - recipe.customization.updated
-      - recipe.customization.deleted
+      - progress.day.updated
     subscribe:
-      - account.deletion.requested
+      - nutrition.day.changed
 ```
 
 Permissions генерируются из согласованных `model/events.yaml` и service

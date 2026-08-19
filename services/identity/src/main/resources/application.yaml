@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: identity
+  datasource:
+    url: ${COOKIE_IDENTITY_DATABASE_URL:jdbc:postgresql://localhost:5432/identity}
+    username: ${COOKIE_IDENTITY_DATABASE_USER:identity}
+    password: ${COOKIE_IDENTITY_DATABASE_PASSWORD:identity}
+    hikari:
+      maximum-pool-size: ${COOKIE_IDENTITY_DATABASE_POOL_SIZE:10}
+  flyway:
+    enabled: true
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: native
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+
+cookie:
+  identity:
+    access-token-ttl: PT15M
+    refresh-family-ttl: P30D
+    verification-token-ttl: PT30M
+    verification-resend-cooldown: PT1M
+    issuer: https://api.cookie.app
+    audience: cookie-api
+    jwt-private-key-path: ${COOKIE_IDENTITY_JWT_PRIVATE_KEY_PATH:}
+    jwt-retiring-public-key-paths: ${COOKIE_IDENTITY_JWT_RETIRING_PUBLIC_KEY_PATHS:}
+    notification-public-key-path: ${COOKIE_NOTIFICATION_PUBLIC_KEY_PATH:}
+    dev-notification-private-key-output-path: ${COOKIE_DEV_NOTIFICATION_PRIVATE_KEY_OUTPUT_PATH:}
+    nats-url: ${COOKIE_NATS_URL:nats://localhost:4222}
+    outbox-enabled: ${COOKIE_OUTBOX_ENABLED:true}
+
+logging:
+  pattern:
+    level: "%5p [requestId=%X{requestId:-}]"

@@ -12,3 +12,5 @@ ADR фиксируют долгоживущие технические реше�
 - `0005-openapi-code-generation.md` — contract-first handlers and clients.
 - `0006-kotlin-service-platform.md` — единый production-ready путь для Kotlin-сервисов.
 - `0007-synchronous-service-access.md` — per-callee clients и service-to-service access control.
+- `0008-identity-service-pilot.md` — JVM/framework/toolchain и первый production vertical slice.
+- `0009-identity-security.md` — email/password policy, tokens, keys and encrypted email events.

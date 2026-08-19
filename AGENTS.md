@@ -23,8 +23,8 @@ repository. Disposable integrations belong in `cookie-labs`.
 - Keep business handlers handwritten behind generated transport interfaces.
 - Every deployable backend component owns its own liveness/readiness endpoints;
   the domain Health Data Service does not own operational probes.
-- New backend implementation is Kotlin/JVM. Do not extend the Go bootstrap with
-  product behavior; migrate or replace it.
+- New backend implementation is Kotlin/JVM. Do not extend the legacy Go
+  bootstrap with product behavior; its removal requires a separate migration.
 - Every stateful domain service uses PostgreSQL transactional outbox and
   idempotent inbox around NATS JetStream delivery.
 - Redis is not a system of record and may only be used for an explicitly
@@ -44,11 +44,12 @@ make test
 GOCACHE="$PWD/.cache/go-build" GOENV="$PWD/.cache/go-env/goenv" go vet ./apps/api/...
 terraform fmt -check -recursive infra/terraform
 terraform -chdir=infra/terraform/environments/dev validate
-docker-compose -f deploy/docker/compose.yaml config
+docker compose -f deploy/docker/compose.yaml config
 ```
 
-Backend and mobile Kotlin checks become mandatory after their Gradle bootstraps
-are committed. Go checks remain temporary while the bootstrap exists.
+Identity and platform Kotlin checks are mandatory. Go checks remain temporary
+while the legacy bootstrap exists. The KMP client generation smoke task is
+`./gradlew generateKmpPublicClient`.
 
 ## Repository hygiene
 

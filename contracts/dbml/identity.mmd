@@ -1,21 +1,11 @@
-%% identity service schema — derived from identity.dbml
+%% Identity Service schema — derived from identity.dbml
 %% Cross-service references are intentionally omitted.
 erDiagram
   Accounts {
     uuid id PK
     varchar status
     timestamptz created_at
-    timestamptz deletion_requested_at
-    timestamptz deleted_at
-  }
-
-  OAuthIdentities {
-    uuid id PK
-    uuid account_id
-    varchar provider
-    varchar provider_subject
-    varchar email
-    timestamptz created_at
+    timestamptz activated_at
   }
 
   EmailCredentials {
@@ -23,7 +13,6 @@ erDiagram
     varchar email UK
     varchar password_hash
     timestamptz email_verified_at
-    timestamptz password_changed_at
     integer failed_login_count
     timestamptz locked_until
     timestamptz created_at
@@ -34,7 +23,7 @@ erDiagram
     uuid id PK
     uuid account_id
     varchar purpose
-    varchar token_hash UK
+    varchar token_hash
     timestamptz expires_at
     timestamptz consumed_at
     timestamptz revoked_at
@@ -45,18 +34,47 @@ erDiagram
     uuid id PK
     uuid account_id
     uuid family_id
-    varchar token_hash UK
+    varchar token_hash
+    varchar status
     varchar device_id
     uuid replaced_by_session_id
+    timestamptz family_expires_at
     timestamptz created_at
-    timestamptz expires_at
     timestamptz last_used_at
     timestamptz revoked_at
     varchar revoke_reason
     timestamptz reuse_detected_at
   }
 
-  Accounts ||--o{ OAuthIdentities : "account_id"
+  RateLimitBuckets {
+    varchar scope_key PK
+    timestamptz window_started_at
+    integer attempt_count
+    timestamptz expires_at
+  }
+
+  OutboxEvents {
+    uuid event_id PK
+    varchar event_type
+    integer event_version
+    varchar aggregate_type
+    varchar aggregate_id
+    jsonb payload
+    timestamptz occurred_at
+    timestamptz available_at
+    timestamptz claimed_until
+    timestamptz published_at
+    integer attempt_count
+    varchar last_error
+  }
+
+  InboxEvents {
+    varchar consumer PK
+    uuid event_id PK
+    varchar event_type
+    timestamptz processed_at
+  }
+
   Accounts ||--o| EmailCredentials : "account_id"
   Accounts ||--o{ AuthActionTokens : "account_id"
   Accounts ||--o{ RefreshSessions : "account_id"

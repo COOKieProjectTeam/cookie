@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: COOKie API
-  version: 0.1.0
+  version: 0.2.0
   description: >
     Публичный контракт мобильного/админ клиента к API Gateway / Mobile BFF.
     Все ручки проходят через Gateway; клиент никогда не обращается к
@@ -15,7 +15,7 @@ tags:
   - name: system
     description: API Gateway operational availability; not owned by Health Data Service.
   - name: auth
-    description: Authentication and account lifecycle.
+    description: Email/password authentication and session lifecycle.
   - name: profile
     description: Profile, goals, and dietary preferences.
   - name: food
@@ -101,6 +101,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /auth/email/login:
     post:
@@ -135,6 +137,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /auth/email/verification/confirm:
     post:
@@ -166,6 +170,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /auth/email/verification/resend:
     post:
@@ -189,109 +195,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "429":
           $ref: "#/components/responses/TooManyRequests"
-
-  /auth/password/reset/request:
-    post:
-      tags: [auth]
-      operationId: requestPasswordReset
-      summary: Запросить восстановление пароля
-      description: >-
-        Всегда возвращает одинаковый ответ. Для подтверждённого email создаётся
-        короткоживущий одноразовый токен и отправляется ссылка восстановления.
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmailActionRequest"
-      responses:
-        "202":
-          description: Если действие допустимо, письмо будет отправлено
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
-
-  /auth/password/reset/confirm:
-    post:
-      tags: [auth]
-      operationId: confirmPasswordReset
-      summary: Установить новый пароль по одноразовому токену
-      description: >-
-        Поглощает reset token, меняет password hash и отзывает все refresh-сессии.
-        После успешного сброса пользователь входит обычным способом.
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PasswordResetConfirmRequest"
-      responses:
-        "204":
-          description: Пароль изменён, все refresh-сессии отозваны
-        "400":
-          description: Токен недействителен, уже использован или истёк
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
-
-  /auth/password/change:
-    post:
-      tags: [auth]
-      operationId: changePassword
-      summary: Изменить пароль авторизованного пользователя
-      description: >-
-        Проверяет текущий пароль, сохраняет новый Argon2id hash и отзывает все
-        refresh-сессии. Текущий access token остаётся действителен только до своего
-        короткого срока истечения; клиент должен войти заново.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PasswordChangeRequest"
-      responses:
-        "204":
-          description: Пароль изменён, все refresh-сессии отозваны
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
-
-  /auth/oauth/exchange:
-    post:
-      tags: [auth]
-      operationId: exchangeOAuthCode
-      summary: Обменять authorization code провайдера на токены COOKie
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/OAuthExchangeRequest"
-      responses:
-        "200":
-          description: Токены выданы
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TokenPairWithUser"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          description: Код авторизации недействителен или просрочен
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /auth/refresh:
     post:
@@ -308,11 +213,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [refreshToken]
-              properties:
-                refreshToken:
-                  type: string
+              $ref: "#/components/schemas/RefreshTokenRequest"
       responses:
         "200":
           description: Новая пара токенов
@@ -328,6 +229,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /auth/logout:
     post:
@@ -341,57 +244,38 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [refreshToken]
-              properties:
-                refreshToken:
-                  type: string
+              $ref: "#/components/schemas/RefreshTokenRequest"
       responses:
-        "200":
-          description: Сессия завершена
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+        "204":
+          description: Сессия завершена или уже была завершена
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
-  /auth/logout-all:
-    post:
-      tags: [auth]
-      operationId: logoutAllDevices
-      summary: Завершить все сессии пользователя
-      responses:
-        "200":
-          description: Все сессии завершены
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /account:
-    delete:
-      tags: [auth]
-      operationId: deleteAccount
-      summary: Инициировать удаление аккаунта (async, координируется через события)
-      responses:
-        "202":
-          description: Запрос на удаление принят. Публикуется account.deletion.requested
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccountDeletionStatus"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /account/deletion:
+  /auth/jwks:
     get:
       tags: [auth]
-      operationId: getAccountDeletionStatus
-      summary: Получить состояние асинхронного удаления аккаунта
+      operationId: getIdentityJwks
+      summary: Получить публичные ключи подписи access JWT
+      description: Возвращает активный и retiring ES256 ключи для локальной проверки access JWT.
+      security: []
       responses:
         "200":
-          description: Текущее состояние аккаунта
+          description: JSON Web Key Set
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: public, max-age=300
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AccountDeletionStatus"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+                $ref: "#/components/schemas/JsonWebKeySet"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   # ---------------------------------------------------------------- profile
   /me/onboarding:
@@ -2452,6 +2336,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    ServiceUnavailable:
+      description: Сервис временно не готов обрабатывать запросы
+      headers:
+        Retry-After:
+          description: Рекомендуемая задержка перед повтором, в секундах
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
     # ------------------------------------------------------------ common
@@ -2636,55 +2532,25 @@ components:
             $ref: "#/components/schemas/RecipeSummary"
 
     # ------------------------------------------------------------ auth
-    AccountDeletionStatus:
-      type: object
-      required: [status]
-      properties:
-        status:
-          type: string
-          enum: [ACTIVE, DELETING, DELETED]
-        requestedAt:
-          type: string
-          nullable: true
-          format: date-time
-        deletedAt:
-          type: string
-          nullable: true
-          format: date-time
-
-    OAuthExchangeRequest:
-      type: object
-      required: [provider, authorizationCode, redirectUri, codeVerifier]
-      properties:
-        provider:
-          type: string
-          enum: [YANDEX, VK, MAIL]
-        authorizationCode:
-          type: string
-        redirectUri:
-          type: string
-          format: uri
-        codeVerifier:
-          type: string
-        deviceId:
-          type: string
-          maxLength: 255
-
     EmailAddress:
       type: string
       format: email
       maxLength: 254
-      description: Email нормализуется и сравнивается без учёта регистра домена.
+      description: >-
+        Разрешены только адреса с ASCII local-part и российским доменом верхнего
+        уровня .ru или .рф. Перед сравнением адрес проходит trim, Unicode NFC,
+        IDNA-преобразование домена и приведение к нижнему регистру.
 
     Password:
       type: string
       format: password
       writeOnly: true
-      minLength: 12
+      minLength: 15
       maxLength: 128
       description: >-
-        Разрешены пробелы и Unicode; требования к составу символов не навязываются.
-        На сервере хранится только Argon2id encoded hash с солью и параметрами.
+        От 15 до 128 Unicode code points. Пробелы, Unicode whitespace/separator
+        и управляющие символы запрещены; остальные требования к составу не
+        навязываются. На сервере хранится только Argon2id encoded hash.
 
     EmailRegistrationRequest:
       type: object
@@ -2729,25 +2595,14 @@ components:
           type: string
           maxLength: 255
 
-    PasswordResetConfirmRequest:
+    RefreshTokenRequest:
       type: object
-      required: [token, newPassword]
+      required: [refreshToken]
       properties:
-        token:
+        refreshToken:
           type: string
           minLength: 32
           maxLength: 512
-        newPassword:
-          $ref: "#/components/schemas/Password"
-
-    PasswordChangeRequest:
-      type: object
-      required: [currentPassword, newPassword]
-      properties:
-        currentPassword:
-          $ref: "#/components/schemas/Password"
-        newPassword:
-          $ref: "#/components/schemas/Password"
 
     TokenPair:
       type: object
@@ -2776,14 +2631,50 @@ components:
           required: [user]
           properties:
             user:
-              type: object
-              required: [id, newUser]
-              properties:
-                id:
-                  type: string
-                  format: uuid
-                newUser:
-                  type: boolean
+              $ref: "#/components/schemas/AuthenticatedUser"
+
+    AuthenticatedUser:
+      type: object
+      required: [id, newUser]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUIDv7 account identifier.
+        newUser:
+          type: boolean
+
+    JsonWebKeySet:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonWebKey"
+
+    JsonWebKey:
+      type: object
+      required: [kty, use, alg, kid, crv, x, y]
+      properties:
+        kty:
+          type: string
+          enum: [EC]
+        use:
+          type: string
+          enum: [sig]
+        alg:
+          type: string
+          enum: [ES256]
+        kid:
+          type: string
+        crv:
+          type: string
+          enum: [P-256]
+        x:
+          type: string
+        y:
+          type: string
 
     # ------------------------------------------------------------ profile
     OnboardingRequest:

@@ -6,10 +6,9 @@ source_contracts:
   internal_service_contracts: contracts/openapi/internal/{service-id}.yaml
 
 generator:
-  product: TBD
-  version: TBD
-  templates_version: TBD
-  selection_blocked_by: kotlin_backend_framework_decision
+  product: openapi-generator
+  version: 7.24.0
+  templates_version: upstream-7.24.0
 
 rules:
   contract_first: true
@@ -25,26 +24,37 @@ rules:
 
 targets:
   - id: kotlin_server_transport
-    status: planned
+    status: active
     source: public
     language: kotlin
     runtime: jvm
     output: server_interfaces_routing_and_transport_models
     partition: openapi_tag_owner
+    generator_name: kotlin-spring
+    options:
+      interfaceOnly: true
+      skipDefaultInterface: true
+      useTags: true
+      useSpringBoot4: true
+      useJackson3: true
+      useBeanValidation: false
 
   - id: kotlin_runtime_probes
-    status: planned
+    status: active
     source: runtime
     language: kotlin
     runtime: jvm
     output: shared_server_interfaces_and_transport_models
+    generator_name: kotlin-spring
 
   - id: kmp_public_client
-    status: planned
+    status: configured
     source: public
     language: kotlin
     runtime: kotlin_multiplatform
     output: apps/mobile/shared/build/generated/openapi
+    generator_name: kotlin
+    library: multiplatform
 
   - id: kotlin_internal_clients
     status: blocked
@@ -55,7 +65,6 @@ targets:
     module_granularity: one_per_callee
     allowed_dependencies: docs/architecture/model/sync-calls.yaml
     access_policy: services/{service-id}/service.yaml
-    blocked_by: kotlin_backend_framework_decision
 
 ci:
   validate_openapi: required
@@ -65,5 +74,5 @@ ci:
   validate_internal_permissions: required_after_first_internal_contract
   validate_internal_callers: required_after_first_internal_contract
   validate_client_dependencies_against_sync_calls: required_after_gradle_bootstrap
-  compile_generated_sources: required_after_gradle_bootstrap
-  regeneration_diff_check: required_after_generator_selection
+  compile_generated_sources: required
+  regeneration_diff_check: required

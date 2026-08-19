@@ -1,9 +1,84 @@
 services:
-  api:
+  legacy-api:
+    profiles: [legacy]
     build:
       context: ../..
       dockerfile: deploy/docker/api.Dockerfile
     environment:
       PORT: "8080"
     ports:
+      - "8081:8080"
+
+  postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_DB: identity
+      POSTGRES_USER: identity
+      POSTGRES_PASSWORD: identity
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity -d identity"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    ports:
+      - "5432:5432"
+    volumes:
+      - identity-postgres:/var/lib/postgresql/data
+
+  nats:
+    image: nats:2.14.3-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+
+  mailpit:
+    image: axllent/mailpit:v1.30.4
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  identity:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/identity.Dockerfile
+    environment:
+      COOKIE_IDENTITY_DATABASE_URL: jdbc:postgresql://postgres:5432/identity
+      COOKIE_IDENTITY_DATABASE_USER: identity
+      COOKIE_IDENTITY_DATABASE_PASSWORD: identity
+      COOKIE_NATS_URL: nats://nats:4222
+      SPRING_PROFILES_ACTIVE: dev
+      COOKIE_DEV_NOTIFICATION_PRIVATE_KEY_OUTPUT_PATH: /keys/notification-private.jwk
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    ports:
       - "8080:8080"
+    volumes:
+      - dev-keys:/keys
+
+  notification-sink:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/notification-sink.Dockerfile
+    environment:
+      COOKIE_NATS_URL: nats://nats:4222
+      COOKIE_NOTIFICATION_PRIVATE_KEY_PATH: /keys/notification-private.jwk
+      COOKIE_SMTP_HOST: mailpit
+      COOKIE_SMTP_PORT: "1025"
+    depends_on:
+      identity:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    volumes:
+      - dev-keys:/keys:ro
+
+volumes:
+  identity-postgres:
+  nats-data:
+  dev-keys:

@@ -12,8 +12,8 @@ PostgreSQL и брокером невозможна. NATS JetStream предос
 
 ## Decision
 
-Каждый stateful domain service имеет локальные таблицы `outbox_messages` и
-`inbox_messages` в принадлежащей ему PostgreSQL БД/схеме.
+Каждый stateful domain service имеет локальные таблицы `outbox_events` и
+`inbox_events` в принадлежащей ему PostgreSQL БД/схеме.
 
 - Бизнес-изменение и запись outbox выполняются в одной DB-транзакции.
 - Publisher worker публикует outbox в NATS JetStream и использует `event_id` как

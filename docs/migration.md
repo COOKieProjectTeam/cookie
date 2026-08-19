@@ -13,5 +13,6 @@ Date: 2026-08-10
 Старые локальные репозитории не удалены. После проверки новых remote и истории их
 можно перевести в GitHub в состояние archived/read-only.
 
-Первоначальный Go health-check в `apps/api` также является временным bootstrap и
-должен быть удалён после появления эквивалентного Kotlin runtime.
+Первоначальный Go health-check в `apps/api` остаётся временным legacy bootstrap.
+Эквивалентные generated Kotlin runtime probes уже реализованы в Identity Service
+(ADR 0008), но удаление bootstrap оформляется отдельным согласованным изменением.

@@ -33,7 +33,7 @@ unknown additive fields. Breaking payload changes require a new
 
 1. Begin PostgreSQL transaction.
 2. Validate command and mutate service-owned domain state.
-3. Insert one immutable `outbox_messages` row for every emitted event.
+3. Insert one immutable `outbox_events` row for every emitted event.
 4. Commit once.
 5. Publisher worker claims pending rows safely across replicas.
 6. Publish to JetStream with `event_id` as the broker message/deduplication id.
@@ -45,7 +45,7 @@ A crash between steps 6 and 7 can publish a duplicate and is expected.
 
 1. Receive a JetStream message.
 2. Begin PostgreSQL transaction.
-3. Insert `(consumer_name, event_id)` into `inbox_messages` under a unique
+3. Insert `(consumer_name, event_id)` into `inbox_events` under a unique
    constraint.
 4. If it already exists, commit/no-op and acknowledge the message.
 5. Otherwise apply local state changes and write any resulting outbox events in
@@ -56,6 +56,19 @@ A crash between steps 6 and 7 can publish a duplicate and is expected.
 Failures before commit are retried. Poison messages eventually require an
 operator-visible dead-letter/advisory path; exact retry counts and backoff are
 TBD.
+
+## Identity v1 publisher profile
+
+The first implemented publisher claims at most 100 rows across replicas with
+`FOR UPDATE SKIP LOCKED` and a 30-second lease. Subjects are
+`cookie.events.<event_type>.v<event_version>` in stream `COOKIE_EVENTS`.
+`event_id` is sent as `Nats-Msg-Id`; the row is marked published only after the
+JetStream publish acknowledgement. Failed attempts are retried indefinitely
+with exponential delay from one second to five minutes plus jitter.
+
+Verification delivery is a special security boundary: outbox/JetStream contain
+only template, expiry and compact JWE (`RSA-OAEP-256` + `A256GCM`). Recipient,
+locale and raw one-time token exist only inside the encrypted payload.
 
 ## Required operational fields
 

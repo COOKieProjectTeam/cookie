@@ -6,8 +6,11 @@
 
 | Каталог | Назначение |
 |---|---|
-| `apps/api` | Временный Go health-check; целевой backend — Kotlin/JVM-сервисы |
+| `apps/api` | временный legacy Go health-check без продуктовой логики |
 | `apps/mobile` | общий iOS/Android-клиент на Kotlin Multiplatform |
+| `services/identity` | Kotlin/JVM Identity Service v1 (email/password) |
+| `platform` | тонкие Kotlin runtime/test starters |
+| `tools/notification-sink` | локальная расшифровка email-событий и доставка в Mailpit |
 | `contracts/openapi` | публичный контракт API |
 | `infra/terraform` | инфраструктура и окружения |
 | `deploy/docker` | локальная контейнерная сборка |
@@ -26,8 +29,9 @@ HTTP transport следует contract-first подходу: server interfaces �
 генерируются из OpenAPI, а сгенерированный код не редактируется вручную.
 
 Начинать чтение архитектуры следует с
-[`docs/architecture/README.md`](docs/architecture/README.md). Текущий Go-код —
-bootstrap, который ещё не мигрирован, а не образец для новой реализации.
+[`docs/architecture/README.md`](docs/architecture/README.md). Первым production
+vertical slice является Identity Service из ADR 0008 и ADR 0009. Legacy
+`apps/api` сохраняется до отдельного решения об удалении.
 
 Визуальная схема и исходная декомпозиция сервисов находятся на
 [архитектурной доске COOKie в Miro](https://miro.com/app/board/uXjVGuhJKXc=/).
@@ -36,15 +40,18 @@ bootstrap, который ещё не мигрирован, а не образе
 репозитории `cookie-product`. Одноразовые проверки внешних API — в
 `cookie-labs`.
 
-## Текущий bootstrap API
+## Локальный Identity stack
 
 ```bash
-make test
-make api-run
+make compose-up
 curl http://localhost:8080/healthz
+open http://localhost:8025
 ```
 
-Порт можно изменить переменной `PORT`.
+Compose запускает PostgreSQL 18, NATS JetStream, Identity, локальный
+Notification sink и Mailpit. Identity публикует только compact JWE; sink
+расшифровывает его ephemeral ключом из локального volume и отправляет письмо в
+Mailpit. Для запуска без контейнеров: `make identity-run`.
 
 ## Принципы границ
 

@@ -10,8 +10,9 @@ transport:
   producer_pattern: transactional_outbox
   consumer_pattern: idempotent_inbox
   ordering: no global ordering assumption
-  subject_mapping: TBD
-  retry_policy: TBD
+  subject_mapping: cookie.events.<event_type>.v<event_version>
+  stream: COOKIE_EVENTS
+  retry_policy: producer retries forever with exponential backoff from 1s to 5m and jitter
   dead_letter_policy: TBD
 
 envelope:
@@ -37,44 +38,15 @@ events:
     consumers: [user, notification]
     payload: [userId, accountMetadata]
 
-  - type: account.deletion.requested
-    version: 1
-    producer: identity
-    consumers:
-      - user
-      - food_catalog
-      - nutrition
-      - recipe
-      - shopping
-      - health
-      - progress
-      - notification
-      - media
-      - meal_planner
-    payload: [userId]
-
-  - type: account.deletion.completed
-    version: 1
-    producers:
-      - user
-      - food_catalog
-      - nutrition
-      - recipe
-      - shopping
-      - health
-      - progress
-      - notification
-      - media
-      - meal_planner
-    consumers: [identity]
-    payload: [userId, service]
-
   - type: notification.email.requested
     version: 1
     producer: identity
     consumers: [notification]
-    payload: [recipientEmail, template, code, expiresInMinutes]
-    security_note: payload contains sensitive delivery data and must not be logged
+    payload: [template, encryptedPayload, expiresAt]
+    security_note: >-
+      encryptedPayload is compact JWE using RSA-OAEP-256 and A256GCM. Only the
+      Notification Service decrypts recipientEmail, locale and the one-time token;
+      raw delivery secrets never enter outbox rows, JetStream or logs.
 
   - type: user.profile.updated
     version: 1

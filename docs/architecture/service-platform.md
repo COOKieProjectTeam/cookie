@@ -37,8 +37,9 @@ deploy/
 infra/
 ```
 
-Точное физическое размещение модулей может быть уточнено при создании Gradle
-bootstrap, но роли и направления зависимостей сохраняются.
+Пилотный Gradle bootstrap реализует `starter-web`, `starter-postgres`,
+`starter-messaging` и `starter-testing`. Остальные starters добавляются только
+при появлении реального потребителя.
 
 ## Standard service shape
 
@@ -164,11 +165,11 @@ Descriptor не дублирует `model/services.yaml`: архитектурн
 
 ## Rollout
 
-1. Принять отдельный ADR по framework и build stack.
+1. Принять отдельный ADR по framework и build stack (ADR 0008).
 2. Создать `build-logic` и минимальный набор platform starters.
 3. Создать service descriptor schema и generator/template.
-4. Реализовать `user` как пилотный vertical slice: generated HTTP transport,
-   PostgreSQL, одно исходящее событие, один входящий consumer и telemetry.
+4. Реализовать `identity` как пилотный vertical slice: generated HTTP transport,
+   PostgreSQL, transactional outbox/inbox, JetStream и runtime probes.
 5. Исправить platform API по результатам пилота.
 6. Создавать остальные сервисы только через проверенный template.
 
