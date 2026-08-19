@@ -45,6 +45,8 @@ These user decisions supersede missing or older board details:
   explicit 2026-08-19 decision.
 - The board mixes labels `NATS` and `NATS JetStream`; the durable event transport
   is normalized to NATS JetStream.
+- The board label `Health Service` is normalized to `Health Data Service` to
+  distinguish domain weight/activity data from per-component operational probes.
 - Backend framework, JDK version, service process/container layout, JetStream
   subjects/streams, retry limits, dead-letter policy and Grafana data sources
   remain TBD.

@@ -14,6 +14,11 @@ repository. Disposable integrations belong in `cookie-labs`.
 - Read `docs/architecture/README.md` and its YAML model before changing service
   boundaries, events, synchronous dependencies or infrastructure usage.
 - Keep changes atomic across API implementation, OpenAPI contract and consumers.
+- OpenAPI is the source for generated Kotlin server transport interfaces/models
+  and HTTP clients. Never hand-edit generated sources or duplicate their DTOs.
+- Keep business handlers handwritten behind generated transport interfaces.
+- Every deployable backend component owns its own liveness/readiness endpoints;
+  the domain Health Data Service does not own operational probes.
 - New backend implementation is Kotlin/JVM. Do not extend the Go bootstrap with
   product behavior; migrate or replace it.
 - Every stateful domain service uses PostgreSQL transactional outbox and

@@ -9,3 +9,4 @@ ADR фиксируют долгоживущие технические реше�
 - `0002-kotlin-multiplatform-client.md` — общий Android/iOS client.
 - `0003-kotlin-backend.md` — Kotlin/JVM backend services.
 - `0004-transactional-messaging.md` — NATS JetStream, outbox и inbox.
+- `0005-openapi-code-generation.md` — contract-first handlers and clients.

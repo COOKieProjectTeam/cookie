@@ -13,7 +13,7 @@
 
 Если Miro и Git расходятся, нельзя молча выбирать одну версию: создаётся ADR или
 атомарное изменение модели и доски. Пользовательские решения от 2026-08-19,
-зафиксированные в ADR 0003/0004, имеют приоритет над более старым содержимым
+зафиксированные в ADR 0003/0004/0005, имеют приоритет над более старым содержимым
 доски.
 
 ## Reading order for an LLM
@@ -22,10 +22,11 @@
 2. `model/services.yaml` — владельцы данных и назначение сервисов.
 3. `model/events.yaml` — event envelope и каталог сообщений.
 4. `model/sync-calls.yaml` — разрешённые синхронные зависимости.
-5. `messaging.md` — точная семантика outbox/inbox.
-6. `observability.md` — правила наблюдаемости.
-7. `miro-snapshot.md` — происхождение модели и найденные расхождения.
-8. `../adr/` — причины принятых решений.
+5. `http-contracts.md` — OpenAPI ownership и генерация transport-кода.
+6. `messaging.md` — точная семантика outbox/inbox.
+7. `observability.md` — правила наблюдаемости.
+8. `miro-snapshot.md` — происхождение модели и найденные расхождения.
+9. `../adr/` — причины принятых решений.
 
 ## Non-negotiable invariants
 
@@ -40,6 +41,10 @@
 - Grafana — единая точка просмотра telemetry; конкретные data sources пока TBD.
 - Внешний клиент входит через Caddy; агрегированные mobile screens обслуживает
   Mobile BFF.
+- OpenAPI является источником generated server transport interfaces/models и
+  HTTP clients; generated code вручную не изменяется.
+- Health Data Service владеет доменными данными здоровья, но никогда не владеет
+  `/healthz` или `/readyz` других компонентов.
 - Неуказанные framework, JDK version, retry limits, stream topology и telemetry
   backends нельзя выдумывать: они имеют значение `TBD`.
 

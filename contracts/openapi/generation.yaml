@@ -1,0 +1,61 @@
+schema_version: 1
+status: accepted
+source_contracts:
+  public: contracts/openapi/openapi.yaml
+  runtime: contracts/openapi/runtime.yaml
+  internal_service_contracts: TBD
+
+generator:
+  product: TBD
+  version: TBD
+  templates_version: TBD
+  selection_blocked_by: kotlin_backend_framework_decision
+
+rules:
+  contract_first: true
+  generated_sources_committed: false
+  generated_output_pattern: "{module}/build/generated/openapi"
+  manual_edits_to_generated_sources: forbidden
+  server_business_logic_generation: forbidden
+  stable_unique_operation_ids: required
+  public_tag_owner_source: docs/architecture/model/services.yaml
+
+targets:
+  - id: kotlin_server_transport
+    status: planned
+    source: public
+    language: kotlin
+    runtime: jvm
+    output: server_interfaces_routing_and_transport_models
+    partition: openapi_tag_owner
+
+  - id: kotlin_runtime_probes
+    status: planned
+    source: runtime
+    language: kotlin
+    runtime: jvm
+    output: shared_server_interfaces_and_transport_models
+
+  - id: kmp_public_client
+    status: planned
+    source: public
+    language: kotlin
+    runtime: kotlin_multiplatform
+    output: apps/mobile/shared/build/generated/openapi
+
+  - id: kotlin_internal_clients
+    status: blocked
+    source: internal_service_contracts
+    language: kotlin
+    runtime: jvm
+    output: per_caller_build_directory
+    allowed_dependencies: docs/architecture/model/sync-calls.yaml
+    blocked_by: internal_service_contracts
+
+ci:
+  validate_openapi: required
+  validate_local_refs: required
+  validate_unique_operation_ids: required
+  validate_tag_ownership: required
+  compile_generated_sources: required_after_gradle_bootstrap
+  regeneration_diff_check: required_after_generator_selection

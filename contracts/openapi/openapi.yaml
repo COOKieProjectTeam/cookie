@@ -13,7 +13,7 @@ servers:
     description: Local
 tags:
   - name: system
-    description: Service availability.
+    description: API Gateway operational availability; not owned by Health Data Service.
   - name: auth
     description: Authentication and account lifecycle.
   - name: profile
@@ -27,7 +27,7 @@ tags:
   - name: shopping
     description: Shopping cart and ingredient list.
   - name: health
-    description: Activity and weight measurements.
+    description: Domain health data such as activity and weight measurements.
   - name: progress
     description: Event-driven nutrition and health progress read models.
   - name: notifications
@@ -44,8 +44,11 @@ paths:
   /healthz:
     get:
       tags: [system]
-      operationId: getHealth
-      summary: Проверить доступность API
+      operationId: getGatewayHealth
+      summary: Проверить liveness публичного API Gateway
+      description: >-
+        Эксплуатационная проба Gateway. Она не вызывает и не относится к
+        доменному Health Data Service.
       security: []
       responses:
         "200":
@@ -53,7 +56,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Health"
+                $ref: "#/components/schemas/ServiceHealth"
 
   # ---------------------------------------------------------------- bff
   /today:
@@ -2452,7 +2455,7 @@ components:
 
   schemas:
     # ------------------------------------------------------------ common
-    Health:
+    ServiceHealth:
       type: object
       required: [status]
       properties:
@@ -2807,7 +2810,7 @@ components:
         currentWeightKg:
           type: number
           format: double
-          description: Сохраняется как первое ручное измерение веса в Health Service.
+          description: Сохраняется как первое ручное измерение веса в Health Data Service.
         targetWeightKg:
           type: number
           format: double

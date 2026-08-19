@@ -4,6 +4,9 @@ Grafana is the common operator interface for backend health and event delivery.
 All Kotlin services, workers, Caddy, PostgreSQL, Redis and NATS JetStream must be
 observable there.
 
+Каждый deployable component предоставляет собственные `/healthz` (liveness) и
+`/readyz` (readiness). Эти endpoints не проксируются в Health Data Service.
+
 ## Required signals
 
 - HTTP request rate, latency and error rate by route and service.

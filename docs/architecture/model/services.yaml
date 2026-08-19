@@ -15,6 +15,8 @@ defaults:
   transactional_outbox: required
   idempotent_inbox: required
   database_access: owner_only
+  operational_http_contract: contracts/openapi/runtime.yaml
+  operational_endpoint_owner: each_deployable_component
 
 infrastructure:
   edge_gateway:
@@ -45,6 +47,7 @@ services:
     runtime: caddy
     stateful: false
     purpose: TLS termination, routing and edge rate limiting
+    openapi_tags: [system]
     redis:
       - keyspace: rate_limit
         data: short-lived counters by IP, account and route
@@ -67,6 +70,7 @@ services:
     runtime: kotlin_jvm
     stateful: false
     purpose: aggregate domain APIs into mobile screen responses such as /today
+    openapi_tags: [bff]
     synchronous_dependencies: [user, progress, recipe, nutrition]
 
   - id: identity
@@ -74,6 +78,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: accounts, credentials, access/refresh sessions and OAuth identities
+    openapi_tags: [auth]
     dbml: contracts/dbml/identity.dbml
     publishes:
       - account.created
@@ -88,6 +93,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: profile, onboarding, nutrition goals, allergies, diet and goal overrides
+    openapi_tags: [profile]
     dbml: contracts/dbml/user.dbml
     publishes:
       - user.profile.updated
@@ -104,6 +110,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: custom foods and proxy search/barcode lookup in Open Food Facts
+    openapi_tags: [food]
     dbml: contracts/dbml/food-catalog.dbml
     publishes: [account.deletion.completed]
     consumes: [account.deletion.requested]
@@ -121,6 +128,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: food diary, meals, dishes, food entries, saved dishes and water
+    openapi_tags: [diary]
     dbml: contracts/dbml/nutrition.dbml
     publishes:
       - nutrition.meal.created
@@ -137,6 +145,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: recipes, versions, personal customizations, favorites and cooking history
+    openapi_tags: [recipes]
     dbml: contracts/dbml/recipe.dbml
     publishes:
       - recipe.customization.updated
@@ -150,6 +159,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: recipe cart, ingredient snapshots and shopping list
+    openapi_tags: [shopping]
     dbml: contracts/dbml/shopping.dbml
     publishes: [account.deletion.completed]
     consumes:
@@ -159,10 +169,11 @@ services:
     synchronous_dependencies: [recipe]
 
   - id: health
-    name: Health Service
+    name: Health Data Service
     kind: domain_service
     stateful: true
-    purpose: activity and weight synchronization from platform health providers
+    purpose: domain activity and weight data synchronized from platform health providers; never operational probes
+    openapi_tags: [health]
     dbml: contracts/dbml/health.dbml
     publishes:
       - health.activity.changed
@@ -176,6 +187,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: event-driven daily nutrition and health progress read models
+    openapi_tags: [progress]
     dbml: contracts/dbml/progress.dbml
     publishes:
       - progress.day.updated
@@ -196,6 +208,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: push, email, reminder scheduling and delivery state
+    openapi_tags: [notifications]
     dbml: contracts/dbml/notification.dbml
     publishes: [account.deletion.completed]
     consumes:
@@ -221,6 +234,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: media metadata, ownership, lifecycle and pre-signed object access
+    openapi_tags: [media]
     dbml: contracts/dbml/media.dbml
     publishes: [account.deletion.completed]
     consumes: [account.deletion.requested]
@@ -231,6 +245,7 @@ services:
     kind: domain_service
     stateful: true
     purpose: asynchronous generation and execution of 14-day meal plans
+    openapi_tags: [meal-plan]
     dbml: contracts/dbml/meal-planner.dbml
     publishes: [account.deletion.completed]
     consumes: [account.deletion.requested]

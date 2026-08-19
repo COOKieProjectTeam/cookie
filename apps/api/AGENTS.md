@@ -12,7 +12,12 @@ see `docs/adr/0003-kotlin-backend.md` and `docs/architecture/`.
 - Preserve the health-check only until the Kotlin runtime replaces it.
 - New service boundaries and dependencies must match
   `docs/architecture/model/services.yaml`.
-- Public HTTP behavior must match `contracts/openapi/openapi.yaml`.
+- Public HTTP behavior must match `contracts/openapi/openapi.yaml`; Kotlin
+  routing contracts, server interfaces and transport models are generated from
+  it according to `contracts/openapi/generation.yaml`.
+- Do not handwrite routes or DTOs that duplicate generated transport code.
+- Each deployable Kotlin component implements its own generated `/healthz` and
+  `/readyz` runtime interfaces. Never route these probes to Health Data Service.
 - Published and consumed events must match
   `docs/architecture/model/events.yaml`.
 - Every stateful service must implement the outbox/inbox protocol from

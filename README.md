@@ -22,6 +22,9 @@ outbox и idempotent inbox для обмена событиями через NAT
 используется только для явно описанных ephemeral-задач; Grafana — единая точка
 наблюдаемости.
 
+HTTP transport следует contract-first подходу: server interfaces и клиенты
+генерируются из OpenAPI, а сгенерированный код не редактируется вручную.
+
 Начинать чтение архитектуры следует с
 [`docs/architecture/README.md`](docs/architecture/README.md). Текущий Go-код —
 bootstrap, который ещё не мигрирован, а не образец для новой реализации.

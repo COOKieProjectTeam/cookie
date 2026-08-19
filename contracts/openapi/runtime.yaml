@@ -1,0 +1,52 @@
+openapi: 3.0.3
+info:
+  title: COOKie Service Runtime API
+  version: 0.1.0
+  description: >-
+    Internal operational endpoints implemented independently by every deployable
+    backend component. This contract does not belong to Health Data Service.
+tags:
+  - name: system
+    description: Component-local liveness and readiness.
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      operationId: getLiveness
+      summary: Process liveness probe
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeStatus"
+  /readyz:
+    get:
+      tags: [system]
+      operationId: getReadiness
+      summary: Dependency readiness probe
+      security: []
+      responses:
+        "200":
+          description: Component is ready to serve traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeStatus"
+        "503":
+          description: Component is alive but not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeStatus"
+components:
+  schemas:
+    ProbeStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, not_ready]

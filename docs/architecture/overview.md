@@ -15,7 +15,7 @@ flowchart LR
     Gateway --> Nutrition
     Gateway --> Recipe
     Gateway --> Shopping
-    Gateway --> Health
+    Gateway --> HealthData["Health Data Service"]
     Gateway --> Media
     Gateway --> MealPlanner["Meal Planner"]
 
@@ -30,7 +30,7 @@ flowchart LR
     Nutrition <--> Bus
     Recipe <--> Bus
     Shopping <--> Bus
-    Health <--> Bus
+    HealthData <--> Bus
     Progress <--> Bus
     Notification <--> Bus
     Media <--> Bus
@@ -56,3 +56,10 @@ flowchart LR
 
 Это логические роли: решение о процессах, контейнерах и масштабировании пока не
 принято.
+
+## Health terminology
+
+`Health Data Service` — доменный сервис веса и активности. Он не является
+центральным сервисом проверки работоспособности. Caddy, Mobile BFF и каждый
+backend runtime самостоятельно предоставляют `/healthz` и `/readyz` по общему
+операционному контракту `contracts/openapi/runtime.yaml`.
