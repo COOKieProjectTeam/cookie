@@ -6,6 +6,10 @@ source:
 
 rules:
   - calls not listed here are forbidden until the model is updated
+  - every internal operation is owned and authorized by the callee service
+  - every runtime caller proves cryptographic workload identity with callee audience
+  - client module availability does not grant permission to call the callee
+  - callee operation grants must be a subset of calls declared here
   - callers must set timeouts and propagate trace context
   - a synchronous failure must not be hidden by writing another service database
   - cross-service transactions are forbidden

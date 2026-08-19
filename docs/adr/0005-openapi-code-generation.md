@@ -45,3 +45,5 @@ Operational endpoints отделены от домена:
   breaking change.
 - Event contracts и NATS consumers не генерируются из OpenAPI; это отдельный
   контрактный контур.
+- Владение internal contracts, per-callee client modules и caller authorization
+  уточнены в ADR 0007.

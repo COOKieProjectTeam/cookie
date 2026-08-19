@@ -11,3 +11,4 @@ ADR фиксируют долгоживущие технические реше�
 - `0004-transactional-messaging.md` — NATS JetStream, outbox и inbox.
 - `0005-openapi-code-generation.md` — contract-first handlers and clients.
 - `0006-kotlin-service-platform.md` — единый production-ready путь для Kotlin-сервисов.
+- `0007-synchronous-service-access.md` — per-callee clients и service-to-service access control.

@@ -21,11 +21,15 @@ COOKie. Она не заменяет доменную архитектуру и 
 build-logic/                 # Gradle convention plugins
 platform/
   starter-web/               # HTTP runtime, errors, request context, probes
+  starter-http-client/       # timeouts, identity, tracing and safe telemetry
+  starter-security/          # workload and user context enforcement
   starter-observability/     # logs, metrics and tracing conventions
   starter-postgres/          # datasource, migrations and transaction support
   starter-messaging/         # NATS, event envelope, outbox and inbox runtime
   starter-testing/           # reusable test fixtures and mandatory suites
 service-template/            # generator/template inputs
+clients/
+  <callee>/                  # generated shared Kotlin/JVM internal client
 services/
   <service-id>/
 contracts/
@@ -78,6 +82,15 @@ deadline and cancellation hooks, безопасную сериализацию, 
 места расширения для authentication/authorization. Бизнес-handlers остаются в
 сервисе и реализуют generated OpenAPI interfaces.
 
+### HTTP client and security starters
+
+HTTP client starter создаёт standard client wiring для per-callee generated
+clients: mandatory timeout, trace propagation, workload credential, safe
+telemetry и error decoding. Security starter проверяет authenticated workload,
+audience, operation permission и user-context mode согласно
+`service-access-control.md`. Retry не включается глобально и требует явно
+определённой idempotency policy operation.
+
 ### Observability starter
 
 Observability starter задаёт структурированные logs, обязательные service and
@@ -129,6 +142,10 @@ Descriptor не дублирует `model/services.yaml`: архитектурн
 целевую систему, descriptor описывает конкретный deployable component. CI
 проверяет их согласованность.
 
+Для deployable service descriptor также содержит callee-owned `access.http` и
+`access.messaging` policies. Полная схема и default-deny semantics описаны в
+`service-access-control.md`.
+
 ## Mandatory verification
 
 Для каждого сервиса CI выполняет применимые проверки:
@@ -142,6 +159,8 @@ Descriptor не дублирует `model/services.yaml`: архитектурн
 6. Проверка event envelope, duplicate delivery и transactional outbox/inbox.
 7. Проверка допустимых module и synchronous service dependencies.
 8. Unit, integration и contract tests конкретного сервиса.
+9. Проверка workload identity, caller permissions и отсутствия internal routes в
+   public gateway.
 
 ## Rollout
 
