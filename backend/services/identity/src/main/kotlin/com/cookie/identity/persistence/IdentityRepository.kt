@@ -5,6 +5,7 @@ import org.springframework.stereotype.Repository
 import java.sql.ResultSet
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneOffset
 import java.util.UUID
 
 @Repository
@@ -32,7 +33,7 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
         jdbc.update(
             "INSERT INTO accounts(id, status, created_at) VALUES (?, 'PENDING_VERIFICATION', ?)",
             accountId,
-            now,
+            now.asJdbcTimestamp(),
         )
         jdbc.update(
             """
@@ -43,8 +44,8 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             accountId,
             email,
             passwordHash,
-            now,
-            now,
+            now.asJdbcTimestamp(),
+            now.asJdbcTimestamp(),
         )
     }
 
@@ -64,8 +65,8 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             id,
             accountId,
             tokenHash,
-            expiresAt,
-            now,
+            expiresAt.asJdbcTimestamp(),
+            now.asJdbcTimestamp(),
         )
     }
 
@@ -100,14 +101,14 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             WHERE account_id = ? AND purpose = 'EMAIL_VERIFICATION'
               AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > ?
             """.trimIndent(),
-            now,
+            now.asJdbcTimestamp(),
             accountId,
-            now,
+            now.asJdbcTimestamp(),
         )
     }
 
     fun consumeActionToken(id: UUID, now: Instant) {
-        jdbc.update("UPDATE auth_action_tokens SET consumed_at = ? WHERE id = ?", now, id)
+        jdbc.update("UPDATE auth_action_tokens SET consumed_at = ? WHERE id = ?", now.asJdbcTimestamp(), id)
     }
 
     fun activateAccount(accountId: UUID, now: Instant): Instant? {
@@ -119,14 +120,14 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             RETURNING created_at
             """.trimIndent(),
             { rs, _ -> rs.getTimestamp("created_at").toInstant() },
-            now,
+            now.asJdbcTimestamp(),
             accountId,
         ).singleOrNull()
         if (createdAt != null) {
             jdbc.update(
                 "UPDATE email_credentials SET email_verified_at = ?, updated_at = ? WHERE account_id = ?",
-                now,
-                now,
+                now.asJdbcTimestamp(),
+                now.asJdbcTimestamp(),
                 accountId,
             )
         }
@@ -141,8 +142,8 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             WHERE account_id = ?
             """.trimIndent(),
             newCount,
-            lockedUntil,
-            now,
+            lockedUntil?.asJdbcTimestamp(),
+            now.asJdbcTimestamp(),
             accountId,
         )
     }
@@ -154,7 +155,7 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             SET failed_login_count = 0, locked_until = NULL, updated_at = ?
             WHERE account_id = ?
             """.trimIndent(),
-            now,
+            now.asJdbcTimestamp(),
             accountId,
         )
     }
@@ -180,8 +181,8 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             familyId,
             tokenHash,
             deviceId,
-            familyExpiresAt,
-            now,
+            familyExpiresAt.asJdbcTimestamp(),
+            now.asJdbcTimestamp(),
         )
     }
 
@@ -205,8 +206,8 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             WHERE id = ? AND status = 'ACTIVE'
             """.trimIndent(),
             replacementId,
-            now,
-            now,
+            now.asJdbcTimestamp(),
+            now.asJdbcTimestamp(),
             id,
         )
     }
@@ -219,7 +220,7 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
                 revoke_reason = COALESCE(revoke_reason, ?)
             WHERE id = ? AND status = 'ACTIVE'
             """.trimIndent(),
-            now,
+            now.asJdbcTimestamp(),
             reason,
             id,
         )
@@ -233,8 +234,8 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
                 revoke_reason = 'REPLAY_DETECTED', reuse_detected_at = ?
             WHERE family_id = ?
             """.trimIndent(),
-            now,
-            now,
+            now.asJdbcTimestamp(),
+            now.asJdbcTimestamp(),
             familyId,
         )
     }
@@ -289,8 +290,8 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             aggregateType,
             aggregateId,
             payloadJson,
-            now,
-            now,
+            now.asJdbcTimestamp(),
+            now.asJdbcTimestamp(),
         )
     }
 
@@ -337,7 +338,7 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             SET published_at = ?, claimed_until = NULL, last_error = NULL
             WHERE event_id = ? AND published_at IS NULL
             """.trimIndent(),
-            now,
+            now.asJdbcTimestamp(),
             eventId,
         )
     }
@@ -349,7 +350,7 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
             SET available_at = ?, claimed_until = NULL, last_error = ?
             WHERE event_id = ? AND published_at IS NULL
             """.trimIndent(),
-            availableAt,
+            availableAt.asJdbcTimestamp(),
             error.take(1000),
             eventId,
         )
@@ -364,7 +365,7 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
         consumer,
         eventId,
         eventType,
-        now,
+        now.asJdbcTimestamp(),
     ) == 1
 
     private fun credential(rs: ResultSet) = CredentialRecord(
@@ -398,3 +399,5 @@ class IdentityRepository(private val jdbc: JdbcTemplate) {
         familyExpiresAt = rs.getTimestamp("family_expires_at").toInstant(),
     )
 }
+
+private fun Instant.asJdbcTimestamp() = atOffset(ZoneOffset.UTC)
