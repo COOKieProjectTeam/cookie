@@ -62,17 +62,14 @@ erDiagram
     jsonb payload
     timestamptz occurred_at
     timestamptz available_at
+    uuid correlation_id
+    uuid causation_id
+    varchar trace_id
+    uuid claim_id
     timestamptz claimed_until
     timestamptz published_at
     integer attempt_count
     varchar last_error
-  }
-
-  InboxEvents {
-    varchar consumer PK
-    uuid event_id PK
-    varchar event_type
-    timestamptz processed_at
   }
 
   Accounts ||--o| EmailCredentials : "account_id"

@@ -37,7 +37,8 @@ flowchart LR
     MealPlanner <--> Bus
 
     DomainServices["Every stateful service"] --> PG["Owned PostgreSQL DB/schema"]
-    DomainServices --> Pattern["Transactional outbox + inbox"]
+    DomainServices -->|when publishing events| Outbox["Transactional outbox"]
+    DomainServices -->|when consuming events| Inbox["Idempotent inbox"]
 
     Gateway --> Redis
     FoodCatalog --> Redis
@@ -49,8 +50,10 @@ flowchart LR
 
 - `API` принимает синхронные HTTP-запросы.
 - `Processor Worker` выполняет локальную асинхронную работу.
-- `Publisher Worker` отправляет pending outbox records в JetStream.
-- `Consumer Worker` применяет входящие события через inbox.
+- `Publisher Worker` отправляет pending outbox records в JetStream и существует
+  только у event publisher.
+- `Consumer Worker` применяет входящие события через inbox и существует только у
+  event consumer. Identity v1 ничего не потребляет и не имеет этой роли.
 - Специализированные workers допустимы там, где они явно нужны: scheduler и
   delivery в Notification, generator/processor в Meal Planner.
 

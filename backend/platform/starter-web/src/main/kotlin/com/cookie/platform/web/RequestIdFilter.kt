@@ -14,7 +14,7 @@ class RequestIdFilter : OncePerRequestFilter() {
         filterChain: FilterChain,
     ) {
         val requestId = request.getHeader(REQUEST_ID_HEADER)
-            ?.takeIf { value -> runCatching { UUID.fromString(value) }.isSuccess }
+            ?.let { value -> runCatching { UUID.fromString(value).toString() }.getOrNull() }
             ?: UUID.randomUUID().toString()
         response.setHeader(REQUEST_ID_HEADER, requestId)
         request.setAttribute(REQUEST_ID_ATTRIBUTE, requestId)

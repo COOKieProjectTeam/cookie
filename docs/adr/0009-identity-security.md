@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
+- Amended: 2026-08-20
 
 ## Context
 
@@ -16,9 +17,10 @@ Identity v1 реализует только email/password. Контракт д�
 ### Идентификаторы и credentials
 
 - Все новые account, token, session и event IDs — UUIDv7.
-- Email проходит trim, Unicode NFC, ASCII-проверку local-part,
-  IDNA-преобразование и lower-case. Разрешён только итоговый TLD `ru` или
-  `xn--p1ai` (`.рф`). Provider-specific `+`/dot normalization запрещена.
+- Email проходит trim, Unicode NFC, ASCII-проверку local-part, ICU UTS #46
+  non-transitional IDNA-преобразование с STD3/Bidi/Context checks и lower-case.
+  Разрешён только итоговый TLD `ru` или `xn--p1ai` (`.рф`). Provider-specific
+  `+`/dot normalization запрещена.
 - Пароль содержит 15–128 Unicode code points. Любые whitespace, Unicode
   separators и control characters запрещены. Пароль не нормализуется.
 - Password hash — Argon2id PHC (`m=19456 KiB`, `t=2`, `p=1`, salt 16 bytes,
@@ -31,7 +33,8 @@ Identity v1 реализует только email/password. Контракт д�
   активные tokens и имеет cooldown 60 секунд.
 - Refresh token: `v1.<UUIDv7 session id>.<256-bit random secret>`, SHA-256
   verifier, абсолютная жизнь family 30 дней, rotation при каждом refresh.
-  Повтор ROTATED token отзывает family как replay. Logout идемпотентен.
+  Повтор ROTATED token отзывает family как replay. Logout идемпотентен и по
+  любому валидному token отзывает всё family как одну logical device-session.
 - Access JWT: ES256, `typ=at+jwt`, `iss=https://api.cookie.app`,
   `aud=cookie-api`, TTL 15 минут; claims `sub`, `sid`, `jti`, `iat`, `exp`.
   Email и роли не включаются. Public active/retiring keys доступны через JWKS
@@ -40,9 +43,16 @@ Identity v1 реализует только email/password. Контракт д�
 ### Enumeration, abuse and messaging
 
 Register/resend отвечают одинаковым `202` для существующих и неизвестных
-адресов. Login возвращает одинаковый `401` для unknown/pending/locked/wrong и
-выполняет dummy Argon2 verification. PostgreSQL-backed counters обеспечивают
-rate limits между replicas; после пяти неверных паролей действует exponential
+адресов. Login возвращает одинаковый `401` для unknown/pending/locked/wrong:
+для неизвестного account выполняется dummy Argon2 verification, для известного
+проверяется реальный hash вне JDBC transaction. Правильный пароль во время
+lockout не продлевает блокировку; только неверный пароль увеличивает backoff.
+
+Password admission policy применяется при создании или смене credential, но не
+при login: её последующее ужесточение не должно блокировать существующий
+корректный hash. Login contract ограничивает только непустое значение и
+безопасную максимальную длину. PostgreSQL-backed counters обеспечивают rate
+limits между replicas; после пяти неверных паролей действует exponential
 account backoff от 30 секунд до 15 минут.
 
 Начальные лимиты: register `3/email/hour`, `20/IP/hour`; resend
@@ -51,7 +61,7 @@ account backoff от 30 секунд до 15 минут.
 `30/session/minute`, `120/IP/minute`. Scope values сохраняются как усечённые
 SHA-256 digests, а не открытые email/IP/token identifiers.
 
-Identity атомарно пишет state и transactional outbox. `account.created` выходит
+Identity атомарно пишет state и transactional outbox. `account.activated` выходит
 ровно один раз при переходе account в ACTIVE. Для
 `notification.email.requested` открытый payload содержит только template,
 expiry и compact JWE. Email, locale и verification token находятся внутри JWE
@@ -62,6 +72,8 @@ Raw secrets не хранятся в outbox, JetStream и logs.
 
 - Public auth contract v0.2 содержит register, confirm, resend, login, refresh,
   logout и JWKS; OAuth/reset/change/delete flows откладываются до реализации.
-- Потеря signing/encryption key делает readiness отрицательным.
+- Отсутствующее или невалидное signing/encryption key material не позволяет
+  Identity стартовать; readiness работающего instance требует уже загруженных
+  при startup ключей и PostgreSQL.
 - Notification Service обязан управлять private decryption key и обрабатывать
   at-least-once delivery идемпотентно.

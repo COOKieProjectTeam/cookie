@@ -9,6 +9,9 @@ observable there.
 
 ## Required signals
 
+Messaging signals применяются по роли: outbox metrics обязательны для event
+publishers, inbox/consumer metrics — только для event consumers.
+
 - HTTP request rate, latency and error rate by route and service.
 - Worker throughput, failures and execution latency.
 - Outbox pending age/count, publish attempts and failures by service/event type.
@@ -20,9 +23,16 @@ observable there.
 
 ## Correlation
 
-HTTP and event processing propagate `trace_id`, `correlation_id` and
-`causation_id`. Logs are structured and include service, environment and
-operation, but never tokens, credentials, detailed health data or meal history.
+HTTP request IDs are persisted into emitted events as `correlation_id`.
+`trace_id` is populated only when a tracing bridge installs it in MDC;
+`causation_id` is populated by event consumers. Identity v1 has no tracing
+bridge or consumer yet, so both fields remain null rather than being fabricated.
+Logs must include service, environment and operation, but never tokens,
+credentials, detailed health data or meal history.
+
+Identity currently logs publish failures but does not yet export the required
+outbox gauges/counters or distributed traces. Those signals and their alerts are
+a production rollout requirement, not an implemented pilot capability.
 
 ## Alerts
 

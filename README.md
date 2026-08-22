@@ -20,10 +20,11 @@
 ## Целевая архитектура
 
 Backend переводится на Kotlin/JVM и разбивается по доменным сервисам. Каждый
-stateful-сервис владеет своей PostgreSQL-схемой/БД и использует transactional
-outbox и idempotent inbox для обмена событиями через NATS JetStream. Redis
-используется только для явно описанных ephemeral-задач; Grafana — единая точка
-наблюдаемости.
+stateful-сервис владеет своей PostgreSQL-схемой/БД. Сервис, публикующий durable
+events, использует transactional outbox; сервис, потребляющий события, —
+idempotent inbox. Producer-only Identity v1 поэтому содержит outbox, но не
+inbox. Redis используется только для явно описанных ephemeral-задач; Grafana —
+единая точка наблюдаемости.
 
 HTTP transport следует contract-first подходу: server interfaces и клиенты
 генерируются из service-owned OpenAPI. Общий mobile/gateway bundle автоматически

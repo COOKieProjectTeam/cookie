@@ -1,23 +1,17 @@
 schema_version: 1
 id: identity
-owner: backend
-tier: B
 runtime: kotlin_jvm
-framework: spring_boot_mvc
-jdk: 25
 stateful: true
 database: identity
-openapi_tags: [auth]
 public_openapi:
   source: contracts/openapi/public/identity.yaml
-  tag: auth
 runtime_openapi: contracts/openapi/runtime.yaml
 messaging:
-  broker: nats_jetstream
-  stream: COOKIE_EVENTS
   publishes:
-    - account.created.v1
-    - notification.email.requested.v1
+    - type: account.activated
+      version: 1
+    - type: notification.email.requested
+      version: 1
   consumes: []
 synchronous_dependencies: []
 infrastructure_dependencies: [postgresql, nats_jetstream, signing_key, notification_encryption_key]

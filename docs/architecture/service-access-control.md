@@ -28,7 +28,9 @@ Caller не выдаёт разрешение сам себе подключен
 | `backend/services/<callee>/service.yaml` | Кто может вызвать operation и какой context обязателен? |
 | deployment identity and network policy | Как runtime подтверждает и ограничивает caller? |
 
-Эти источники имеют разную гранулярность. CI проверяет их согласованность.
+Эти источники имеют разную гранулярность. Целевой policy validator проверяет их
+согласованность; в текущем bootstrap, пока нет первого internal contract, этот
+CI gate ещё не реализован.
 
 ## Callee-owned policy
 
@@ -267,17 +269,23 @@ authentication или operation authorization.
 Для NATS применяется независимый least-privilege allowlist:
 
 ```yaml
-access:
-  messaging:
-    publish:
-      - progress.day.updated
-    subscribe:
-      - nutrition.day.changed
+messaging:
+  publishes:
+    - type: progress.day.updated
+      version: 1
+  consumes:
+    - type: nutrition.day.changed
+      version: 1
 ```
 
-Permissions генерируются из согласованных `model/events.yaml` и service
-descriptor. Service credential не получает publish/subscribe `>` и не может
-использовать event subjects, которых нет в architecture model.
+Эта декларация одновременно является transport contract и least-privilege
+allowlist; отдельный дублирующий `access.messaging` запрещён. Permissions
+генерируются из согласованных `model/events.yaml` и service descriptor. Service
+credential не получает publish/subscribe `>` и не может использовать subjects,
+которых нет в architecture model. Технические request/reply subjects не являются
+domain events: Identity publisher получает subscribe только на собственный
+`_INBOX.cookie.identity.>` для JetStream acknowledgements и не получает
+event-subscribe или `$JS.API` management permissions.
 
 ## CI gates
 

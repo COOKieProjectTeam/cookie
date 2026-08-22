@@ -17,6 +17,7 @@ jobs:
         with:
           go-version-file: apps/api/go.mod
       - run: go test ./apps/api/...
+      - run: go vet ./apps/api/...
 
   kotlin:
     runs-on: ubuntu-latest
@@ -27,7 +28,25 @@ jobs:
           distribution: temurin
           java-version: "25"
       - uses: gradle/actions/setup-gradle@v5
-      - run: ./gradlew :backend:services:identity:check :backend:tools:notification-sink:check generateKmpPublicClient
+      - name: Require Docker for Testcontainers
+        run: docker info
+      - run: >-
+          ./gradlew
+          validatePlannedOpenApi
+          validateServiceDescriptors
+          :backend:platform:starter-web:check
+          :backend:platform:starter-postgres:check
+          :backend:platform:starter-messaging:check
+          :backend:platform:starter-testing:check
+          :backend:services:identity:check
+          :backend:tools:notification-sink:check
+          compileKmpPublicClient
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f deploy/docker/compose.yaml config
 
   terraform:
     runs-on: ubuntu-latest

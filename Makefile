@@ -11,13 +11,14 @@ identity-run:
 
 test:
 	$(GO_ENV) go test ./apps/api/...
-	./gradlew :backend:services:identity:check :backend:tools:notification-sink:check
+	$(GO_ENV) go vet ./apps/api/...
+	./gradlew validatePlannedOpenApi validateServiceDescriptors :backend:platform:starter-web:check :backend:platform:starter-postgres:check :backend:platform:starter-messaging:check :backend:platform:starter-testing:check :backend:services:identity:check :backend:tools:notification-sink:check compileKmpPublicClient
 
 fmt:
 	gofmt -w $$(find apps/api -name '*.go' -type f)
 
 openapi-generate:
-	./gradlew :backend:services:identity:openApiGenerate :backend:services:identity:generateRuntimeOpenApi bundlePublicOpenApi validateBundledPublicOpenApi generateKmpPublicClient
+	./gradlew :backend:services:identity:openApiGenerate :backend:services:identity:generateRuntimeOpenApi bundlePublicOpenApi validateBundledPublicOpenApi validatePlannedOpenApi validateServiceDescriptors compileKmpPublicClient
 
 compose-up:
 	$(COMPOSE) -f deploy/docker/compose.yaml up --build

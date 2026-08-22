@@ -12,9 +12,8 @@
 5. Код и deploy-конфигурация должны соответствовать пунктам 1–3.
 
 Если Miro и Git расходятся, нельзя молча выбирать одну версию: создаётся ADR или
-атомарное изменение модели и доски. Пользовательские решения от 2026-08-19,
-зафиксированные в ADR 0003/0004/0005/0006/0007, имеют приоритет над более старым
-содержимым доски.
+атомарное изменение модели и доски. Пользовательские решения, зафиксированные в
+ADR 0003–0010, имеют приоритет над более старым содержимым доски.
 
 ## Reading order for an LLM
 
@@ -36,7 +35,9 @@
 - Каждый stateful domain service владеет собственной PostgreSQL БД/схемой.
 - Чужие таблицы нельзя читать или изменять напрямую.
 - Межсервисные события идут через NATS JetStream.
-- Каждый stateful domain service использует transactional outbox и inbox.
+- Каждый event publisher использует transactional outbox; каждый event consumer
+  использует idempotent inbox. Неиспользуемый messaging role заранее не
+  создаётся.
 - Доставка at-least-once, поэтому consumers идемпотентны.
 - Синхронный вызов разрешён только если записан в `sync-calls.yaml`.
 - Internal operation доступна только authenticated workload из callee-owned
@@ -55,8 +56,9 @@
 - Общая service platform не содержит business models или business services.
 - Health Data Service владеет доменными данными здоровья, но никогда не владеет
   `/healthz` или `/readyz` других компонентов.
-- Неуказанные framework, JDK version, retry limits, stream topology и telemetry
-  backends нельзя выдумывать: они имеют значение `TBD`.
+- JDK/framework и Identity publisher profile зафиксированы ADR 0008 и
+  `messaging.md`. Неуказанные deployment topology, consumer retry/dead-letter
+  policy и telemetry backends нельзя выдумывать: они имеют значение `TBD`.
 
 ## Updating the model
 

@@ -10,12 +10,15 @@ import org.springframework.stereotype.Component
 import tools.jackson.databind.ObjectMapper
 import java.time.Instant
 
-data class VerificationDelivery(
+class VerificationDelivery(
     val recipientEmail: String,
     val locale: String?,
     val token: String,
     val expiresAt: Instant,
-)
+) {
+    override fun toString(): String =
+        "VerificationDelivery(recipientEmail=[redacted],locale=$locale,token=[redacted],expiresAt=$expiresAt)"
+}
 
 @Component
 class NotificationPayloadEncryptor(

@@ -32,7 +32,8 @@ Relevant board items:
 These user decisions supersede missing or older board details:
 
 - backend and Mobile BFF use Kotlin/JVM;
-- every stateful domain service uses transactional outbox and idempotent inbox;
+- every event publisher uses transactional outbox and every event consumer uses
+  idempotent inbox;
 - PostgreSQL, NATS JetStream, Redis and Grafana are accepted infrastructure;
 - Git architecture files are canonical and Miro becomes the visual mirror.
 
@@ -47,9 +48,13 @@ These user decisions supersede missing or older board details:
   is normalized to NATS JetStream.
 - The board label `Health Service` is normalized to `Health Data Service` to
   distinguish domain weight/activity data from per-component operational probes.
-- Backend framework, JDK version, service process/container layout, JetStream
-  subjects/streams, retry limits, dead-letter policy and Grafana data sources
-  remain TBD.
+- ADR 0008 resolved the Identity pilot toolchain: JDK 25, Spring Boot MVC,
+  Spring JDBC, PostgreSQL, NATS `jnats` and OpenAPI Generator. ADR 0009 resolved
+  its email/password, token, key and encrypted-notification profile.
+- The Identity publisher subject mapping, `COOKIE_EVENTS` stream and retry range
+  are fixed in `messaging.md` and `model/events.yaml`. Process/container
+  topology, consumer retry/dead-letter policy, retention/cleanup durations and
+  Grafana data sources remain TBD.
 - The Miro-generated board overview could not be retrieved because the Miro AI
   credit quota was exhausted. Tables and raw board objects were still read
   directly, so this model does not depend on that overview.

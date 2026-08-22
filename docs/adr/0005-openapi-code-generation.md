@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
+- Amended: 2026-08-20
 
 Public contract ownership and active bundle generation are clarified by ADR 0010.
 
@@ -29,8 +30,9 @@ Generated sources размещаются в Gradle build directories и не к�
 Версия генератора и templates фиксируются. CI валидирует contracts, уникальность
 `operationId`, ownership tags и проверяет, что regeneration не оставляет diff.
 
-Конкретный generator выбирается вместе с Kotlin backend framework и до этого
-имеет значение `TBD`.
+Конкретный generator выбирается вместе с Kotlin backend framework. Для Identity
+pilot этот выбор зафиксирован ADR 0008: OpenAPI Generator 7.24.0; его смена
+требует отдельного архитектурного решения и regeneration проверки.
 
 Operational endpoints отделены от домена:
 

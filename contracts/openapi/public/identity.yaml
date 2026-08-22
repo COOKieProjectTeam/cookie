@@ -174,8 +174,11 @@ paths:
     post:
       tags: [auth]
       operationId: logout
-      summary: Завершить одну сессию
-      description: Refresh token сам аутентифицирует завершаемую сессию.
+      summary: Завершить одну логическую сессию устройства
+      description: >-
+        Любой криптографически валидный refresh token семейства аутентифицирует
+        логическую сессию устройства; Identity отзывает всё семейство, включая
+        токен-замену, созданный конкурентным refresh.
       security: []
       requestBody:
         required: true
@@ -270,6 +273,17 @@ components:
         и управляющие символы запрещены; остальные требования к составу не
         навязываются. На сервере хранится только Argon2id encoded hash.
 
+    LoginPassword:
+      type: string
+      format: password
+      writeOnly: true
+      minLength: 1
+      maxLength: 128
+      description: >-
+        Пароль для проверки существующего credential. Текущая registration
+        policy намеренно не применяется при login, чтобы её ужесточение не
+        блокировало ранее созданные аккаунты.
+
     EmailRegistrationRequest:
       type: object
       required: [email, password]
@@ -289,7 +303,7 @@ components:
         email:
           $ref: "#/components/schemas/EmailAddress"
         password:
-          $ref: "#/components/schemas/Password"
+          $ref: "#/components/schemas/LoginPassword"
         deviceId:
           type: string
           maxLength: 255

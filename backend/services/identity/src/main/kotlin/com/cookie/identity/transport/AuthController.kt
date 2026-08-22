@@ -1,7 +1,14 @@
 package com.cookie.identity.transport
 
-import com.cookie.identity.application.IdentityService
 import com.cookie.identity.application.IssuedTokens
+import com.cookie.identity.application.PublicJwk
+import com.cookie.identity.application.ports.ConfirmEmailUseCase
+import com.cookie.identity.application.ports.GetIdentityJwksUseCase
+import com.cookie.identity.application.ports.LoginWithEmailUseCase
+import com.cookie.identity.application.ports.LogoutUseCase
+import com.cookie.identity.application.ports.RefreshSessionUseCase
+import com.cookie.identity.application.ports.RegisterWithEmailUseCase
+import com.cookie.identity.application.ports.ResendEmailVerificationUseCase
 import com.cookie.identity.generated.api.AuthApi
 import com.cookie.identity.generated.model.AuthenticatedUser
 import com.cookie.identity.generated.model.EmailActionRequest
@@ -12,7 +19,6 @@ import com.cookie.identity.generated.model.JsonWebKeySet
 import com.cookie.identity.generated.model.RefreshTokenRequest
 import com.cookie.identity.generated.model.TokenPair
 import com.cookie.identity.generated.model.TokenPairWithUser
-import com.cookie.identity.security.AccessTokenIssuer
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.http.CacheControl
 import org.springframework.http.ResponseEntity
@@ -21,12 +27,17 @@ import java.time.Duration
 
 @Controller
 class AuthController(
-    private val identityService: IdentityService,
-    private val accessTokenIssuer: AccessTokenIssuer,
+    private val registerWithEmail: RegisterWithEmailUseCase,
+    private val resendEmailVerification: ResendEmailVerificationUseCase,
+    private val confirmEmail: ConfirmEmailUseCase,
+    private val loginWithEmail: LoginWithEmailUseCase,
+    private val refreshSession: RefreshSessionUseCase,
+    private val logout: LogoutUseCase,
+    private val getIdentityJwks: GetIdentityJwksUseCase,
     private val request: HttpServletRequest,
 ) : AuthApi {
     override fun registerWithEmail(emailRegistrationRequest: EmailRegistrationRequest): ResponseEntity<Unit> {
-        identityService.register(
+        registerWithEmail.execute(
             emailRegistrationRequest.email,
             emailRegistrationRequest.password,
             emailRegistrationRequest.locale,
@@ -36,14 +47,14 @@ class AuthController(
     }
 
     override fun resendEmailVerification(emailActionRequest: EmailActionRequest): ResponseEntity<Unit> {
-        identityService.resend(emailActionRequest.email, clientIp())
+        resendEmailVerification.execute(emailActionRequest.email, clientIp())
         return ResponseEntity.accepted().build()
     }
 
     override fun confirmEmail(
         emailVerificationConfirmRequest: EmailVerificationConfirmRequest,
     ): ResponseEntity<TokenPairWithUser> = ResponseEntity.ok(
-        identityService.confirm(
+        confirmEmail.execute(
             emailVerificationConfirmRequest.token,
             emailVerificationConfirmRequest.deviceId,
             clientIp(),
@@ -52,7 +63,7 @@ class AuthController(
 
     override fun loginWithEmail(emailLoginRequest: EmailLoginRequest): ResponseEntity<TokenPairWithUser> =
         ResponseEntity.ok(
-            identityService.login(
+            loginWithEmail.execute(
                 emailLoginRequest.email,
                 emailLoginRequest.password,
                 emailLoginRequest.deviceId,
@@ -62,17 +73,17 @@ class AuthController(
 
     override fun refreshSession(refreshTokenRequest: RefreshTokenRequest): ResponseEntity<TokenPair> =
         ResponseEntity.ok(
-            identityService.refresh(refreshTokenRequest.refreshToken, clientIp()).toTransport(),
+            refreshSession.execute(refreshTokenRequest.refreshToken, clientIp()).toTransport(),
         )
 
     override fun logout(refreshTokenRequest: RefreshTokenRequest): ResponseEntity<Unit> {
-        identityService.logout(refreshTokenRequest.refreshToken, clientIp())
+        logout.execute(refreshTokenRequest.refreshToken, clientIp())
         return ResponseEntity.noContent().build()
     }
 
     override fun getIdentityJwks(): ResponseEntity<JsonWebKeySet> = ResponseEntity.ok()
         .cacheControl(CacheControl.maxAge(Duration.ofMinutes(5)).cachePublic())
-        .body(accessTokenIssuer.jwks())
+        .body(JsonWebKeySet(propertyKeys = getIdentityJwks.execute().map { it.toTransport() }))
 
     private fun clientIp(): String = request.remoteAddr?.take(128) ?: "unknown"
 
@@ -89,5 +100,15 @@ class AuthController(
         refreshToken = refreshToken,
         refreshTokenExpiresIn = refreshTokenExpiresIn,
         user = AuthenticatedUser(accountId, newUser),
+    )
+
+    private fun PublicJwk.toTransport() = com.cookie.identity.generated.model.JsonWebKey(
+        kty = com.cookie.identity.generated.model.JsonWebKey.Kty.EC,
+        use = com.cookie.identity.generated.model.JsonWebKey.Use.SIG,
+        alg = com.cookie.identity.generated.model.JsonWebKey.Alg.ES256,
+        kid = keyId,
+        crv = com.cookie.identity.generated.model.JsonWebKey.Crv.P_256,
+        x = x,
+        y = y,
     )
 }

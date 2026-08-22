@@ -20,8 +20,9 @@ see `docs/adr/0003-kotlin-backend.md` and `docs/architecture/`.
   `/readyz` runtime interfaces. Never route these probes to Health Data Service.
 - Published and consumed events must match
   `docs/architecture/model/events.yaml`.
-- Every stateful service must implement the outbox/inbox protocol from
-  `docs/architecture/messaging.md`.
+- Every service that publishes durable events implements the outbox protocol;
+  every service that consumes events implements the inbox protocol from
+  `docs/architecture/messaging.md`. Producer-only services do not add an inbox.
 
 ## Temporary verification
 

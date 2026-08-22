@@ -7,6 +7,8 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":backend:services:identity:domain"))
+    implementation(project(":backend:services:identity:application"))
     implementation(project(":backend:platform:starter-web"))
     implementation(project(":backend:platform:starter-postgres"))
     implementation(project(":backend:platform:starter-messaging"))
@@ -102,7 +104,12 @@ tasks.named("compileKotlin") {
 }
 
 tasks.named("check") {
-    dependsOn(tasks.named("openApiValidate"), validateRuntimeOpenApi)
+    dependsOn(
+        tasks.named("openApiValidate"),
+        validateRuntimeOpenApi,
+        ":backend:services:identity:domain:check",
+        ":backend:services:identity:application:check",
+    )
 }
 
 springBoot {

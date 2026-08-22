@@ -29,8 +29,9 @@ repository. Disposable integrations belong in `cookie-labs`.
   the domain Health Data Service does not own operational probes.
 - New backend implementation is Kotlin/JVM. Do not extend the legacy Go
   bootstrap with product behavior; its removal requires a separate migration.
-- Every stateful domain service uses PostgreSQL transactional outbox and
-  idempotent inbox around NATS JetStream delivery.
+- Every service that publishes durable events uses a PostgreSQL transactional
+  outbox. Every service that consumes events uses a PostgreSQL idempotent inbox;
+  producer-only services do not add an inbox pre-emptively.
 - Redis is not a system of record and may only be used for an explicitly
   documented ephemeral use case.
 - Do not add secrets, `.env` files, state files, signing material or production

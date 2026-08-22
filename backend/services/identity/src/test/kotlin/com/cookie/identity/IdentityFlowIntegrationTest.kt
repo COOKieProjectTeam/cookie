@@ -4,12 +4,12 @@ import com.cookie.identity.generated.model.EmailLoginRequest
 import com.cookie.identity.generated.model.EmailRegistrationRequest
 import com.cookie.identity.generated.model.EmailVerificationConfirmRequest
 import com.cookie.identity.generated.model.RefreshTokenRequest
-import com.cookie.identity.messaging.InboxProcessor
 import com.nimbusds.jose.JWEObject
+import com.nimbusds.jose.JWEAlgorithm
 import com.nimbusds.jose.crypto.RSADecrypter
+import com.nimbusds.jose.jwk.KeyUse
 import com.nimbusds.jose.jwk.gen.RSAKeyGenerator
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -34,7 +34,6 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicInteger
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -48,9 +47,6 @@ class IdentityFlowIntegrationTest {
 
     @Autowired
     private lateinit var objectMapper: ObjectMapper
-
-    @Autowired
-    private lateinit var inboxProcessor: InboxProcessor
 
     @Test
     fun `register confirm refresh replay and encrypted outbox are atomic`() {
@@ -108,7 +104,7 @@ class IdentityFlowIntegrationTest {
         ).isEqualTo("ACTIVE")
         assertThat(
             jdbc.queryForObject(
-                "SELECT count(*) FROM outbox_events WHERE event_type = 'account.created' AND aggregate_id = ?",
+                "SELECT count(*) FROM outbox_events WHERE event_type = 'account.activated' AND aggregate_id = ?",
                 Int::class.java,
                 accountId.toString(),
             ),
@@ -196,32 +192,40 @@ class IdentityFlowIntegrationTest {
     }
 
     @Test
-    fun `inbox commits effects once and rolls back marker with failed effect`() {
-        val eventId = UUID.randomUUID()
-        val effects = AtomicInteger()
+    fun `correct password while locked does not extend the lock`() {
+        val unique = UUID.randomUUID().toString().take(8)
+        val email = "correct-locked-$unique@example.ru"
+        val password = "ValidPassword-$unique"
+        registerAndConfirm(email, password)
+        jdbc.update(
+            """
+            UPDATE email_credentials
+            SET failed_login_count = 5, locked_until = clock_timestamp() + interval '30 seconds'
+            WHERE email = ?
+            """.trimIndent(),
+            email,
+        )
+        val lockBefore = lockedUntil(email)
 
-        assertThat(inboxProcessor.process("synthetic-test", eventId) { effects.incrementAndGet() }).isTrue()
-        assertThat(inboxProcessor.process("synthetic-test", eventId) { effects.incrementAndGet() }).isFalse()
-        assertThat(effects.get()).isEqualTo(1)
+        val response = post("/v1/auth/email/login", EmailLoginRequest(email, password, null))
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value())
         assertThat(
             jdbc.queryForObject(
-                "SELECT count(*) FROM inbox_events WHERE consumer = 'synthetic-test' AND event_id = ?",
+                "SELECT failed_login_count FROM email_credentials WHERE email = ?",
                 Int::class.java,
-                eventId,
+                email,
             ),
-        ).isEqualTo(1)
+        ).isEqualTo(5)
+        assertThat(lockedUntil(email)).isEqualTo(lockBefore)
+    }
 
-        val failedEventId = UUID.randomUUID()
-        assertThatThrownBy {
-            inboxProcessor.process("synthetic-test", failedEventId) { error("synthetic failure") }
-        }.isInstanceOf(IllegalStateException::class.java)
-        assertThat(
-            jdbc.queryForObject(
-                "SELECT count(*) FROM inbox_events WHERE consumer = 'synthetic-test' AND event_id = ?",
-                Int::class.java,
-                failedEventId,
-            ),
-        ).isEqualTo(0)
+    @Test
+    fun `readiness does not depend on a lazily connected broker`() {
+        val request = HttpRequest.newBuilder(URI("http://127.0.0.1:$port/readyz")).GET().build()
+        val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString())
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value())
     }
 
     private fun registerAndConfirm(email: String, password: String) {
@@ -274,6 +278,8 @@ class IdentityFlowIntegrationTest {
 
         private val notificationPrivateKey = RSAKeyGenerator(2048)
             .keyID("notification-integration")
+            .keyUse(KeyUse.ENCRYPTION)
+            .algorithm(JWEAlgorithm.RSA_OAEP_256)
             .generate()
         private val notificationPublicFile = Files.createTempFile("cookie-notification-public-", ".jwk").also {
             Files.writeString(it, notificationPrivateKey.toPublicJWK().toJSONString())
@@ -289,7 +295,7 @@ class IdentityFlowIntegrationTest {
 
         @Container
         @JvmStatic
-        val nats: NatsContainer = NatsContainer("nats:2.14.3-alpine")
+        val nats: NatsContainer = NatsContainer("nats:2.14.4-alpine")
             .withCommand("-js")
             .withExposedPorts(4222)
 
@@ -301,7 +307,6 @@ class IdentityFlowIntegrationTest {
             registry.add("spring.datasource.password", postgres::getPassword)
             registry.add("cookie.identity.nats-url") { "nats://${nats.host}:${nats.getMappedPort(4222)}" }
             registry.add("cookie.identity.notification-public-key-path") { notificationPublicFile.toString() }
-            registry.add("cookie.identity.outbox-enabled") { true }
         }
     }
 }

@@ -1,11 +1,11 @@
 package com.cookie.identity.transport
 
-import com.cookie.identity.domain.IdentityUnavailableException
-import com.cookie.identity.domain.InvalidActionTokenException
-import com.cookie.identity.domain.InvalidCredentialsException
+import com.cookie.identity.application.IdentityUnavailableException
+import com.cookie.identity.application.InvalidActionTokenException
+import com.cookie.identity.application.InvalidCredentialsException
+import com.cookie.identity.application.InvalidTokenException
+import com.cookie.identity.application.RateLimitExceededException
 import com.cookie.identity.domain.InvalidInputException
-import com.cookie.identity.domain.InvalidTokenException
-import com.cookie.identity.domain.RateLimitExceededException
 import com.cookie.identity.generated.model.Error
 import com.cookie.platform.web.RequestIdFilter
 import jakarta.servlet.http.HttpServletRequest

@@ -1,6 +1,6 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-08-19
+updated_at: 2026-08-20
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
   authority: docs/architecture/README.md
@@ -12,8 +12,8 @@ defaults:
   state_store: postgresql
   event_bus: nats_jetstream
   delivery_semantics: at_least_once
-  transactional_outbox: required
-  idempotent_inbox: required
+  transactional_outbox: required_for_event_publishers
+  idempotent_inbox: required_for_event_consumers
   database_access: owner_only
   operational_http_contract: contracts/openapi/runtime.yaml
   operational_endpoint_owner: each_deployable_component
@@ -81,8 +81,9 @@ services:
     openapi_tags: [auth]
     dbml: contracts/dbml/identity.dbml
     publishes:
-      - account.created
+      - account.activated
       - notification.email.requested
+    consumes: []
 
   - id: user
     name: User Service
@@ -96,7 +97,7 @@ services:
       - user.goal.changed
       - user.goal_override.changed
       - user.hydration_goal.changed
-    consumes: [account.created]
+    consumes: [account.activated]
 
   - id: food_catalog
     name: Food Catalog Service
@@ -193,7 +194,7 @@ services:
     dbml: contracts/dbml/notification.dbml
     consumes:
       - notification.email.requested
-      - account.created
+      - account.activated
       - nutrition.meal.created
       - nutrition.meal.updated
       - nutrition.meal.deleted

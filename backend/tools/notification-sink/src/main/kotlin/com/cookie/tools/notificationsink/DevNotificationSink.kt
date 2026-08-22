@@ -34,14 +34,14 @@ class DevNotificationSink(
     private var connection: Connection? = null
 
     override fun run(args: ApplicationArguments) {
-        val privateKey = awaitPrivateKey()
+        awaitPrivateKey()
         val options = Options.Builder()
             .server(configuration.natsUrl)
             .connectionName("cookie-dev-notification-sink")
             .connectionTimeout(Duration.ofSeconds(2))
             .maxReconnects(-1)
             .build()
-        connection = Nats.connect(options).also { nats -> subscribe(nats, privateKey) }
+        connection = Nats.connect(options).also(::subscribe)
         logger.info("Dev notification sink is connected; messages are delivered to Mailpit")
     }
 
@@ -50,16 +50,19 @@ class DevNotificationSink(
         connection?.runCatching { close() }
     }
 
-    private fun awaitPrivateKey(): RSAKey {
+    private fun awaitPrivateKey(expectedKeyId: String? = null): RSAKey {
         val path = Path.of(configuration.privateKeyPath)
         repeat(120) {
-            if (Files.isRegularFile(path)) return RSAKey.parse(Files.readString(path))
+            val key = runCatching {
+                if (Files.isRegularFile(path)) RSAKey.parse(Files.readString(path)) else null
+            }.getOrNull()
+            if (key != null && (expectedKeyId == null || key.keyID == expectedKeyId)) return key
             Thread.sleep(500)
         }
-        error("Notification private key was not created within 60 seconds")
+        error("Notification private key${expectedKeyId?.let { " kid=$it" }.orEmpty()} was not available within 60 seconds")
     }
 
-    private fun subscribe(nats: Connection, privateKey: RSAKey) {
+    private fun subscribe(nats: Connection) {
         val dispatcher = nats.createDispatcher()
         val consumer = ConsumerConfiguration.builder()
             .durable(DURABLE_CONSUMER)
@@ -79,7 +82,7 @@ class DevNotificationSink(
                     NOTIFICATION_SUBJECT,
                     dispatcher,
                     { message ->
-                        if (handle(message.data, privateKey)) message.ack() else message.nakWithDelay(Duration.ofSeconds(2))
+                        if (handle(message.data)) message.ack() else message.nakWithDelay(Duration.ofSeconds(2))
                     },
                     false,
                     options,
@@ -92,13 +95,15 @@ class DevNotificationSink(
         }
     }
 
-    private fun handle(data: ByteArray, privateKey: RSAKey): Boolean {
+    private fun handle(data: ByteArray): Boolean {
         var eventId = "unknown"
         return try {
             val envelope = objectMapper.readTree(data)
             eventId = envelope.path("event_id").stringValue("unknown")
             val compact = envelope.path("payload").path("encryptedPayload").stringValue()
-            val jwe = JWEObject.parse(compact).apply { decrypt(RSADecrypter(privateKey)) }
+            val jwe = JWEObject.parse(compact)
+            val privateKey = awaitPrivateKey(jwe.header.keyID)
+            jwe.decrypt(RSADecrypter(privateKey))
             val delivery = objectMapper.readTree(jwe.payload.toString())
             sendEmail(
                 recipient = delivery.path("recipientEmail").stringValue(),

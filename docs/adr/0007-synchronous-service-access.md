@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
+- Amended: 2026-08-20
 
 ## Context
 
@@ -82,8 +83,9 @@ User identity не используется как service identity. Опера�
   client и затронутых consumers.
 - Добавление нового caller требует изменения `sync-calls.yaml`, callee policy,
   caller dependency и security/degradation tests в одном pull request.
-- CI сопоставляет service graph, internal OpenAPI, client dependencies и callee
-  grants; расхождения блокируют merge.
+- После реализации policy validator CI сопоставляет service graph, internal
+  OpenAPI, client dependencies и callee grants; в текущем bootstrap без
+  internal contracts этот gate ещё не реализован.
 - Common client содержит transport behavior, но не orchestration, caller-specific
   fallback или business rules.
 - Retry не включается глобально для всех requests. Он разрешён только для

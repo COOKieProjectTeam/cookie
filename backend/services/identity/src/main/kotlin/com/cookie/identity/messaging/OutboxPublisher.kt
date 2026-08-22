@@ -1,9 +1,9 @@
 package com.cookie.identity.messaging
 
-import com.cookie.identity.config.IdentityProperties
-import com.cookie.identity.persistence.IdentityRepository
+import com.cookie.identity.persistence.JdbcOutboxRepository
 import com.cookie.identity.persistence.OutboxRecord
-import com.cookie.platform.postgres.Transactions
+import com.cookie.platform.messaging.EventEnvelope
+import com.cookie.platform.messaging.subject
 import io.nats.client.impl.Headers
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
@@ -13,13 +13,13 @@ import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.time.Clock
 import java.time.Duration
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.math.min
 
 @Component
 class OutboxPublisher(
-    private val properties: IdentityProperties,
-    private val repository: IdentityRepository,
-    private val transactions: Transactions,
+    private val repository: JdbcOutboxRepository,
     private val nats: NatsJetStreamConnection,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
@@ -27,8 +27,7 @@ class OutboxPublisher(
 ) {
     @Scheduled(fixedDelayString = "\${cookie.identity.outbox-poll-delay:500}")
     fun publishAvailable() {
-        if (!properties.outboxEnabled) return
-        val claimed = transactions.required { repository.claimOutbox(BATCH_SIZE, LEASE) }
+        val claimed = repository.claim(BATCH_SIZE, LEASE, UUID.randomUUID())
         publishBatch(claimed)
     }
 
@@ -43,17 +42,21 @@ class OutboxPublisher(
         val pending = records.mapNotNull { record ->
             try {
                 val payloadNode = objectMapper.readTree(record.payload)
-                val envelope = objectMapper.createObjectNode()
-                    .put("event_id", record.eventId.toString())
-                    .put("event_type", record.eventType)
-                    .put("event_version", record.eventVersion)
-                    .put("occurred_at", record.occurredAt.toString())
-                    .put("producer", "identity")
-                    .put("aggregate_type", record.aggregateType)
-                    .put("aggregate_id", record.aggregateId)
-                    .set("payload", payloadNode)
+                val envelope = EventEnvelope(
+                    eventId = record.eventId,
+                    eventType = record.eventType,
+                    eventVersion = record.eventVersion,
+                    occurredAt = record.occurredAt,
+                    producer = "identity",
+                    aggregateType = record.aggregateType,
+                    aggregateId = record.aggregateId,
+                    payload = payloadNode,
+                    correlationId = record.correlationId,
+                    causationId = record.causationId,
+                    traceId = record.traceId,
+                )
                 val headers = Headers().add("Nats-Msg-Id", record.eventId.toString())
-                val subject = "cookie.events.${record.eventType}.v${record.eventVersion}"
+                val subject = envelope.subject()
                 val body = objectMapper.writeValueAsString(envelope).toByteArray(StandardCharsets.UTF_8)
                 record to jetStream.publishAsync(subject, headers, body)
             } catch (exception: Exception) {
@@ -61,10 +64,14 @@ class OutboxPublisher(
                 null
             }
         }
+        val acknowledgementDeadline = System.nanoTime() + ACK_TIMEOUT.toNanos()
         pending.forEach { (record, acknowledgement) ->
             try {
-                acknowledgement.join()
-                repository.markOutboxPublished(record.eventId, clock.instant())
+                val remainingNanos = (acknowledgementDeadline - System.nanoTime()).coerceAtLeast(0)
+                acknowledgement.get(remainingNanos, TimeUnit.NANOSECONDS)
+                if (!repository.markPublished(record.eventId, record.claimId, clock.instant())) {
+                    logger.info("Ignored stale outbox acknowledgement eventId={}", record.eventId)
+                }
             } catch (exception: Exception) {
                 release(record, exception)
             }
@@ -73,7 +80,16 @@ class OutboxPublisher(
 
     private fun release(record: OutboxRecord, exception: Exception) {
         val retryAt = clock.instant().plus(backoff(record.attemptCount))
-        repository.releaseOutbox(record.eventId, retryAt, exception.message ?: exception.javaClass.simpleName)
+        val released = repository.release(
+            record.eventId,
+            record.claimId,
+            retryAt,
+            exception.message ?: exception.javaClass.simpleName,
+        )
+        if (!released) {
+            logger.info("Ignored stale outbox release eventId={}", record.eventId)
+            return
+        }
         logger.warn(
             "Outbox publish failed eventId={} attempt={} retryAt={}",
             record.eventId,
@@ -91,6 +107,7 @@ class OutboxPublisher(
 
     companion object {
         private val LEASE: Duration = Duration.ofSeconds(30)
+        private val ACK_TIMEOUT: Duration = Duration.ofSeconds(10)
         private const val BATCH_SIZE = 100
         private val logger = LoggerFactory.getLogger(OutboxPublisher::class.java)
     }

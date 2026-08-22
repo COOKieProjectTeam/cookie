@@ -2,9 +2,9 @@ spring:
   application:
     name: identity
   datasource:
-    url: ${COOKIE_IDENTITY_DATABASE_URL:jdbc:postgresql://localhost:5432/identity}
-    username: ${COOKIE_IDENTITY_DATABASE_USER:identity}
-    password: ${COOKIE_IDENTITY_DATABASE_PASSWORD:identity}
+    url: ${COOKIE_IDENTITY_DATABASE_URL}
+    username: ${COOKIE_IDENTITY_DATABASE_USER}
+    password: ${COOKIE_IDENTITY_DATABASE_PASSWORD}
     hikari:
       maximum-pool-size: ${COOKIE_IDENTITY_DATABASE_POOL_SIZE:10}
   flyway:
@@ -14,13 +14,14 @@ spring:
 
 server:
   port: ${PORT:8080}
-  forward-headers-strategy: native
+  # Forwarded headers are ignored until the deployment defines a trusted proxy boundary.
+  forward-headers-strategy: none
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info
 
 cookie:
   identity:
@@ -34,8 +35,16 @@ cookie:
     jwt-retiring-public-key-paths: ${COOKIE_IDENTITY_JWT_RETIRING_PUBLIC_KEY_PATHS:}
     notification-public-key-path: ${COOKIE_NOTIFICATION_PUBLIC_KEY_PATH:}
     dev-notification-private-key-output-path: ${COOKIE_DEV_NOTIFICATION_PRIVATE_KEY_OUTPUT_PATH:}
-    nats-url: ${COOKIE_NATS_URL:nats://localhost:4222}
-    outbox-enabled: ${COOKIE_OUTBOX_ENABLED:true}
+    nats-url: ${COOKIE_NATS_URL}
+    nats-credentials-path: ${COOKIE_NATS_CREDENTIALS_PATH:}
+    nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
+    nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
+    retention:
+      rate-limit-grace: P1D
+      verification-challenge-audit: P30D
+      refresh-session-audit: P90D
+      published-outbox: P7D
+      batch-size: 500
 
 logging:
   pattern:

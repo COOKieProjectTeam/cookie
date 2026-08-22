@@ -202,7 +202,263 @@ abstract class BundlePublicOpenApiTask : DefaultTask() {
     }
 }
 
+abstract class ValidateServiceDescriptorsTask : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    val descriptors: ConfigurableFileCollection = project.objects.fileCollection()
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    val publicContracts: ConfigurableFileCollection = project.objects.fileCollection()
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val serviceModel: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val eventModel: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val runtimeContract: RegularFileProperty
+
+    @TaskAction
+    fun validateDescriptors() {
+        val descriptorFiles = descriptors.files.sortedBy { it.path }
+        require(descriptorFiles.isNotEmpty()) { "At least one service descriptor is required" }
+
+        val yaml = Yaml(SafeConstructor(LoaderOptions()))
+        val architecture = stringMap(
+            yaml.load<Any>(serviceModel.get().asFile.readText()),
+            serviceModel.get().asFile.path,
+        )
+        val defaults = stringMap(architecture["defaults"], "architecture defaults")
+        val services = linkedMapOf<String, LinkedHashMap<String, Any?>>()
+        listValue(architecture["services"], "architecture services").forEach { serviceValue ->
+            val service = stringMap(serviceValue, "architecture service")
+            val id = requiredString(service["id"], "architecture service id")
+            require(services.putIfAbsent(id, service) == null) { "Duplicate architecture service id $id" }
+        }
+
+        val eventsDocument = stringMap(
+            yaml.load<Any>(eventModel.get().asFile.readText()),
+            eventModel.get().asFile.path,
+        )
+        val events = linkedMapOf<Pair<String, Int>, LinkedHashMap<String, Any?>>()
+        listValue(eventsDocument["events"], "architecture events").forEach { eventValue ->
+            val event = stringMap(eventValue, "architecture event")
+            val type = requiredString(event["type"], "architecture event type")
+            val version = positiveInt(event["version"], "architecture event $type version")
+            require(events.putIfAbsent(type to version, event) == null) {
+                "Duplicate architecture event $type v$version"
+            }
+        }
+
+        val contracts = publicContracts.files.associateBy { it.nameWithoutExtension }
+        require(contracts.size == publicContracts.files.size) { "Duplicate public contract service id" }
+        val descriptorIdsWithPublicContracts = linkedSetOf<String>()
+        val descriptorIds = linkedSetOf<String>()
+
+        descriptorFiles.forEach { descriptorFile ->
+            val context = descriptorFile.path
+            val descriptor = stringMap(yaml.load<Any>(descriptorFile.readText()), context)
+            require(descriptor.keys.all(ALLOWED_DESCRIPTOR_FIELDS::contains)) {
+                "$context contains unsupported fields ${descriptor.keys - ALLOWED_DESCRIPTOR_FIELDS}"
+            }
+            require(positiveInt(descriptor["schema_version"], "$context schema_version") == 1) {
+                "$context uses an unsupported schema_version"
+            }
+
+            val id = requiredString(descriptor["id"], "$context id")
+            require(descriptorIds.add(id)) { "Duplicate service descriptor id $id" }
+            require(descriptorFile.parentFile.name == id) {
+                "$context must live under backend/services/$id"
+            }
+            val service = services[id] ?: error("$context references unknown architecture service $id")
+
+            val expectedRuntime = service["runtime"]?.toString()
+                ?: requiredString(defaults["backend_runtime"], "architecture default backend_runtime")
+            require(descriptor["runtime"]?.toString() == expectedRuntime) {
+                "$context runtime ${descriptor["runtime"]} does not match architecture runtime $expectedRuntime"
+            }
+            require(descriptor["stateful"] == service["stateful"]) {
+                "$context stateful=${descriptor["stateful"]} does not match architecture stateful=${service["stateful"]}"
+            }
+            if (descriptor["stateful"] == true) {
+                requiredString(descriptor["database"], "$context database")
+            }
+
+            descriptor["public_openapi"]?.let { publicOpenApiValue ->
+                val publicOpenApi = stringMap(publicOpenApiValue, "$context public_openapi")
+                require(publicOpenApi.keys == setOf("source")) {
+                    "$context public_openapi supports only the source field"
+                }
+                val expectedPublicSource = "contracts/openapi/public/$id.yaml"
+                require(publicOpenApi["source"] == expectedPublicSource) {
+                    "$context public_openapi.source must be $expectedPublicSource"
+                }
+                val contractFile = contracts[id] ?: error("$context has no active public OpenAPI contract")
+                descriptorIdsWithPublicContracts += id
+                validateContractOwnership(
+                    yaml = yaml,
+                    contractFile = contractFile,
+                    serviceId = id,
+                    ownedTags = stringSet(service["openapi_tags"], "architecture service $id openapi_tags"),
+                )
+            }
+
+            require(descriptor["runtime_openapi"] == "contracts/openapi/runtime.yaml") {
+                "$context runtime_openapi must be contracts/openapi/runtime.yaml"
+            }
+
+            val messaging = stringMap(descriptor["messaging"], "$context messaging")
+            require(messaging.keys == setOf("publishes", "consumes")) {
+                "$context messaging supports only publishes and consumes"
+            }
+            val published = descriptorEvents(messaging["publishes"], "$context messaging.publishes")
+            val consumed = descriptorEvents(messaging["consumes"], "$context messaging.consumes")
+            require(published.mapTo(linkedSetOf()) { it.first } == stringSet(service["publishes"], "service $id publishes")) {
+                "$context publishes do not match docs/architecture/model/services.yaml"
+            }
+            require(consumed.mapTo(linkedSetOf()) { it.first } == stringSet(service["consumes"], "service $id consumes")) {
+                "$context consumes do not match docs/architecture/model/services.yaml"
+            }
+            published.forEach { eventKey ->
+                val event = events[eventKey] ?: error("$context publishes unknown event ${eventKey.first} v${eventKey.second}")
+                require(event["producer"] == id) {
+                    "$context publishes ${eventKey.first} but its architecture producer is ${event["producer"]}"
+                }
+            }
+            consumed.forEach { eventKey ->
+                val event = events[eventKey] ?: error("$context consumes unknown event ${eventKey.first} v${eventKey.second}")
+                require(id in stringSet(event["consumers"], "event ${eventKey.first} consumers")) {
+                    "$context consumes ${eventKey.first} but is not an architecture consumer"
+                }
+            }
+
+            require(
+                stringSet(descriptor["synchronous_dependencies"], "$context synchronous_dependencies") ==
+                    stringSet(service["synchronous_dependencies"], "service $id synchronous_dependencies"),
+            ) {
+                "$context synchronous_dependencies do not match docs/architecture/model/services.yaml"
+            }
+
+            val probes = stringMap(descriptor["probes"], "$context probes")
+            require(probes == linkedMapOf("liveness" to "/healthz", "readiness" to "/readyz")) {
+                "$context probes must implement the shared runtime contract"
+            }
+        }
+
+        require(contracts.keys == descriptorIdsWithPublicContracts) {
+            "Active public contracts ${contracts.keys} and descriptors $descriptorIdsWithPublicContracts differ"
+        }
+        require(runtimeContract.get().asFile.isFile) { "Runtime OpenAPI contract is missing" }
+    }
+
+    private fun validateContractOwnership(
+        yaml: Yaml,
+        contractFile: java.io.File,
+        serviceId: String,
+        ownedTags: Set<String>,
+    ) {
+        val document = stringMap(yaml.load<Any>(contractFile.readText()), contractFile.path)
+        val declaredTags = listValue(document["tags"], "${contractFile.path} tags").mapTo(linkedSetOf()) { tagValue ->
+            requiredString(stringMap(tagValue, "${contractFile.path} tag")["name"], "${contractFile.path} tag.name")
+        }
+        require(declaredTags == ownedTags) {
+            "${contractFile.path} declares tags $declaredTags but service $serviceId owns $ownedTags"
+        }
+        stringMap(document["paths"], "${contractFile.path} paths").forEach { (route, pathItemValue) ->
+            stringMap(pathItemValue, "${contractFile.path} path $route")
+                .filterKeys(HTTP_METHODS::contains)
+                .forEach { (method, operationValue) ->
+                    val operation = stringMap(operationValue, "${contractFile.path} $method $route")
+                    val operationTags = stringSet(
+                        operation["tags"],
+                        "${contractFile.path} $method $route tags",
+                    )
+                    require(operationTags.isNotEmpty() && operationTags.all(ownedTags::contains)) {
+                        "$method $route uses tags $operationTags but service $serviceId owns $ownedTags"
+                    }
+                }
+        }
+    }
+
+    private fun descriptorEvents(value: Any?, context: String): Set<Pair<String, Int>> {
+        val result = linkedSetOf<Pair<String, Int>>()
+        listValue(value, context).forEach { eventValue ->
+            val event = stringMap(eventValue, context)
+            require(event.keys == setOf("type", "version")) { "$context entries require only type and version" }
+            val type = requiredString(event["type"], "$context type")
+            val version = positiveInt(event["version"], "$context $type version")
+            require(result.add(type to version)) { "$context contains duplicate $type v$version" }
+        }
+        return result
+    }
+
+    private fun stringMap(value: Any?, context: String): LinkedHashMap<String, Any?> {
+        val source = value as? Map<*, *> ?: error("$context must be a mapping")
+        return source.entries.associateTo(linkedMapOf()) { (key, nestedValue) ->
+            (key as? String ?: error("$context contains a non-string key")) to nestedValue
+        }
+    }
+
+    private fun listValue(value: Any?, context: String): List<Any?> = when (value) {
+        null -> emptyList()
+        is List<*> -> value
+        else -> error("$context must be a list")
+    }
+
+    private fun stringSet(value: Any?, context: String): Set<String> =
+        listValue(value, context).mapTo(linkedSetOf()) { requiredString(it, context) }
+
+    private fun requiredString(value: Any?, context: String): String =
+        (value as? String)?.takeIf(String::isNotBlank) ?: error("$context must be a non-blank string")
+
+    private fun positiveInt(value: Any?, context: String): Int {
+        val number = value as? Number ?: error("$context must be a positive integer")
+        val integer = number.toInt()
+        require(integer > 0 && number.toDouble() == integer.toDouble()) { "$context must be a positive integer" }
+        return integer
+    }
+
+    companion object {
+        private val ALLOWED_DESCRIPTOR_FIELDS = setOf(
+            "schema_version",
+            "id",
+            "runtime",
+            "stateful",
+            "database",
+            "public_openapi",
+            "runtime_openapi",
+            "messaging",
+            "synchronous_dependencies",
+            "infrastructure_dependencies",
+            "probes",
+            "access",
+        )
+        private val HTTP_METHODS = setOf("get", "put", "post", "delete", "options", "head", "patch", "trace")
+    }
+}
+
 val bundledPublicSpec = layout.buildDirectory.file("generated/openapi/bundled/public.yaml")
+val validatePlannedOpenApi = tasks.register<ValidateTask>("validatePlannedOpenApi") {
+    group = "verification"
+    description = "Validate the non-active public API roadmap without using it for generation."
+    inputSpec.set(layout.projectDirectory.file("contracts/openapi/planned.yaml").asFile.absolutePath)
+}
+
+val validateServiceDescriptors = tasks.register<ValidateServiceDescriptorsTask>("validateServiceDescriptors") {
+    group = "verification"
+    description = "Validate service descriptors against architecture events, services and active OpenAPI contracts."
+    descriptors.from(fileTree("backend/services") { include("*/service.yaml") })
+    publicContracts.from(fileTree("contracts/openapi/public") { include("*.yaml") })
+    serviceModel.set(layout.projectDirectory.file("docs/architecture/model/services.yaml"))
+    eventModel.set(layout.projectDirectory.file("docs/architecture/model/events.yaml"))
+    runtimeContract.set(layout.projectDirectory.file("contracts/openapi/runtime.yaml"))
+}
+
 val bundlePublicOpenApi = tasks.register<BundlePublicOpenApiTask>("bundlePublicOpenApi") {
     group = "openapi tools"
     description = "Bundle active per-service public OpenAPI contracts."
@@ -235,8 +491,20 @@ tasks.register<GenerateTask>("generateKmpPublicClient") {
         mapOf(
             "dateLibrary" to "kotlinx-datetime",
             "enumPropertyNaming" to "UPPERCASE",
-            "serializationLibrary" to "kotlinx_serialization",
             "sourceFolder" to "src/commonMain/kotlin",
         ),
     )
+    typeMappings.set(
+        mapOf(
+            "object" to "JsonElement",
+            "AnyType" to "JsonElement",
+        ),
+    )
+    importMappings.set(mapOf("JsonElement" to "kotlinx.serialization.json.JsonElement"))
+}
+
+tasks.register("compileKmpPublicClient") {
+    group = "verification"
+    description = "Generate the active public KMP client and compile its JVM target."
+    dependsOn(validateServiceDescriptors, ":apps:mobile:shared:compileKotlinJvm")
 }
