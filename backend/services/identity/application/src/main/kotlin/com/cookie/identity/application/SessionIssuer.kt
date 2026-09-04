@@ -54,7 +54,7 @@ class SessionIssuer(
             replacementCredentialId = replacementId,
             replacementVerifierHash = replacement.verifierHash,
             idempotencyKey = idempotencyKey,
-            retryUntil = now.plus(policy.refreshRetryWindow),
+            retryUntil = family.expiresAt,
             now = now,
         )
         families.save(family)

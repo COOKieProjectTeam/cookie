@@ -5,7 +5,16 @@ All Kotlin services, workers, Caddy, PostgreSQL, Redis and NATS JetStream must b
 observable there.
 
 Каждый deployable component предоставляет собственные `/healthz` (liveness) и
-`/readyz` (readiness). Эти endpoints не проксируются в Health Data Service.
+`/readyz` (readiness). Они не требуют user/workload credential на уровне
+приложения, чтобы проверка живости не зависела от authentication stack. Target
+production deployment обязан разрешать доступ только orchestrator/operator
+network. Public Caddy не должен проксировать component probes или добавлять их
+в product OpenAPI.
+
+Caddy предоставляет собственные liveness/readiness probes на отдельном
+operator/runtime listener или route, выбранном deployment. Они показывают
+состояние самого gateway, не вызывают backend probes и не предназначены для
+mobile client. Эти endpoints также не проксируются в Health Data Service.
 
 ## Required signals
 

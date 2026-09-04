@@ -22,6 +22,7 @@ class IdentityProperties(
     val natsTruststorePath: String = "",
     val natsTruststorePassword: String = "",
     val trustedProxyCidrs: List<String> = emptyList(),
+    val rateLimitHmacKey: String = "",
 ) {
     init {
         require(

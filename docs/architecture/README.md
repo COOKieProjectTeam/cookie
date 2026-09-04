@@ -22,12 +22,13 @@ ADR 0003–0010, имеют приоритет над более старым с
 3. `model/events.yaml` — event envelope и каталог сообщений.
 4. `model/sync-calls.yaml` — разрешённые синхронные зависимости.
 5. `http-contracts.md` — OpenAPI ownership и генерация transport-кода.
-6. `service-access-control.md` — clients, workload identity и caller policies.
-7. `messaging.md` — точная семантика outbox/inbox.
-8. `observability.md` — правила наблюдаемости.
-9. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
-10. `miro-snapshot.md` — происхождение модели и найденные расхождения.
-11. `../adr/` — причины принятых решений.
+6. `mobile-auth.md` — coordinator, secure storage и auth retry lifecycle.
+7. `service-access-control.md` — clients, workload identity и caller policies.
+8. `messaging.md` — точная семантика outbox/inbox.
+9. `observability.md` — правила наблюдаемости.
+10. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
+11. `miro-snapshot.md` — происхождение модели и найденные расхождения.
+12. `../adr/` — причины принятых решений.
 
 ## Non-negotiable invariants
 

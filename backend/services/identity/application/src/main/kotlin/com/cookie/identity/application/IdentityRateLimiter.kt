@@ -1,53 +1,54 @@
 package com.cookie.identity.application
 
 import com.cookie.identity.application.ports.RateLimitRepository
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
+import com.cookie.identity.application.ports.RateLimitScopeHasher
 import java.time.Duration
-import java.util.HexFormat
 
 class IdentityRateLimiter(
     private val repository: RateLimitRepository,
+    private val scopeHasher: RateLimitScopeHasher,
 ) {
     fun registerIp(ip: String) =
-        check("register:ip:${digest(ip)}", 20, Duration.ofHours(1))
+        check("register:ip:${digest(IP_NAMESPACE, ip)}", 20, Duration.ofHours(1))
 
     fun registerEmail(email: String) =
-        check("register:email:${digest(email)}", 3, Duration.ofHours(1))
+        check("register:email:${digest(EMAIL_NAMESPACE, email)}", 3, Duration.ofHours(1))
 
     fun resendIp(ip: String) =
-        check("resend:ip:${digest(ip)}", 30, Duration.ofHours(1))
+        check("resend:ip:${digest(IP_NAMESPACE, ip)}", 30, Duration.ofHours(1))
 
     fun resendEmail(email: String) {
         consumeAll(
-            Limit("resend:email-minute:${digest(email)}", 1, Duration.ofMinutes(1)),
-            Limit("resend:email-hour:${digest(email)}", 5, Duration.ofHours(1)),
+            Limit("resend:email-minute:${digest(EMAIL_NAMESPACE, email)}", 1, Duration.ofMinutes(1)),
+            Limit("resend:email-hour:${digest(EMAIL_NAMESPACE, email)}", 5, Duration.ofHours(1)),
         )
     }
 
     fun loginIp(ip: String) =
-        check("login:ip:${digest(ip)}", 100, Duration.ofMinutes(15))
+        check("login:ip:${digest(IP_NAMESPACE, ip)}", 100, Duration.ofMinutes(15))
 
     fun loginEmail(email: String) =
-        check("login:email:${digest(email)}", 10, Duration.ofMinutes(15))
+        check("login:email:${digest(EMAIL_NAMESPACE, email)}", 10, Duration.ofMinutes(15))
 
     fun confirm(tokenId: String) {
-        check("confirm:token:${digest(tokenId)}", 10, Duration.ofMinutes(15))
+        check("confirm:token:${digest(TOKEN_NAMESPACE, tokenId)}", 10, Duration.ofMinutes(15))
     }
 
     fun confirmIp(ip: String) =
-        check("confirm:ip:${digest(ip)}", 60, Duration.ofMinutes(15))
+        check("confirm:ip:${digest(IP_NAMESPACE, ip)}", 60, Duration.ofMinutes(15))
+
+    fun refreshIp(ip: String) =
+        check("refresh:ip:${digest(IP_NAMESPACE, ip)}", 120, Duration.ofMinutes(1))
 
     fun refresh(familyId: String) {
-        check("refresh:family:${digest(familyId)}", 30, Duration.ofMinutes(1))
+        check("refresh:family:${digest(FAMILY_NAMESPACE, familyId)}", 30, Duration.ofMinutes(1))
     }
+
+    fun logoutIp(ip: String) =
+        check("logout:ip:${digest(IP_NAMESPACE, ip)}", 120, Duration.ofMinutes(1))
 
     fun logout(familyId: String) {
-        check("logout:family:${digest(familyId)}", 30, Duration.ofMinutes(1))
-    }
-
-    fun ipOnly(route: String, ip: String, limit: Int, window: Duration) {
-        check("$route:ip:${digest(ip)}", limit, window)
+        check("logout:family:${digest(FAMILY_NAMESPACE, familyId)}", 30, Duration.ofMinutes(1))
     }
 
     /**
@@ -70,13 +71,18 @@ class IdentityRateLimiter(
         }
     }
 
-    private fun digest(value: String): String = HexFormat.of().formatHex(
-        MessageDigest.getInstance("SHA-256").digest(value.toByteArray(StandardCharsets.UTF_8)),
-    ).take(32)
+    private fun digest(namespace: String, value: String): String = scopeHasher.hash(namespace, value)
 
     private data class Limit(
         val scope: String,
         val maxAttempts: Int,
         val window: Duration,
     )
+
+    private companion object {
+        const val IP_NAMESPACE = "ip"
+        const val EMAIL_NAMESPACE = "email"
+        const val TOKEN_NAMESPACE = "verification-token"
+        const val FAMILY_NAMESPACE = "refresh-family"
+    }
 }

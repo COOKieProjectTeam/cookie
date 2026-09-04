@@ -36,12 +36,16 @@ The in-service IP limiter runs at the application boundary, after JSON decoding.
 Production ingress must also limit malformed JSON, slow connections and connection-level
 abuse; the 16 KiB body cap bounds parsing cost but is not a complete DDoS perimeter.
 
-Every logical refresh attempt sends a new UUID in `Idempotency-Key`; a network
-retry repeats that UUID with the same refresh token. For 30 seconds Identity
-returns the same successor refresh token while that successor remains current.
-An exact retry that is too late or whose successor has already advanced is
-rejected without revoking the session. Reuse of a redeemed credential with a
-different key revokes the whole logical device session.
+Every logical refresh attempt sends a new cryptographically random UUIDv4 in
+`Idempotency-Key`; a network retry repeats that UUID with the same refresh
+token. Identity returns the same successor refresh token while that immediate
+successor remains current and the family remains active and unexpired. This
+state-bounded recovery survives
+`Retry-After` and client process death without persisting a raw response. Once
+the successor rotates, the exact retry is stale and is rejected without
+revoking the session. Reuse of a redeemed credential with a different key
+atomically revokes the whole logical device session even when its business
+rate-limit bucket is saturated; only a new rotation spends that family bucket.
 
 Within the supported `.ru`/`.рф` provider set, email local parts are a
 case-insensitive product identifier and are stored in lower case. Providers
@@ -60,13 +64,29 @@ make compose-up
 - Mailpit UI: `http://localhost:8025`
 - NATS monitoring: `http://localhost:8222`
 
+Local Compose binds every published development port to `127.0.0.1`; these
+URLs are reachable from the development host, not from other network clients.
+Direct `make identity-run` also binds Identity to loopback by default; set
+`COOKIE_IDENTITY_BIND_ADDRESS` only when a deliberate non-loopback development
+listener is required. Compose sets the in-container listener to `0.0.0.0` while
+the host mapping remains loopback-only.
+In a deployed environment Identity probes remain unauthenticated for the
+orchestrator, while the public gateway and network policy must not expose them.
+A gateway health probe is a separate check of the gateway itself, not a proxy
+to Identity readiness. Production enforcement remains a rollout requirement
+until Caddy/Kubernetes deployment manifests exist.
+
 Identity never sends email directly. It writes an encrypted
 `notification.email.requested` event to its transactional outbox; the local
 Notification sink decrypts the compact JWE and delivers it to Mailpit.
+The development message displays the raw verification token for manual testing;
+only the future production Notification template will render it as a verified
+HTTPS universal/app link.
 
 Retention runs every minute, drains all owned tables fairly in configurable
-batches, and has both batch-count and wall-time budgets. The scheduler has two
-workers so broker acknowledgement latency cannot stall retention.
+batches, and has both batch-count and wall-time budgets. The scheduler has three
+workers so outbox publishing, metrics refresh and retention cannot starve one
+another.
 
 The code has explicit hexagonal boundaries: `domain` contains aggregates,
 value objects and business invariants; `application` contains use cases and
@@ -76,8 +96,8 @@ Spring, JDBC, Jackson, Nimbus or NATS.
 
 ## Key configuration
 
-Without the `dev` or `test` Spring profile, Identity requires mounted JSON Web
-Key files and never generates or writes key material:
+Without the `dev` or `test` Spring profile, Identity requires deployment-owned
+key material and never generates or writes it:
 
 - `COOKIE_IDENTITY_JWT_PRIVATE_KEY_PATH`: private P-256 JWK with `kid`,
   `use=sig` and `alg=ES256`;
@@ -85,9 +105,20 @@ Key files and never generates or writes key material:
   JWK files with `use=sig` and `alg=ES256`, retained during verification-key
   rotation;
 - `COOKIE_NOTIFICATION_PUBLIC_KEY_PATH`: public-only Notification Service RSA
-  JWK (at least 2048 bits) with `use=enc` and `alg=RSA-OAEP-256`.
+  JWK (at least 2048 bits) with `use=enc` and `alg=RSA-OAEP-256`;
+- `COOKIE_IDENTITY_RATE_LIMIT_HMAC_KEY`: canonical base64url encoding of a
+  dedicated 32-byte secret used to pseudonymise IP, email, token and session
+  rate-limit dimensions;
 - `COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS`: optional comma-separated ingress CIDRs
   whose `X-Forwarded-For` chain may be trusted. Leave empty for direct traffic.
+
+The rate-limit HMAC key must be identical on every Identity replica and remain
+stable across restarts. Rotating it changes every bucket identifier: old rows
+expire normally, but old/new replicas would temporarily enforce separate
+ceilings. Coordinate key rotation with a full rollout and treat the resulting
+counter reset as an explicit security operation. The key is never rendered by
+configuration or hasher `toString` methods. The fixed dev/test fallback is
+public, non-secret test material and must never be used in production.
 
 Mutation request bodies are capped at 16 KiB before JSON parsing; oversized
 requests receive `413 PAYLOAD_TOO_LARGE`.
@@ -127,6 +158,13 @@ This pre-release change rewrites the unpublished `V001`/`V002` baseline. An
 existing local Identity database must therefore be recreated rather than
 Flyway-repaired. Once the first environment is promoted, applied migrations are
 immutable and every schema change must use a new migration version.
+
+The refresh retry transition intentionally keeps the existing `retry_until`
+column for mixed-version compatibility. New rotations store the family expiry
+there; rows created by an older binary retain their shorter deadline and remain
+conservative. Remove the compatibility column only in a later contract migration,
+after every old binary is gone and every family created under the old policy has
+expired.
 
 ## Key rotation
 

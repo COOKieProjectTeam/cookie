@@ -14,8 +14,6 @@ servers:
   - url: http://127.0.0.1:8080/v1
     description: Local
 tags:
-  - name: system
-    description: API Gateway operational availability; not owned by Health Data Service.
   - name: profile
     description: Profile, goals, and dietary preferences.
   - name: food
@@ -40,24 +38,6 @@ tags:
     description: Aggregated Mobile BFF screens.
 
 paths:
-  # ---------------------------------------------------------------- system
-  /healthz:
-    get:
-      tags: [system]
-      operationId: getGatewayHealth
-      summary: Проверить liveness публичного API Gateway
-      description: >-
-        Эксплуатационная проба Gateway. Она не вызывает и не относится к
-        доменному Health Data Service.
-      security: []
-      responses:
-        "200":
-          description: API доступен
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ServiceHealth"
-
   # ---------------------------------------------------------------- bff
   /today:
     get:
@@ -2150,14 +2130,6 @@ components:
 
   schemas:
     # ------------------------------------------------------------ common
-    ServiceHealth:
-      type: object
-      required: [status]
-      properties:
-        status:
-          type: string
-          enum: [ok]
-
     Error:
       type: object
       required: [code, message]

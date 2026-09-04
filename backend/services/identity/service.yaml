@@ -14,7 +14,12 @@ messaging:
       version: 1
   consumes: []
 synchronous_dependencies: []
-infrastructure_dependencies: [postgresql, nats_jetstream, signing_key, notification_encryption_key]
+infrastructure_dependencies:
+  - postgresql
+  - nats_jetstream
+  - signing_key
+  - notification_encryption_key
+  - rate_limit_hmac_key
 probes:
   liveness: /healthz
   readiness: /readyz

@@ -17,6 +17,7 @@ import com.cookie.identity.application.ports.TransactionRunner
 import com.cookie.identity.domain.Account
 import com.cookie.identity.domain.CanonicalEmail
 import com.cookie.identity.domain.DeviceId
+import com.cookie.identity.domain.InvalidInputException
 import com.cookie.identity.domain.InvalidRegistrationProofException
 import com.cookie.identity.domain.PasswordPolicy
 import com.cookie.identity.domain.PasswordAuthenticationResult
@@ -24,7 +25,6 @@ import com.cookie.identity.domain.RefreshDecision
 import com.cookie.identity.domain.RefreshFamilyRevokeReason
 import com.cookie.identity.domain.RegistrationProof
 import com.cookie.identity.domain.RegistrationTokenDecision
-import java.time.Duration
 import java.util.UUID
 
 class ConfirmEmailHandler(
@@ -118,8 +118,9 @@ class LoginWithEmailHandler(
     private val sessionIssuer: SessionIssuer,
     private val currentTime: CurrentTimeProvider,
 ) : LoginWithEmailUseCase {
-    override fun execute(rawEmail: String, password: String, deviceId: DeviceId?, ip: String): IssuedTokens {
+    override fun execute(rawEmail: String, password: String, rawDeviceId: String?, ip: String): IssuedTokens {
         rateLimiter.loginIp(ip)
+        val deviceId = DeviceId.parseOrNull(rawDeviceId)
         val normalizedPassword = passwordPolicy.prepareForAuthentication(password)
         val email = CanonicalEmail.parse(rawEmail)
         rateLimiter.loginEmail(email.value)
@@ -178,13 +179,13 @@ class RefreshSessionHandler(
     private val currentTime: CurrentTimeProvider,
 ) : RefreshSessionUseCase {
     override fun execute(rawToken: String, idempotencyKey: UUID, ip: String): IssuedTokens {
-        rateLimiter.ipOnly("refresh", ip, 120, Duration.ofMinutes(1))
+        rateLimiter.refreshIp(ip)
+        requireRandomUuidV4(idempotencyKey)
         val parsed = refreshTokens.parse(rawToken)
         val observed = families.findCredentialLookup(parsed.id) ?: throw InvalidTokenException()
         if (!refreshTokens.verifierMatches(observed.verifierHash, parsed.verifierHash)) {
             throw InvalidTokenException()
         }
-        rateLimiter.refresh(observed.familyId.toString())
         return transactions.required {
             val family = families.findByCredentialIdForUpdate(parsed.id) ?: return@required RefreshOutcome.Invalid
             val expectedVerifier = family.verifierHashFor(parsed.id) ?: return@required RefreshOutcome.Invalid
@@ -195,13 +196,18 @@ class RefreshSessionHandler(
                 RefreshDecision.STALE_RETRY,
                 -> RefreshOutcome.Invalid
                 RefreshDecision.TOKEN_REUSE -> {
+                    // A verified reuse signal is security-critical: throttling must never
+                    // prevent the family revocation from committing.
                     family.revoke(RefreshFamilyRevokeReason.TOKEN_REUSE_DETECTED, now)
                     families.save(family)
                     RefreshOutcome.Invalid
                 }
-                RefreshDecision.ROTATE -> RefreshOutcome.Success(
-                    sessionIssuer.rotate(family, rawToken, idempotencyKey, now),
-                )
+                RefreshDecision.ROTATE -> {
+                    // Only a new rotation spends the family business bucket. Exact replay
+                    // remains recoverable after Retry-After or client process death.
+                    rateLimiter.refresh(family.id.toString())
+                    RefreshOutcome.Success(sessionIssuer.rotate(family, rawToken, idempotencyKey, now))
+                }
                 RefreshDecision.RETRY -> RefreshOutcome.Success(
                     sessionIssuer.retry(family, rawToken, idempotencyKey, now),
                 )
@@ -218,6 +224,17 @@ class RefreshSessionHandler(
         data class Success(val tokens: IssuedTokens) : RefreshOutcome
         data object Invalid : RefreshOutcome
     }
+
+    private fun requireRandomUuidV4(value: UUID) {
+        if (value.version() != UUID_V4 || value.variant() != RFC_4122_VARIANT) {
+            throw InvalidInputException("Invalid refresh idempotency key")
+        }
+    }
+
+    private companion object {
+        const val UUID_V4 = 4
+        const val RFC_4122_VARIANT = 2
+    }
 }
 
 class LogoutHandler(
@@ -228,7 +245,7 @@ class LogoutHandler(
     private val currentTime: CurrentTimeProvider,
 ) : LogoutUseCase {
     override fun execute(rawToken: String, ip: String) {
-        rateLimiter.ipOnly("logout", ip, 120, Duration.ofMinutes(1))
+        rateLimiter.logoutIp(ip)
         val parsed = try {
             refreshTokens.parse(rawToken)
         } catch (_: InvalidTokenException) {

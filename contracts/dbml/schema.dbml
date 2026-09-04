@@ -99,8 +99,8 @@ Table identity_refresh_credentials as IDRC {
   created_at timestamptz [not null]
   redeemed_at timestamptz [null]
   replaced_by_credential_id uuid [null, unique, ref: > IDRC.id]
-  rotation_idempotency_key uuid [null, note: 'same key permits only an exact short-lived retry']
-  retry_until timestamptz [null]
+  rotation_idempotency_key uuid [null, note: 'same key permits exact replay while the immediate successor remains current']
+  retry_until timestamptz [null, note: 'compatibility deadline; new rotations set it to family expiry']
 
   indexes {
     (family_id, id) [unique, name: 'uq_identity_refresh_credentials_family_id_id']
@@ -111,7 +111,7 @@ Table identity_refresh_credentials as IDRC {
 }
 
 Table identity_rate_limit_buckets as IDRL {
-  scope_key varchar [pk]
+  scope_key varchar [pk, note: 'route + namespace-separated truncated HMAC-SHA-256 identifier of canonical email, IP, token id or refresh family id']
   window_started_at timestamptz [not null]
   attempt_count integer [not null]
   expires_at timestamptz [not null]

@@ -183,7 +183,7 @@ class ConfirmationUseCasesTest {
         secrets: FakeSecrets = FakeSecrets(),
     ) = ConfirmEmailHandler(
         accounts, attempts, ImmediateTransactions(), secrets, FixedId(ACCOUNT_ID),
-        IdentityRateLimiter(rates), events, currentTime,
+        IdentityRateLimiter(rates, TEST_RATE_LIMIT_SCOPE_HASHER), events, currentTime,
     )
 
     private fun attempt(id: UUID, tokenId: UUID, proofHash: VerifierHash) = RegistrationAttempt.start(

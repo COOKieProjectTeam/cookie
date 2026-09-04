@@ -53,6 +53,15 @@ interface RateLimitRepository {
     fun consume(scopeKey: String, window: Duration): RateLimitWindow
 }
 
+/**
+ * Produces a stable, non-reversible identifier for a sensitive rate-limit
+ * dimension. Implementations must domain-separate namespaces and use the same
+ * secret on every service replica.
+ */
+fun interface RateLimitScopeHasher {
+    fun hash(namespace: String, value: String): String
+}
+
 interface PasswordHashing {
     val dummyHash: String
     fun encode(password: String): String

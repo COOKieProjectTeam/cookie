@@ -18,6 +18,7 @@ import com.cookie.identity.application.ports.IdGenerator
 import com.cookie.identity.application.ports.IdentityEventRecorder
 import com.cookie.identity.application.ports.PasswordHashing
 import com.cookie.identity.application.ports.RateLimitRepository
+import com.cookie.identity.application.ports.RateLimitScopeHasher
 import com.cookie.identity.application.ports.RefreshFamilyRepository
 import com.cookie.identity.application.ports.RefreshTokenService
 import com.cookie.identity.application.ports.RegistrationAttemptRepository
@@ -58,7 +59,10 @@ class IdentityConfiguration {
     )
 
     @Bean
-    fun identityRateLimiter(repository: RateLimitRepository) = IdentityRateLimiter(repository)
+    fun identityRateLimiter(
+        repository: RateLimitRepository,
+        scopeHasher: RateLimitScopeHasher,
+    ) = IdentityRateLimiter(repository, scopeHasher)
 
     @Bean
     fun registrationAttemptIssuer(

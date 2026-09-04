@@ -7,12 +7,24 @@
 | `contracts/openapi/public/<service-id>.yaml` | Implemented public API of one service | Deployable service |
 | `build/generated/openapi/bundled/public.yaml` | Generated active mobile/gateway API | Repository build |
 | `contracts/openapi/planned.yaml` | Non-active API roadmap; never used for generation | Product architecture |
-| `contracts/openapi/runtime.yaml` | Per-component liveness/readiness | Each deployable component |
+| `contracts/openapi/runtime.yaml` | Operator/orchestrator-only per-component liveness/readiness | Each deployable component |
 | `contracts/openapi/internal/<service-id>.yaml` | Whitelisted synchronous calls | Callee service |
 | `contracts/openapi/generation.yaml` | Generation policy and targets | Repository build |
 
 The `health` tag means domain health data. The `system` tag means operational
 availability. They must never share an owner because their names sound similar.
+
+`/healthz` and `/readyz` are reserved runtime paths. They are deliberately
+unauthenticated at the application layer, but this is not public exposure:
+deployment networking makes them reachable only to the orchestrator and
+operators. Service-owned public OpenAPI contracts, the generated mobile client
+and public gateway routing must never contain or proxy these paths. Caddy has
+its own component-local probes on an operator/runtime listener; a gateway probe
+never forwards to a backend component and is not a product API operation.
+Generated public and runtime interfaces currently share the placeholder
+`api.base-path`, so deployables must reject that override and use the base paths
+compiled from their OpenAPI contracts. Changing this requires separate
+generator properties/templates, not a global runtime prefix.
 
 ## Per-service ownership and bundle
 
@@ -74,4 +86,5 @@ and must be backed by `model/sync-calls.yaml`. Full enforcement rules are in
 8. Fail if regeneration changes tracked files or generated contract tests fail.
 9. Verify every internal permission and caller against callee policy and the
    synchronous dependency model.
-10. Reject internal routes exposed by public gateway configuration.
+10. Reject internal or component runtime routes exposed by public gateway
+    configuration.

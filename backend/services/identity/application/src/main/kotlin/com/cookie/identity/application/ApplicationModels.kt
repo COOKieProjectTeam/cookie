@@ -11,12 +11,8 @@ data class IdentityPolicy(
     val verificationTokenTtl: Duration,
     val verificationResendCooldown: Duration,
 ) {
-    val refreshRetryWindow: Duration
-        get() = REFRESH_RETRY_WINDOW
-
     init {
         require(refreshFamilyTtl.isPositive()) { "Refresh family TTL must be positive" }
-        require(refreshRetryWindow < refreshFamilyTtl) { "Refresh retry window must be shorter than family TTL" }
         require(registrationAttemptTtl.isPositive()) { "Registration attempt TTL must be positive" }
         require(verificationTokenTtl.isPositive()) { "Verification token TTL must be positive" }
         require(verificationTokenTtl <= registrationAttemptTtl) {
@@ -28,11 +24,6 @@ data class IdentityPolicy(
         }
         require(refreshFamilyTtl.seconds <= Int.MAX_VALUE) { "Refresh family TTL is too large" }
         require(registrationAttemptTtl.seconds <= Int.MAX_VALUE) { "Registration attempt TTL is too large" }
-    }
-
-    companion object {
-        /** Public protocol guarantee; clients use this exact retry window. */
-        val REFRESH_RETRY_WINDOW: Duration = Duration.ofSeconds(30)
     }
 }
 

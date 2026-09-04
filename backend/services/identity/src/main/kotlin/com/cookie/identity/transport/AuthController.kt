@@ -9,7 +9,6 @@ import com.cookie.identity.application.ports.LogoutUseCase
 import com.cookie.identity.application.ports.RefreshSessionUseCase
 import com.cookie.identity.application.ports.RegisterWithEmailUseCase
 import com.cookie.identity.application.ports.ResendEmailVerificationUseCase
-import com.cookie.identity.domain.DeviceId
 import com.cookie.identity.generated.api.AuthApi
 import com.cookie.identity.generated.model.AuthenticatedUser
 import com.cookie.identity.generated.model.EmailActionRequest
@@ -78,7 +77,7 @@ class AuthController(
             loginWithEmail.execute(
                 emailLoginRequest.email,
                 emailLoginRequest.password,
-                DeviceId.parseOrNull(emailLoginRequest.deviceId),
+                emailLoginRequest.deviceId,
                 clientIp(),
             ).toTransportWithUser(),
         )

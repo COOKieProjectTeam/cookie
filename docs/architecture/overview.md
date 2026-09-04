@@ -65,4 +65,8 @@ flowchart LR
 `Health Data Service` — доменный сервис веса и активности. Он не является
 центральным сервисом проверки работоспособности. Caddy, Mobile BFF и каждый
 backend runtime самостоятельно предоставляют `/healthz` и `/readyz` по общему
-операционному контракту `contracts/openapi/runtime.yaml`.
+операционному контракту `contracts/openapi/runtime.yaml`. Эти component-local
+probes не входят в product public OpenAPI. Target production deployment обязан
+разрешать их только orchestrator и операторам через deployment network. Caddy
+проверяется собственной probe на отдельной operational boundary и не должен
+проксировать probe другого сервиса.

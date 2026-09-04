@@ -175,10 +175,12 @@ class RegistrationUseCasesTest {
         )
         private val register = RegisterWithEmailHandler(
             accounts, attempts, ImmediateTransactions(), RussianEmailAdmissionPolicy(), PasswordPolicy(),
-            hashing, secrets, IdentityRateLimiter(rateLimits), issuer, CurrentTimeProvider { clock },
+            hashing, secrets, IdentityRateLimiter(rateLimits, TEST_RATE_LIMIT_SCOPE_HASHER),
+            issuer, CurrentTimeProvider { clock },
         )
         private val resend = ResendEmailVerificationHandler(
-            accounts, attempts, ImmediateTransactions(), IdentityRateLimiter(rateLimits), secrets,
+            accounts, attempts, ImmediateTransactions(),
+            IdentityRateLimiter(rateLimits, TEST_RATE_LIMIT_SCOPE_HASHER), secrets,
             issuer, policy, CurrentTimeProvider { clock },
         )
 

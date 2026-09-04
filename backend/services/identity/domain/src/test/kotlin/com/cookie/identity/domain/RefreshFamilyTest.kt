@@ -21,7 +21,7 @@ class RefreshFamilyTest {
             replacementCredentialId = replacementId,
             replacementVerifierHash = verifier("b"),
             idempotencyKey = retryKey,
-            retryUntil = now.plusSeconds(30),
+            retryUntil = family.expiresAt,
             now = now,
         )
 
@@ -31,7 +31,24 @@ class RefreshFamilyTest {
     }
 
     @Test
-    fun `the same request can retry while its successor is still current`() {
+    fun `the same request can recover while its successor is still current`() {
+        val family = activeFamily()
+        val originalId = family.currentCredentialId
+        family.rotateCurrentTo(
+            originalId,
+            UUID.randomUUID(),
+            verifier("b"),
+            retryKey,
+            family.expiresAt,
+            now,
+        )
+
+        assertThat(family.refreshDecision(originalId, true, retryKey, now.plusSeconds(3_599)))
+            .isEqualTo(RefreshDecision.RETRY)
+    }
+
+    @Test
+    fun `a persisted legacy retry deadline remains conservative`() {
         val family = activeFamily()
         val originalId = family.currentCredentialId
         family.rotateCurrentTo(
@@ -43,12 +60,13 @@ class RefreshFamilyTest {
             now,
         )
 
-        assertThat(family.refreshDecision(originalId, true, retryKey, now.plusSeconds(1)))
-            .isEqualTo(RefreshDecision.RETRY)
+        assertThat(family.refreshDecision(originalId, true, retryKey, now.plusSeconds(31)))
+            .isEqualTo(RefreshDecision.STALE_RETRY)
+        assertThat(family.status).isEqualTo(RefreshFamilyStatus.ACTIVE)
     }
 
     @Test
-    fun `a different key is token reuse but an expired exact retry is only stale`() {
+    fun `a different key is token reuse but an expired family is invalid`() {
         val family = activeFamily()
         val originalId = family.currentCredentialId
         family.rotateCurrentTo(
@@ -56,14 +74,14 @@ class RefreshFamilyTest {
             UUID.randomUUID(),
             verifier("b"),
             retryKey,
-            now.plusSeconds(30),
+            family.expiresAt,
             now,
         )
 
         assertThat(family.refreshDecision(originalId, true, UUID.randomUUID(), now.plusSeconds(1)))
             .isEqualTo(RefreshDecision.TOKEN_REUSE)
-        assertThat(family.refreshDecision(originalId, true, retryKey, now.plusSeconds(31)))
-            .isEqualTo(RefreshDecision.STALE_RETRY)
+        assertThat(family.refreshDecision(originalId, true, retryKey, now.plusSeconds(3_600)))
+            .isEqualTo(RefreshDecision.INVALID)
     }
 
     @Test
@@ -76,7 +94,7 @@ class RefreshFamilyTest {
             successorId,
             verifier("b"),
             retryKey,
-            now.plusSeconds(30),
+            family.expiresAt,
             now,
         )
         family.rotateCurrentTo(
@@ -84,7 +102,7 @@ class RefreshFamilyTest {
             UUID.randomUUID(),
             verifier("c"),
             UUID.randomUUID(),
-            now.plusSeconds(31),
+            family.expiresAt,
             now.plusSeconds(1),
         )
 
@@ -102,7 +120,7 @@ class RefreshFamilyTest {
             UUID.randomUUID(),
             verifier("b"),
             retryKey,
-            now.plusSeconds(30),
+            family.expiresAt,
             now,
         )
 

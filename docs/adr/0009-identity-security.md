@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
-- Amended: 2026-09-03
+- Amended: 2026-09-04
 
 ## Context
 
@@ -81,12 +81,14 @@ Identity v1 реализует только email/password. Контракт д�
   secret криптографически случаен. Successor детерминированно выводится через
   HMAC-SHA-256 из secret предъявленного predecessor, predecessor/replacement IDs
   и `Idempotency-Key`; в БД остаются только SHA-256 verifier и rotation metadata.
-  Это позволяет в течение 30 секунд вернуть тот же successor для точного retry,
-  пока он остаётся current, не сохраняя raw token или HTTP response. Точный retry
-  с тем же key после окна или после следующей rotation отклоняется без отзыва.
-  Только предъявление redeemed credential с другим key считается token reuse и
-  атомарно отзывает family. Logout идемпотентен и по любому криптографически
-  валидному credential отзывает family.
+  Это позволяет вернуть тот же successor для точного retry, пока он остаётся current,
+  а family активна и не истекла, не сохраняя raw token или HTTP response. Граница retry
+  задаётся состоянием, а не таймером: после следующей rotation точный retry отклоняется
+  без отзыва. Предъявление redeemed credential с другим key считается token reuse и
+  атомарно отзывает family даже при насыщенном family rate-limit bucket. Точный
+  retry не расходует этот bucket; его расходует только новая rotation. IP ceiling всегда
+  применяется первым. Logout идемпотентен и по любому криптографически валидному
+  credential отзывает family.
 - Access JWT: ES256, `typ=at+jwt`, `iss=https://api.cookie.app`,
   `aud=cookie-api`, TTL 15 минут; claims `sub`, `sid`, `jti`, `iat`, `exp`.
   `sid` содержит стабильный `RefreshFamily.id` и не меняется при rotation; email
@@ -113,7 +115,13 @@ account backoff от 30 секунд до 15 минут.
 `1/email/minute`, `5/email/hour`, `30/IP/hour`; login `10/email/15m`,
 `100/IP/15m`; confirm `10/token/15m`, `60/IP/15m`; refresh и logout
 `30/family/minute`, `120/IP/minute`. Scope values сохраняются как усечённые
-SHA-256 digests, а не открытые email/IP/token identifiers.
+128-битные HMAC-SHA-256 identifiers, а не открытые email/IP/token identifiers.
+Отдельный 32-байтный ключ обязателен вне dev/test, одинаков для всех replicas и
+не выводится в конфигурационных строках или логах. Namespace (`ip`, `email`,
+`verification-token`, `refresh-family`) включён в HMAC input. Смена ключа
+создаёт новое пространство buckets и потому требует согласованного rollout;
+старые строки удаляются обычным retention.
+
 IP bucket списывается первой application-операцией для каждого уже декодированного
 auth mutation, включая domain-invalid значения и точный retry: злоумышленник не
 должен бесплатно нагружать domain parsing или основные aggregate queries. Синтаксически
@@ -124,10 +132,11 @@ cooldown обходят только email business bucket, а повтор ус
 confirm — только token bucket. Поэтому идемпотентный повтор не дублирует бизнес-эффект,
 но всё ещё может получить `429` от общего abuse ceiling. Неизвестные и несовпадающие
 запросы дополнительно списывают соответствующие email/token scopes.
-Credential/family bucket для refresh и logout списывается только после
-constant-time проверки verifier; IP bucket остаётся первым. Поэтому знание
-credential UUID или `sid` из access JWT не позволяет исчерпать чужой лимит
-запросами с выдуманным secret.
+Family bucket для новой refresh rotation и credential/family bucket для
+logout списываются только после constant-time проверки verifier; exact/stale
+refresh retry и подтверждённый reuse family bucket не расходуют. IP bucket остаётся
+первым. Поэтому знание credential UUID или `sid` из access JWT не позволяет
+исчерпать чужой лимит запросами с выдуманным secret.
 
 Rate limiting использует непосредственный peer address. `X-Forwarded-For`
 разбирается справа налево только если непосредственный peer входит в явно
@@ -150,6 +159,24 @@ application validation используют типизированные при�
 преобразует их в стабильные публичные error code/message и не возвращает
 произвольный текст исключения.
 
+Mobile использует stateful auth coordinator поверх сгенерированного transport
+client. Coordinator хранит набор pending registrations по attempt id, выбирает
+соответствующий proof, сериализует refresh одним mutex и до отправки атомарно
+сохраняет текущий refresh token вместе с криптографически случайным UUIDv4
+`Idempotency-Key` (122 случайных бита). Сетевой retry обязан повторять оба значения;
+успешный successor заменяет их одной атомарной записью. Proof, refresh token и
+`Idempotency-Key` находятся только в несинхронизируемом Keychain/Keystore-backed
+storage и не попадают в URL, backup, logs или telemetry. Пара predecessor token + key
+является bearer-sensitive: пока immediate successor остаётся current, она эквивалентна
+ему и может выпускать новые access JWT до rotation/revoke/family expiry.
+
+Dev Notification sink пока отправляет raw verification token в Mailpit для
+ручной проверки. Production target после выбора verified domain, Android
+application id и Apple bundle id — HTTPS universal/app link, содержащий token,
+но не registration proof. Оба способа передают token одному и тому же
+coordinator; наличие deep-link в целевой схеме не означает, что он уже
+реализован локальным sink.
+
 Identity атомарно пишет state и transactional outbox. `account.activated` выходит
 ровно один раз при создании подтверждённого Account. Для
 `notification.email.requested` открытый payload содержит только template,
@@ -162,11 +189,21 @@ Raw secrets не хранятся в outbox, JetStream и logs.
 - Public auth contract v0.6 содержит register, confirm, resend, login, refresh,
   logout и JWKS; OAuth/reset/change/delete flows откладываются до реализации.
 - Refresh является идемпотентным только для того же predecessor token и того же
-  обязательного UUID `Idempotency-Key` в фиксированном 30-секундном окне. Новый
+  обязательного криптографически случайного RFC 4122 UUIDv4 `Idempotency-Key`,
+  пока его непосредственный successor остаётся current, а family активна и не
+  истекла. Другие варианты UUID сервер отклоняет до credential lookup. Новый
   access JWT при воспроизводимом retry может отличаться, но successor refresh
-  token совпадает. Устаревший точный retry получает `401`, не отзывая family.
-- Отсутствующее или невалидное signing/encryption key material не позволяет
-  Identity стартовать; readiness работающего instance требует уже загруженных
-  при startup ключей и PostgreSQL.
+  token совпадает. Устаревший по состоянию точный retry получает `401`, не
+  отзывая family.
+- Колонка `refresh_credentials.retry_until` временно сохранена для rolling compatibility.
+  Новые rotation записывают туда family expiry; старые rows с коротким deadline остаются
+  консервативными. В mixed-version rollout фактический deadline задаёт writer,
+  закоммитивший rotation: оба бинарника читают оба варианта, но полная state-bound
+  гарантия начинается только после ухода старых writers. Удалять колонку можно
+  отдельной contract-migration только после ухода всех старых binaries и expiry всех
+  family, созданных старой policy.
+- Отсутствующее или невалидное signing/encryption key material либо production
+  rate-limit HMAC secret не позволяет Identity стартовать; readiness работающего
+  instance требует уже загруженных при startup ключей и PostgreSQL.
 - Notification Service обязан управлять private decryption key и обрабатывать
   at-least-once delivery идемпотентно.

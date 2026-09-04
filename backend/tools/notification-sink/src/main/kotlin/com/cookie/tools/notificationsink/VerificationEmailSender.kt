@@ -29,7 +29,7 @@ class SmtpVerificationEmailSender(
             setFrom(InternetAddress("noreply@cookie.local", "COOKie"))
             setRecipient(Message.RecipientType.TO, InternetAddress(recipient))
             subject = "Подтвердите email в COOKie"
-            setText("Код подтверждения: $token", Charsets.UTF_8.name())
+            setText("Токен подтверждения: $token", Charsets.UTF_8.name())
         }
         Transport.send(message)
     }

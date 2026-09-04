@@ -172,8 +172,8 @@ implementation остаются rollout requirements:
    delivery и idempotent inbox у consumers.
 7. Проверка допустимых module и synchronous service dependencies.
 8. Unit, integration и contract tests конкретного сервиса.
-9. Проверка workload identity, caller permissions и отсутствия internal routes в
-   public gateway.
+9. Проверка workload identity, caller permissions и отсутствия internal/runtime
+   routes в public gateway.
 
 ## Rollout
 

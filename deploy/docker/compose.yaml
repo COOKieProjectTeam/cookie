@@ -7,7 +7,7 @@ services:
     environment:
       PORT: "8080"
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
 
   postgres:
     image: postgres:18.6-alpine
@@ -21,7 +21,7 @@ services:
       timeout: 2s
       retries: 30
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - identity-postgres:/var/lib/postgresql
 
@@ -29,16 +29,16 @@ services:
     image: nats:2.14.6-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
     volumes:
       - nats-data:/data
 
   mailpit:
     image: axllent/mailpit:v1.31.0
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
 
   identity:
     build:
@@ -50,6 +50,7 @@ services:
       COOKIE_IDENTITY_DATABASE_PASSWORD: identity
       COOKIE_NATS_URL: nats://nats:4222
       SPRING_PROFILES_ACTIVE: dev
+      COOKIE_IDENTITY_BIND_ADDRESS: 0.0.0.0
       COOKIE_DEV_NOTIFICATION_PRIVATE_KEY_OUTPUT_PATH: /keys/notification-private.jwk
     depends_on:
       postgres:
@@ -57,7 +58,7 @@ services:
       nats:
         condition: service_started
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - dev-keys:/keys
 

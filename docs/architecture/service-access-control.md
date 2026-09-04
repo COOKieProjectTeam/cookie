@@ -253,7 +253,11 @@ allowlist или детали credential validation.
 ## Network boundaries
 
 Public Caddy ingress маршрутизирует только public contract. Internal routes не
-получают external route или public DNS entry.
+получают external route или public DNS entry. Component `/healthz` и `/readyz`
+также не маршрутизируются через public ingress: они остаются unauthenticated на
+application layer, но доступны только orchestrator/operator network. Собственная
+probe Caddy живёт на отдельной operational boundary и не является proxy к probe
+backend-сервиса.
 
 Default-deny network policy генерируется из разрешённого graph и ограничивает:
 
@@ -298,7 +302,7 @@ CI должен блокировать merge, если:
 5. Caller зависит от `backend/clients/<callee>` без разрешённого sync edge.
 6. Sync edge не реализован ни одной operation policy.
 7. Client сгенерирован не из callee-owned contract.
-8. Internal route попал в public gateway configuration.
+8. Internal или component runtime route попал в public gateway configuration.
 9. NATS publish/subscribe permission отсутствует в event model.
 
 Минимальные integration tests policy:

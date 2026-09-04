@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
-- Amended: 2026-08-20
+- Amended: 2026-09-04
 
 ## Context
 
@@ -15,7 +15,7 @@ ADR 0003 и ADR 0006 зафиксировали Kotlin/JVM и общую service
 
 Identity Service становится первым пилотом платформы. Репозиторий использует:
 
-- JDK 25, Gradle Wrapper 9.5.0, Kotlin 2.4.10 и Spring Boot 4.1.1; эта
+- JDK 25, Gradle Wrapper 9.7.1, Kotlin 2.4.10 и Spring Boot 4.1.1; эта
   комбинация остаётся внутри официальной fully-supported Kotlin/Gradle matrix;
 - blocking Spring MVC, Spring JDBC/Hikari и явный SQL без ORM;
 - PostgreSQL 18 и Flyway для всех изменений схемы;

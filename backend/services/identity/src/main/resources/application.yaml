@@ -31,8 +31,10 @@ server:
 management:
   endpoints:
     web:
+      # Runtime probes are implemented by SystemController. Do not publish the
+      # duplicate Actuator transport on the service port.
       exposure:
-        include: health,info
+        exclude: "*"
 
 cookie:
   identity:
@@ -51,6 +53,9 @@ cookie:
     nats-credentials-path: ${COOKIE_NATS_CREDENTIALS_PATH:}
     nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
     nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
+    # Shared base64url-encoded 32-byte secret for pseudonymous rate-limit scopes.
+    # Production fails closed when it is absent; dev/test use a fixed non-secret fallback.
+    rate-limit-hmac-key: ${COOKIE_IDENTITY_RATE_LIMIT_HMAC_KEY:}
     # Comma-separated CIDRs of ingress proxies allowed to supply X-Forwarded-For.
     # Keep empty when clients connect directly to Identity.
     trusted-proxy-cidrs: ${COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS:}

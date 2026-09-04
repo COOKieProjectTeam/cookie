@@ -23,6 +23,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.test.annotation.DirtiesContext
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
@@ -50,6 +51,7 @@ import javax.sql.DataSource
 @ActiveProfiles("test")
 @Tag("integration")
 @Testcontainers
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class IdentityFlowIntegrationTest {
     @LocalServerPort
     private var port: Int = 0
@@ -622,6 +624,112 @@ class IdentityFlowIntegrationTest {
     }
 
     @Test
+    fun `refresh recovery bypasses a saturated family bucket but verified reuse still revokes`() {
+        val unique = UUID.randomUUID().toString().take(8)
+        val email = "recovery-$unique@example.ru"
+        val password = "ValidPassword-$unique"
+        registerAndConfirm(email, password)
+        val login = post("/v1/auth/email/login", EmailLoginRequest(email, password, "recovery-device"))
+        val predecessor = objectMapper.readTree(login.body()).path("refreshToken").stringValue()
+        val predecessorId = UUID.fromString(predecessor.split('.', limit = 3)[1])
+        val familyId = requireNotNull(
+            jdbc.queryForObject(
+                "SELECT family_id FROM refresh_credentials WHERE id = ?",
+                UUID::class.java,
+                predecessorId,
+            ),
+        )
+        val idempotencyKey = UUID.randomUUID().toString()
+
+        val rotation = post(
+            "/v1/auth/refresh",
+            RefreshTokenRequest(predecessor),
+            mapOf("Idempotency-Key" to idempotencyKey),
+        )
+        assertThat(rotation.statusCode()).isEqualTo(HttpStatus.OK.value())
+        val successor = objectMapper.readTree(rotation.body()).path("refreshToken").stringValue()
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT c.retry_until = f.expires_at
+                FROM refresh_credentials c
+                JOIN refresh_families f ON f.id = c.family_id
+                WHERE c.id = ?
+                """.trimIndent(),
+                Boolean::class.java,
+                predecessorId,
+            ),
+        ).isTrue()
+
+        assertThat(
+            jdbc.update(
+                """
+                UPDATE rate_limit_buckets
+                SET attempt_count = 30,
+                    expires_at = statement_timestamp() + interval '1 minute'
+                WHERE scope_key LIKE 'refresh:family:%'
+                """.trimIndent(),
+            ),
+        ).isEqualTo(1)
+
+        val throttledRotation = post(
+            "/v1/auth/refresh",
+            RefreshTokenRequest(successor),
+            mapOf("Idempotency-Key" to UUID.randomUUID().toString()),
+        )
+        assertThat(throttledRotation.statusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS.value())
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM refresh_credentials WHERE family_id = ?",
+                Int::class.java,
+                familyId,
+            ),
+        ).isEqualTo(2)
+
+        val recovered = post(
+            "/v1/auth/refresh",
+            RefreshTokenRequest(predecessor),
+            mapOf("Idempotency-Key" to idempotencyKey),
+        )
+        assertThat(recovered.statusCode()).isEqualTo(HttpStatus.OK.value())
+        assertThat(objectMapper.readTree(recovered.body()).path("refreshToken").stringValue())
+            .isEqualTo(successor)
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT attempt_count FROM rate_limit_buckets WHERE scope_key LIKE 'refresh:family:%'",
+                Int::class.java,
+            ),
+        ).isEqualTo(30)
+
+        val verifiedReuse = post(
+            "/v1/auth/refresh",
+            RefreshTokenRequest(predecessor),
+            mapOf("Idempotency-Key" to UUID.randomUUID().toString()),
+        )
+        assertThat(verifiedReuse.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value())
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT status || ':' || revoke_reason FROM refresh_families WHERE id = ?",
+                String::class.java,
+                familyId,
+            ),
+        ).isEqualTo("REVOKED:TOKEN_REUSE_DETECTED")
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT attempt_count FROM rate_limit_buckets WHERE scope_key LIKE 'refresh:family:%'",
+                Int::class.java,
+            ),
+        ).isEqualTo(30)
+        assertThat(
+            post(
+                "/v1/auth/refresh",
+                RefreshTokenRequest(successor),
+                mapOf("Idempotency-Key" to UUID.randomUUID().toString()),
+            ).statusCode(),
+        ).isEqualTo(HttpStatus.UNAUTHORIZED.value())
+    }
+
+    @Test
     fun `simultaneously started refreshes with different keys leave the whole family revoked`() {
         val unique = UUID.randomUUID().toString().take(8)
         val email = "reuse-$unique@example.ru"
@@ -978,13 +1086,28 @@ class IdentityFlowIntegrationTest {
     }
 
     @Test
-    fun `health and jwks endpoints expose only operational public data`() {
+    fun `runtime probes expose minimal status while actuator web endpoints stay disabled`() {
         val health = get("/healthz")
         val readiness = get("/readyz")
-        val jwks = get("/v1/auth/jwks")
+        val actuatorHealth = get("/actuator/health")
+        val actuatorInfo = get("/actuator/info")
 
         assertThat(health.statusCode()).isEqualTo(HttpStatus.OK.value())
         assertThat(readiness.statusCode()).isEqualTo(HttpStatus.OK.value())
+        val healthBody = objectMapper.readTree(health.body())
+        val readinessBody = objectMapper.readTree(readiness.body())
+        assertThat(healthBody.size()).isEqualTo(1)
+        assertThat(healthBody.path("status").stringValue()).isEqualTo("ok")
+        assertThat(readinessBody.size()).isEqualTo(1)
+        assertThat(readinessBody.path("status").stringValue()).isEqualTo("ok")
+        assertThat(actuatorHealth.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value())
+        assertThat(actuatorInfo.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value())
+    }
+
+    @Test
+    fun `jwks endpoint exposes public keys only`() {
+        val jwks = get("/v1/auth/jwks")
+
         assertThat(jwks.statusCode()).isEqualTo(HttpStatus.OK.value())
         assertThat(jwks.headers().firstValue("Cache-Control").orElseThrow()).contains("max-age=300")
         val keys = objectMapper.readTree(jwks.body()).path("keys")
@@ -1023,7 +1146,7 @@ class IdentityFlowIntegrationTest {
     }
 
     @Test
-    fun `transport rejects invalid device ids and oversized bodies`() {
+    fun `login rejects invalid device ids and transport rejects oversized bodies`() {
         val invalidDevice = post(
             "/v1/auth/email/login",
             EmailLoginRequest("nobody@example.ru", "ValidPassword-123", " "),
@@ -1051,9 +1174,15 @@ class IdentityFlowIntegrationTest {
             RefreshTokenRequest("x".repeat(32)),
             mapOf("Idempotency-Key" to "not-a-uuid"),
         )
+        val predictable = post(
+            "/v1/auth/refresh",
+            RefreshTokenRequest("x".repeat(32)),
+            mapOf("Idempotency-Key" to "00000000-0000-0000-0000-000000000000"),
+        )
 
         assertThat(missing.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value())
         assertThat(malformed.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value())
+        assertThat(predictable.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value())
     }
 
     private fun registerAndConfirm(email: String, password: String) {

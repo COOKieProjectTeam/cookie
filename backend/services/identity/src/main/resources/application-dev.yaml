@@ -4,6 +4,11 @@ spring:
     username: ${COOKIE_IDENTITY_DATABASE_USER:identity}
     password: ${COOKIE_IDENTITY_DATABASE_PASSWORD:identity}
 
+server:
+  # Direct `make identity-run` is host-local by default. Compose overrides this
+  # inside the container while keeping the published host port on loopback.
+  address: ${COOKIE_IDENTITY_BIND_ADDRESS:127.0.0.1}
+
 cookie:
   identity:
     nats-url: ${COOKIE_NATS_URL:nats://localhost:4222}

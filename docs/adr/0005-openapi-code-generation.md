@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
-- Amended: 2026-08-20
+- Amended: 2026-09-04
 
 Public contract ownership and active bundle generation are clarified by ADR 0010.
 
@@ -36,8 +36,12 @@ pilot этот выбор зафиксирован ADR 0008: OpenAPI Generator 7
 
 Operational endpoints отделены от домена:
 
-- public `/healthz` в service-owned public contract принадлежит API Gateway;
 - `/healthz` и `/readyz` каждого backend-компонента определены в `runtime.yaml`;
+- runtime probes не входят в service-owned public contracts, generated mobile
+  client или public Caddy routes; они остаются unauthenticated на application
+  layer и ограничиваются orchestrator/operator network;
+- Caddy реализует собственные probes на отдельном operator/runtime listener или
+  route; gateway probe сообщает только о gateway и не проксирует backend probes;
 - Health Data Service обслуживает activity/weight API под tag `health`, но не
   probes других сервисов.
 

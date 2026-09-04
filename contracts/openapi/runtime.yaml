@@ -4,7 +4,11 @@ info:
   version: 0.1.0
   description: >-
     Internal operational endpoints implemented independently by every deployable
-    backend component. This contract does not belong to Health Data Service.
+    backend component. They are unauthenticated at the application layer so an
+    orchestrator can probe a component without user credentials, but deployment
+    networking must restrict them to orchestrator/operator access and a public
+    gateway must never route them. This contract does not belong to Health Data
+    Service or to the product public API.
 tags:
   - name: system
     description: Component-local liveness and readiness.

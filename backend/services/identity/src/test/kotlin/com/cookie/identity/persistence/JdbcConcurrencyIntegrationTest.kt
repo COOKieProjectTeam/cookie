@@ -105,6 +105,22 @@ class JdbcConcurrencyIntegrationTest {
     }
 
     @Test
+    fun `refresh schema retains the compatibility retry deadline`() {
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT count(*)::integer
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'refresh_credentials'
+                  AND column_name = 'retry_until'
+                """.trimIndent(),
+                Int::class.java,
+            ),
+        ).isEqualTo(1)
+    }
+
+    @Test
     fun `stale outbox claimant cannot publish and cleanup skips rows locked by another replica`() {
         val repository = JdbcOutboxRepository(jdbc)
         val now = Instant.now().truncatedTo(ChronoUnit.MICROS)

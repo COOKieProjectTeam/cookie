@@ -104,6 +104,10 @@ abstract class BundlePublicOpenApiTask : DefaultTask() {
                 "${source.name} declares tags $declaredTags but service $serviceId owns $ownedTags"
             }
             stringMap(document["paths"], "${source.path} paths").forEach { (route, pathItem) ->
+                require(!isReservedRuntimePath(route)) {
+                    "${source.path} declares reserved runtime route $route; " +
+                        "component probes must not enter the public API bundle"
+                }
                 require(paths.putIfAbsent(route, pathItem) == null) {
                     "Public route $route is owned by more than one service contract"
                 }
@@ -197,8 +201,12 @@ abstract class BundlePublicOpenApiTask : DefaultTask() {
         require(existing == null || existing == value) { "Conflicting public $kind named $name" }
     }
 
+    private fun isReservedRuntimePath(route: String): Boolean =
+        RESERVED_RUNTIME_PATHS.any { reserved -> route == reserved || route.endsWith(reserved) }
+
     companion object {
         private val HTTP_METHODS = setOf("get", "put", "post", "delete", "options", "head", "patch", "trace")
+        private val RESERVED_RUNTIME_PATHS = setOf("/healthz", "/readyz")
     }
 }
 
@@ -229,6 +237,26 @@ abstract class ValidateServiceDescriptorsTask : DefaultTask() {
         require(descriptorFiles.isNotEmpty()) { "At least one service descriptor is required" }
 
         val yaml = Yaml(SafeConstructor(LoaderOptions()))
+        val runtimeContractFile = runtimeContract.get().asFile
+        require(runtimeContractFile.isFile) { "Runtime OpenAPI contract is missing" }
+        val runtimeDocument = stringMap(
+            yaml.load<Any>(runtimeContractFile.readText()),
+            runtimeContractFile.path,
+        )
+        val runtimePaths = stringMap(runtimeDocument["paths"], "${runtimeContractFile.path} paths")
+        val missingRuntimePaths = RESERVED_RUNTIME_PATHS - runtimePaths.keys
+        require(missingRuntimePaths.isEmpty()) {
+            "${runtimeContractFile.path} must define reserved probes $RESERVED_RUNTIME_PATHS; " +
+                "missing $missingRuntimePaths"
+        }
+        RESERVED_RUNTIME_PATHS.forEach { route ->
+            val pathItem = stringMap(runtimePaths.getValue(route), "${runtimeContractFile.path} path $route")
+            val operation = stringMap(pathItem["get"], "${runtimeContractFile.path} GET $route")
+            require(operation["security"] == emptyList<Any?>()) {
+                "${runtimeContractFile.path} GET $route must explicitly remain unauthenticated for orchestrator probes"
+            }
+        }
+
         val architecture = stringMap(
             yaml.load<Any>(serviceModel.get().asFile.readText()),
             serviceModel.get().asFile.path,
@@ -353,7 +381,6 @@ abstract class ValidateServiceDescriptorsTask : DefaultTask() {
         require(contracts.keys == descriptorIdsWithPublicContracts) {
             "Active public contracts ${contracts.keys} and descriptors $descriptorIdsWithPublicContracts differ"
         }
-        require(runtimeContract.get().asFile.isFile) { "Runtime OpenAPI contract is missing" }
     }
 
     private fun validateContractOwnership(
@@ -370,6 +397,10 @@ abstract class ValidateServiceDescriptorsTask : DefaultTask() {
             "${contractFile.path} declares tags $declaredTags but service $serviceId owns $ownedTags"
         }
         stringMap(document["paths"], "${contractFile.path} paths").forEach { (route, pathItemValue) ->
+            require(!isReservedRuntimePath(route)) {
+                "${contractFile.path} declares reserved runtime route $route; " +
+                    "component probes must not be service-owned public operations"
+            }
             stringMap(pathItemValue, "${contractFile.path} path $route")
                 .filterKeys(HTTP_METHODS::contains)
                 .forEach { (method, operationValue) ->
@@ -423,6 +454,9 @@ abstract class ValidateServiceDescriptorsTask : DefaultTask() {
         return integer
     }
 
+    private fun isReservedRuntimePath(route: String): Boolean =
+        RESERVED_RUNTIME_PATHS.any { reserved -> route == reserved || route.endsWith(reserved) }
+
     companion object {
         private val ALLOWED_DESCRIPTOR_FIELDS = setOf(
             "schema_version",
@@ -439,6 +473,7 @@ abstract class ValidateServiceDescriptorsTask : DefaultTask() {
             "access",
         )
         private val HTTP_METHODS = setOf("get", "put", "post", "delete", "options", "head", "patch", "trace")
+        private val RESERVED_RUNTIME_PATHS = setOf("/healthz", "/readyz")
     }
 }
 

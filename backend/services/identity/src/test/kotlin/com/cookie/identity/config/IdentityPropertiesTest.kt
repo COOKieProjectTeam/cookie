@@ -9,9 +9,14 @@ import java.time.Duration
 class IdentityPropertiesTest {
     @Test
     fun `accepts bounded secure defaults without rendering connection credentials`() {
-        val properties = IdentityProperties(natsUrl = "nats://nats.example:4222")
+        val rateLimitKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+        val properties = IdentityProperties(
+            natsUrl = "nats://nats.example:4222",
+            rateLimitHmacKey = rateLimitKey,
+        )
 
         assertThat(properties.toString()).doesNotContain("nats.example")
+        assertThat(properties.toString()).doesNotContain(rateLimitKey)
     }
 
     @Test

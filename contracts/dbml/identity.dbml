@@ -91,8 +91,8 @@ Table refresh_credentials as RefreshCredentials {
   created_at timestamptz [not null]
   redeemed_at timestamptz [null]
   replaced_by_credential_id uuid [null, unique, ref: > RefreshCredentials.id]
-  rotation_idempotency_key uuid [null, note: 'same key permits only an exact short-lived retry of this rotation']
-  retry_until timestamptz [null]
+  rotation_idempotency_key uuid [null, note: 'same key permits exact replay while the immediate successor remains current']
+  retry_until timestamptz [null, note: 'compatibility deadline; new rotations set it to family expiry']
 
   indexes {
     (family_id, id) [unique, name: 'uq_refresh_credentials_family_id_id']
@@ -103,7 +103,7 @@ Table refresh_credentials as RefreshCredentials {
 }
 
 Table rate_limit_buckets as RateLimitBuckets {
-  scope_key varchar [pk, note: 'route + truncated SHA-256 digest of canonical email, IP, token id or refresh family id']
+  scope_key varchar [pk, note: 'route + namespace-separated truncated HMAC-SHA-256 identifier of canonical email, IP, token id or refresh family id']
   window_started_at timestamptz [not null]
   attempt_count integer [not null]
   expires_at timestamptz [not null]

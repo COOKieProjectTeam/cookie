@@ -54,7 +54,8 @@ open http://localhost:8025
 Compose запускает PostgreSQL 18, NATS JetStream, Identity, локальный
 Notification sink и Mailpit. Identity публикует только compact JWE; sink
 расшифровывает его ephemeral ключом из локального volume и отправляет письмо в
-Mailpit. Для запуска без контейнеров: `make identity-run`.
+Mailpit. Все опубликованные Compose-порты привязаны к `127.0.0.1` и доступны
+только с development host. Для запуска без контейнеров: `make identity-run`.
 
 ## Принципы границ
 

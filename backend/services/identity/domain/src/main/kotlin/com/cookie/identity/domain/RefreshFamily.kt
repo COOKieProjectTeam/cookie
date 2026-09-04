@@ -229,7 +229,7 @@ class RefreshCredential private constructor(
             "Refresh credential redemption cannot precede creation"
         }
         require(retryUntil == null || redeemedAt == null || retryUntil.isAfter(redeemedAt)) {
-            "Refresh retry window must end after credential redemption"
+            "Refresh retry deadline must follow credential redemption"
         }
         require(
             listOf(redeemedAt, replacedByCredentialId, rotationIdempotencyKey, retryUntil)
@@ -253,8 +253,7 @@ class RefreshCredential private constructor(
     internal fun wasRedeemedWith(idempotencyKey: UUID): Boolean = rotationIdempotencyKey == idempotencyKey
 
     internal fun canRetryWith(currentCredentialId: UUID, now: Instant): Boolean =
-        replacedByCredentialId == currentCredentialId &&
-            retryUntil?.isAfter(now) == true
+        replacedByCredentialId == currentCredentialId && retryUntil?.isAfter(now) == true
 
     internal fun redeemWith(
         replacementCredentialId: UUID,
@@ -265,7 +264,7 @@ class RefreshCredential private constructor(
         check(!isRedeemed) { "Refresh credential has already been redeemed" }
         check(!now.isBefore(createdAt)) { "Refresh credential redemption cannot precede creation" }
         check(replacementCredentialId != id) { "Refresh credential cannot replace itself" }
-        check(retryUntil.isAfter(now)) { "Refresh retry window must be positive" }
+        check(retryUntil.isAfter(now)) { "Refresh retry deadline must follow credential redemption" }
         redeemedAt = now
         replacedByCredentialId = replacementCredentialId
         rotationIdempotencyKey = idempotencyKey

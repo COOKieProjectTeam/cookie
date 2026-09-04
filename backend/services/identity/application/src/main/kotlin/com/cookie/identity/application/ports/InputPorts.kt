@@ -2,7 +2,6 @@ package com.cookie.identity.application.ports
 
 import com.cookie.identity.application.IssuedTokens
 import com.cookie.identity.application.PublicJwk
-import com.cookie.identity.domain.DeviceId
 import java.util.UUID
 
 fun interface RegisterWithEmailUseCase {
@@ -25,7 +24,7 @@ fun interface ConfirmEmailUseCase {
 }
 
 fun interface LoginWithEmailUseCase {
-    fun execute(rawEmail: String, password: String, deviceId: DeviceId?, ip: String): IssuedTokens
+    fun execute(rawEmail: String, password: String, rawDeviceId: String?, ip: String): IssuedTokens
 }
 
 fun interface RefreshSessionUseCase {
