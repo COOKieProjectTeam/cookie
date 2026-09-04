@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    api(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+    api(platform(libs.spring.boot.dependencies))
     api("org.springframework.boot:spring-boot-starter-flyway")
     api("org.springframework:spring-jdbc")
     api("com.zaxxer:HikariCP")

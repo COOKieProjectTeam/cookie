@@ -3,8 +3,10 @@ plugins {
 }
 
 dependencies {
-    api(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+    api(platform(libs.spring.boot.dependencies))
     api("org.springframework.boot:spring-boot-starter-web")
     api("org.springframework.boot:spring-boot-starter-validation")
     api("org.springframework.boot:spring-boot-starter-actuator")
+    testImplementation(project(":backend:platform:starter-testing"))
+    testImplementation("org.springframework:spring-test")
 }

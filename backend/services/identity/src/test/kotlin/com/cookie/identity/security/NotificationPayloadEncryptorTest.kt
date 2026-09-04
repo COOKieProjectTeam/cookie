@@ -1,5 +1,6 @@
 package com.cookie.identity.security
 
+import com.cookie.identity.domain.LocaleTag
 import com.cookie.identity.config.IdentityProperties
 import com.nimbusds.jose.EncryptionMethod
 import com.nimbusds.jose.JWEAlgorithm
@@ -17,6 +18,7 @@ import java.security.SecureRandom
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.UUID
 
 class NotificationPayloadEncryptorTest {
     @TempDir
@@ -39,10 +41,13 @@ class NotificationPayloadEncryptorTest {
         )
         val mapper = JsonMapper.builder().findAndAddModules().build()
         val encryptor = NotificationPayloadEncryptor(keyMaterial, mapper)
-        val rawToken = "v1.0198c4a5-68b5-7def-8123-456789abcdef.secret"
+        val registrationAttemptId = UUID.fromString("0198c4a5-68b5-7def-8123-456789abcdef")
+        val tokenId = UUID.fromString("0198c4a5-68b5-7def-9234-56789abcdef0")
+        val rawToken = "v1e.$registrationAttemptId.$tokenId.${"A".repeat(43)}"
         val delivery = VerificationDelivery(
+            registrationAttemptId = registrationAttemptId,
             recipientEmail = "user@example.ru",
-            locale = "ru-RU",
+            locale = LocaleTag.parse("ru-RU"),
             token = rawToken,
             expiresAt = Instant.parse("2026-08-19T12:30:00Z"),
         )
@@ -55,6 +60,10 @@ class NotificationPayloadEncryptorTest {
         assertThat(jwe.header.algorithm).isEqualTo(JWEAlgorithm.RSA_OAEP_256)
         assertThat(jwe.header.encryptionMethod).isEqualTo(EncryptionMethod.A256GCM)
         jwe.decrypt(RSADecrypter(rsaPrivate))
-        assertThat(jwe.payload.toString()).contains("user@example.ru", rawToken, "ru-RU")
+        val payload = mapper.readTree(jwe.payload.toString())
+        assertThat(payload.path("registrationAttemptId").stringValue()).isEqualTo(registrationAttemptId.toString())
+        assertThat(payload.path("recipientEmail").stringValue()).isEqualTo("user@example.ru")
+        assertThat(payload.path("token").stringValue()).isEqualTo(rawToken)
+        assertThat(payload.path("locale").stringValue()).isEqualTo("ru-RU")
     }
 }

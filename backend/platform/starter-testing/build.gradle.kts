@@ -4,8 +4,8 @@ plugins {
 }
 
 dependencies {
-    api(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
-    api(platform("org.testcontainers:testcontainers-bom:2.0.5"))
+    api(platform(libs.spring.boot.dependencies))
+    api(platform(libs.testcontainers.bom))
     api("org.junit.jupiter:junit-jupiter")
     api("org.junit.platform:junit-platform-launcher")
     api("org.assertj:assertj-core")

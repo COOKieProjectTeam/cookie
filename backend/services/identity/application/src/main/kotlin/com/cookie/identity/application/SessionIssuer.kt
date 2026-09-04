@@ -2,60 +2,87 @@ package com.cookie.identity.application
 
 import com.cookie.identity.application.ports.AccessTokenProvider
 import com.cookie.identity.application.ports.IdGenerator
-import com.cookie.identity.application.ports.RefreshSessionRepository
-import com.cookie.identity.application.ports.SecretTokenService
-import com.cookie.identity.domain.RefreshSession
+import com.cookie.identity.application.ports.RefreshFamilyRepository
+import com.cookie.identity.application.ports.RefreshTokenService
+import com.cookie.identity.domain.DeviceId
+import com.cookie.identity.domain.RefreshFamily
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
 class SessionIssuer(
-    private val sessions: RefreshSessionRepository,
-    private val tokens: SecretTokenService,
+    private val families: RefreshFamilyRepository,
+    private val tokens: RefreshTokenService,
     private val ids: IdGenerator,
     private val accessTokens: AccessTokenProvider,
     private val policy: IdentityPolicy,
 ) {
-    fun createFamily(accountId: UUID, deviceId: String?, newUser: Boolean, now: Instant): IssuedTokens {
-        val sessionId = ids.next()
+    fun createFamily(accountId: UUID, deviceId: DeviceId?, now: Instant): IssuedTokens {
         val familyId = ids.next()
-        val refresh = tokens.create(sessionId)
+        val credentialId = ids.next()
+        val refresh = tokens.create(credentialId)
         val familyExpiresAt = now.plus(policy.refreshFamilyTtl)
-        sessions.add(
-            RefreshSession.active(
-                id = sessionId,
+        families.add(
+            RefreshFamily.start(
+                id = familyId,
                 accountId = accountId,
-                familyId = familyId,
-                verifierHash = refresh.verifierHash,
+                firstCredentialId = credentialId,
+                firstVerifierHash = refresh.verifierHash,
                 deviceId = deviceId,
-                familyExpiresAt = familyExpiresAt,
+                expiresAt = familyExpiresAt,
                 now = now,
             ),
         )
-        return issued(accountId, sessionId, refresh.value, familyExpiresAt, newUser, now)
+        return issued(accountId, familyId, refresh.value, familyExpiresAt, now)
     }
 
-    fun rotate(session: RefreshSession, now: Instant): IssuedTokens {
+    fun rotate(
+        family: RefreshFamily,
+        predecessorRawToken: String,
+        idempotencyKey: UUID,
+        now: Instant,
+    ): IssuedTokens {
+        val predecessorId = family.currentCredentialId
         val replacementId = ids.next()
-        val replacementSecret = tokens.create(replacementId)
-        val replacement = RefreshSession.active(
-            id = replacementId,
-            accountId = session.accountId,
-            familyId = session.familyId,
-            verifierHash = replacementSecret.verifierHash,
-            deviceId = session.deviceId,
-            familyExpiresAt = session.familyExpiresAt,
+        val replacement = tokens.createRefreshSuccessor(
+            predecessorRawToken,
+            replacementId,
+            idempotencyKey,
+        )
+        family.rotateCurrentTo(
+            presentedCredentialId = predecessorId,
+            replacementCredentialId = replacementId,
+            replacementVerifierHash = replacement.verifierHash,
+            idempotencyKey = idempotencyKey,
+            retryUntil = now.plus(policy.refreshRetryWindow),
             now = now,
         )
-        sessions.add(replacement)
-        session.rotate(replacementId, now)
-        sessions.save(session)
+        families.save(family)
         return issued(
-            accountId = session.accountId,
-            sessionId = replacementId,
-            refreshToken = replacementSecret.value,
-            familyExpiresAt = session.familyExpiresAt,
-            newUser = false,
+            accountId = family.accountId,
+            sessionId = family.id,
+            refreshToken = replacement.value,
+            familyExpiresAt = family.expiresAt,
+            now = now,
+        )
+    }
+
+    fun retry(
+        family: RefreshFamily,
+        predecessorRawToken: String,
+        idempotencyKey: UUID,
+        now: Instant,
+    ): IssuedTokens {
+        val replacement = tokens.createRefreshSuccessor(
+            predecessorRawToken,
+            family.currentCredentialId,
+            idempotencyKey,
+        )
+        return issued(
+            accountId = family.accountId,
+            sessionId = family.id,
+            refreshToken = replacement.value,
+            familyExpiresAt = family.expiresAt,
             now = now,
         )
     }
@@ -65,17 +92,15 @@ class SessionIssuer(
         sessionId: UUID,
         refreshToken: String,
         familyExpiresAt: Instant,
-        newUser: Boolean,
         now: Instant,
     ): IssuedTokens {
-        val access = accessTokens.issue(accountId, sessionId)
+        val access = accessTokens.issue(accountId, sessionId, now)
         return IssuedTokens(
             accountId = accountId,
             accessToken = access.value,
             accessTokenExpiresIn = access.expiresInSeconds,
             refreshToken = refreshToken,
             refreshTokenExpiresIn = Duration.between(now, familyExpiresAt).seconds.coerceAtLeast(0).toInt(),
-            newUser = newUser,
         )
     }
 }

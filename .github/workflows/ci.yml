@@ -12,8 +12,8 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: apps/api/go.mod
       - run: go test ./apps/api/...
@@ -22,12 +22,14 @@ jobs:
   kotlin:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "25"
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
       - name: Require Docker for Testcontainers
         run: docker info
       - run: >-
@@ -39,20 +41,23 @@ jobs:
           :backend:platform:starter-messaging:check
           :backend:platform:starter-testing:check
           :backend:services:identity:check
+          :backend:services:identity:integrationTest
           :backend:tools:notification-sink:check
           compileKmpPublicClient
 
   compose:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker compose -f deploy/docker/compose.yaml config
 
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.0"
       - run: terraform fmt -check -recursive infra/terraform
       - run: terraform -chdir=infra/terraform/environments/dev init -backend=false
       - run: terraform -chdir=infra/terraform/environments/dev validate

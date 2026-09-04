@@ -8,6 +8,10 @@ open class InvalidTokenException : IdentityException("Invalid or expired token")
 
 class InvalidActionTokenException : IdentityException("Invalid or expired verification token")
 
+class RegistrationAttemptConflictException : IdentityException(
+    "Registration attempt id or proof was already used for a different request",
+)
+
 class RateLimitExceededException(val retryAfterSeconds: Long) : IdentityException("Rate limit exceeded")
 
 class IdentityUnavailableException(message: String) : IdentityException(message)

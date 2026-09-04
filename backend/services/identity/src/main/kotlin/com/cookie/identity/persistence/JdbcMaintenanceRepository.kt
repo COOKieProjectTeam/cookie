@@ -26,46 +26,85 @@ class JdbcMaintenanceRepository(
         expiredBefore,
     )
 
-    fun deleteUnusableVerificationChallengesBefore(olderThan: Instant, batchSize: Int): Int = deleteBatch(
-        batchSize,
-        """
-        WITH expired AS (
-            SELECT id
-            FROM auth_action_tokens
-            WHERE purpose = 'EMAIL_VERIFICATION'
-              AND (
-                  expires_at < ?
-                  OR consumed_at < ?
-                  OR revoked_at < ?
-              )
-            ORDER BY expires_at, id
-            FOR UPDATE SKIP LOCKED
-            LIMIT ?
+    /**
+     * Scrubs expired active attempts without deleting their idempotency keys.
+     *
+     * The row lock makes expiry race safely with confirmation/resend. Child token
+     * verifier hashes are intentionally retained with the bounded tombstone.
+     */
+    fun abandonExpiredRegistrationAttempts(now: Instant, batchSize: Int): Int {
+        require(batchSize > 0) { "Maintenance batch size must be positive" }
+        return jdbc.update(
+            """
+            WITH expired AS (
+                SELECT id
+                FROM registration_attempts
+                WHERE completed_at IS NULL
+                  AND abandoned_at IS NULL
+                  AND expires_at <= ?
+                ORDER BY expires_at, id
+                FOR UPDATE SKIP LOCKED
+                LIMIT ?
+            )
+            UPDATE registration_attempts a
+            SET locale = NULL,
+                pending_password_hash = NULL,
+                abandoned_at = ?
+            FROM expired e
+            WHERE a.id = e.id
+              AND a.completed_at IS NULL
+              AND a.abandoned_at IS NULL
+            """.trimIndent(),
+            now.asJdbcTimestamp(),
+            batchSize,
+            now.asJdbcTimestamp(),
         )
-        DELETE FROM auth_action_tokens t
-        USING expired e
-        WHERE t.id = e.id
-        """.trimIndent(),
-        olderThan,
-        additionalCutoffParameters = 2,
-    )
+    }
 
-    /** Returns the number of session rows deleted, not the number of families. */
+    /** Deletes only bounded terminal evidence; active rows are never removed here. */
+    fun deleteRegistrationAttemptTombstones(
+        abandonedBefore: Instant,
+        completedBefore: Instant,
+        batchSize: Int,
+    ): Int {
+        require(batchSize > 0) { "Maintenance batch size must be positive" }
+        return jdbc.update(
+            """
+            WITH removable AS (
+                SELECT id
+                FROM registration_attempts
+                WHERE (abandoned_at IS NOT NULL AND abandoned_at < ?)
+                   OR (completed_at IS NOT NULL AND completed_at < ?)
+                ORDER BY COALESCE(completed_at, abandoned_at), id
+                FOR UPDATE SKIP LOCKED
+                LIMIT ?
+            )
+            DELETE FROM registration_attempts a
+            USING removable r
+            WHERE a.id = r.id
+            """.trimIndent(),
+            abandonedBefore.asJdbcTimestamp(),
+            completedBefore.asJdbcTimestamp(),
+            batchSize,
+        )
+    }
+
+    /** Returns the number of deleted family roots; credentials are removed by cascade. */
     fun deleteRefreshFamiliesExpiredBefore(expiredBefore: Instant, familyBatchSize: Int): Int {
         require(familyBatchSize > 0) { "Maintenance batch size must be positive" }
         return jdbc.update(
             """
             WITH expired_families AS (
-                SELECT family_id, MAX(family_expires_at) AS expires_at
-                FROM refresh_sessions
-                GROUP BY family_id
-                HAVING MAX(family_expires_at) < ?
-                ORDER BY expires_at, family_id
+                SELECT id
+                FROM refresh_families
+                WHERE expires_at < ?
+                ORDER BY expires_at, id
+                FOR UPDATE SKIP LOCKED
                 LIMIT ?
             )
-            DELETE FROM refresh_sessions s
+            DELETE FROM refresh_families f
             USING expired_families e
-            WHERE s.family_id = e.family_id
+            WHERE f.id = e.id
             """.trimIndent(),
             expiredBefore.asJdbcTimestamp(),
             familyBatchSize,
@@ -76,14 +115,8 @@ class JdbcMaintenanceRepository(
         batchSize: Int,
         sql: String,
         cutoff: Instant,
-        additionalCutoffParameters: Int = 0,
     ): Int {
         require(batchSize > 0) { "Maintenance batch size must be positive" }
-        val cutoffParameter = cutoff.asJdbcTimestamp()
-        val parameters = buildList<Any> {
-            repeat(additionalCutoffParameters + 1) { add(cutoffParameter) }
-            add(batchSize)
-        }
-        return jdbc.update(sql, *parameters.toTypedArray())
+        return jdbc.update(sql, cutoff.asJdbcTimestamp(), batchSize)
     }
 }

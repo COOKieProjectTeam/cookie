@@ -20,11 +20,11 @@ class NimbusAccessTokenProviderTest {
         val ids = UuidV7IdGenerator(clock, SecureRandom())
         val properties = IdentityProperties(accessTokenTtl = Duration.ofMinutes(15))
         val keyMaterial = KeyMaterialConfiguration().developmentKeyMaterial(properties, ids)
-        val provider = NimbusAccessTokenProvider(properties, keyMaterial, ids, clock)
+        val provider = NimbusAccessTokenProvider(properties, keyMaterial, ids)
         val accountId = UUID.fromString("0198c4a5-68b5-7def-8123-456789abcdef")
         val sessionId = UUID.fromString("0198c4a5-68b5-7abc-9234-56789abcdef0")
 
-        val issued = provider.issue(accountId, sessionId)
+        val issued = provider.issue(accountId, sessionId, now)
         val signed = SignedJWT.parse(issued.value)
 
         assertThat(issued.expiresInSeconds).isEqualTo(900)

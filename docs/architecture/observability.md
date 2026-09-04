@@ -30,9 +30,10 @@ bridge or consumer yet, so both fields remain null rather than being fabricated.
 Logs must include service, environment and operation, but never tokens,
 credentials, detailed health data or meal history.
 
-Identity currently logs publish failures but does not yet export the required
-outbox gauges/counters or distributed traces. Those signals and their alerts are
-a production rollout requirement, not an implemented pilot capability.
+Identity exports Micrometer counters for outbox publish attempts/successes/
+failures/stale completions and gauges for pending count and oldest pending age.
+The metrics backend, alert rules and distributed tracing remain production
+rollout requirements once the observability stack is selected.
 
 ## Alerts
 

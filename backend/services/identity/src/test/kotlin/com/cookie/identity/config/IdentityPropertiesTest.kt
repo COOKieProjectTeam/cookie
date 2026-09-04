@@ -43,6 +43,15 @@ class IdentityPropertiesTest {
                 verificationResendCooldown = Duration.ofMinutes(6),
             )
         }.isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy {
+            IdentityProperties(
+                registrationAttemptTtl = Duration.ofMinutes(4),
+                verificationTokenTtl = Duration.ofMinutes(5),
+            )
+        }.isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy {
+            IdentityProperties(registrationAttemptTtl = Duration.ofDays(7).plusSeconds(1))
+        }.isInstanceOf(IllegalArgumentException::class.java)
     }
 
     @Test

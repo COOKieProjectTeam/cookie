@@ -1,5 +1,6 @@
 package com.cookie.identity.transport
 
+import com.cookie.identity.config.JdbcReadinessProperties
 import com.cookie.identity.generated.runtime.api.SystemApi
 import com.cookie.identity.generated.runtime.model.ProbeStatus
 import com.cookie.identity.security.KeyMaterial
@@ -12,6 +13,7 @@ import javax.sql.DataSource
 class SystemController(
     private val dataSource: DataSource,
     @Suppress("unused") private val keyMaterial: KeyMaterial,
+    private val jdbcReadinessProperties: JdbcReadinessProperties,
 ) : SystemApi {
     override fun getLiveness(): ResponseEntity<ProbeStatus> =
         ResponseEntity.ok(ProbeStatus(ProbeStatus.Status.ok))
@@ -23,6 +25,8 @@ class SystemController(
     }
 
     private fun postgresReady(): Boolean = runCatching {
-        dataSource.connection.use { connection -> connection.isValid(2) }
+        dataSource.connection.use { connection ->
+            connection.isValid(jdbcReadinessProperties.validationTimeoutSeconds)
+        }
     }.getOrDefault(false)
 }

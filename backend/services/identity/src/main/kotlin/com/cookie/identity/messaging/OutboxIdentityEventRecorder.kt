@@ -2,6 +2,7 @@ package com.cookie.identity.messaging
 
 import com.cookie.identity.application.ports.IdGenerator
 import com.cookie.identity.application.ports.IdentityEventRecorder
+import com.cookie.identity.domain.LocaleTag
 import com.cookie.identity.domain.AccountActivated
 import com.cookie.identity.domain.CanonicalEmail
 import com.cookie.identity.persistence.JdbcOutboxRepository
@@ -22,15 +23,15 @@ class OutboxIdentityEventRecorder(
     private val ids: IdGenerator,
 ) : IdentityEventRecorder {
     override fun verificationRequested(
-        accountId: UUID,
+        registrationAttemptId: UUID,
         email: CanonicalEmail,
-        locale: String?,
+        locale: LocaleTag?,
         rawToken: String,
         expiresAt: Instant,
         now: Instant,
     ) {
         val encryptedPayload = encryptor.encrypt(
-            VerificationDelivery(email.value, locale, rawToken, expiresAt),
+            VerificationDelivery(registrationAttemptId, email.value, locale, rawToken, expiresAt),
         )
         val payload = objectMapper.createObjectNode()
             .put("template", "EMAIL_VERIFICATION")
@@ -40,8 +41,8 @@ class OutboxIdentityEventRecorder(
             eventId = ids.next(),
             eventType = "notification.email.requested",
             eventVersion = 1,
-            aggregateType = "account",
-            aggregateId = accountId.toString(),
+            aggregateType = "registration_attempt",
+            aggregateId = registrationAttemptId.toString(),
             payloadJson = objectMapper.writeValueAsString(payload),
             occurredAt = now,
             correlationId = correlationId(),

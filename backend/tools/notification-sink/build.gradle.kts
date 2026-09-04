@@ -5,7 +5,9 @@ plugins {
 dependencies {
     implementation(project(":backend:platform:starter-messaging"))
     implementation("org.springframework.boot:spring-boot-starter")
-    implementation("com.nimbusds:nimbus-jose-jwt:10.7")
-    implementation("org.eclipse.angus:jakarta.mail:2.0.4")
+    implementation(libs.nimbus.jose.jwt)
+    implementation(libs.angus.mail)
     implementation("org.jetbrains.kotlin:kotlin-reflect")
+
+    testImplementation(project(":backend:platform:starter-testing"))
 }

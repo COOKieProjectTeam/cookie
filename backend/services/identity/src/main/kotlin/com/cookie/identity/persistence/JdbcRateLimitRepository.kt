@@ -19,27 +19,31 @@ class JdbcRateLimitRepository(
             jdbc.query(
                 """
                 INSERT INTO rate_limit_buckets(scope_key, window_started_at, attempt_count, expires_at)
-                VALUES (?, clock_timestamp(), 1, clock_timestamp() + (? * interval '1 millisecond'))
+                VALUES (?, statement_timestamp(), 1, statement_timestamp() + (? * interval '1 millisecond'))
                 ON CONFLICT (scope_key) DO UPDATE SET
                     window_started_at = CASE
-                        WHEN rate_limit_buckets.expires_at <= clock_timestamp() THEN clock_timestamp()
+                        WHEN rate_limit_buckets.expires_at <= statement_timestamp() THEN statement_timestamp()
                         ELSE rate_limit_buckets.window_started_at
                     END,
                     attempt_count = CASE
-                        WHEN rate_limit_buckets.expires_at <= clock_timestamp() THEN 1
+                        WHEN rate_limit_buckets.expires_at <= statement_timestamp() THEN 1
                         ELSE rate_limit_buckets.attempt_count + 1
                     END,
                     expires_at = CASE
-                        WHEN rate_limit_buckets.expires_at <= clock_timestamp()
-                            THEN clock_timestamp() + (? * interval '1 millisecond')
+                        WHEN rate_limit_buckets.expires_at <= statement_timestamp()
+                            THEN statement_timestamp() + (? * interval '1 millisecond')
                         ELSE rate_limit_buckets.expires_at
                     END
-                RETURNING attempt_count, expires_at
+                RETURNING attempt_count,
+                    GREATEST(
+                        1,
+                        CEIL(EXTRACT(EPOCH FROM (expires_at - statement_timestamp())))::bigint
+                    ) AS retry_after_seconds
                 """.trimIndent(),
                 { result, _ ->
                     RateLimitWindow(
                         attemptCount = result.getInt("attempt_count"),
-                        expiresAt = result.getTimestamp("expires_at").toInstant(),
+                        retryAfterSeconds = result.getLong("retry_after_seconds"),
                     )
                 },
                 scopeKey,

@@ -3,8 +3,9 @@ plugins {
 }
 
 dependencies {
-    api(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
-    api("io.nats:jnats:2.26.1")
+    api(platform(libs.spring.boot.dependencies))
+    api(libs.jnats)
+    api(libs.bouncycastle.provider)
     api("tools.jackson.core:jackson-databind")
     testImplementation(project(":backend:platform:starter-testing"))
 }

@@ -45,7 +45,8 @@ events:
     payload: [template, encryptedPayload, expiresAt]
     security_note: >-
       encryptedPayload is compact JWE using RSA-OAEP-256 and A256GCM. Only the
-      Notification Service decrypts recipientEmail, locale and the one-time token;
+      Notification Service decrypts registrationAttemptId, recipientEmail, locale
+      and the one-time token;
       raw delivery secrets never enter outbox rows, JetStream or logs.
 
   - type: user.profile.updated

@@ -3,56 +3,80 @@ package com.cookie.identity.application
 import com.cookie.identity.application.ports.RateLimitRepository
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import java.time.Clock
 import java.time.Duration
-import kotlin.math.max
+import java.util.HexFormat
 
 class IdentityRateLimiter(
     private val repository: RateLimitRepository,
-    private val clock: Clock,
 ) {
-    fun register(email: String, ip: String) {
-        check("register:email:${digest(email)}", 3, Duration.ofHours(1))
+    fun registerIp(ip: String) =
         check("register:ip:${digest(ip)}", 20, Duration.ofHours(1))
-    }
 
-    fun resend(email: String, ip: String) {
-        check("resend:email-minute:${digest(email)}", 1, Duration.ofMinutes(1))
-        check("resend:email-hour:${digest(email)}", 5, Duration.ofHours(1))
+    fun registerEmail(email: String) =
+        check("register:email:${digest(email)}", 3, Duration.ofHours(1))
+
+    fun resendIp(ip: String) =
         check("resend:ip:${digest(ip)}", 30, Duration.ofHours(1))
+
+    fun resendEmail(email: String) {
+        consumeAll(
+            Limit("resend:email-minute:${digest(email)}", 1, Duration.ofMinutes(1)),
+            Limit("resend:email-hour:${digest(email)}", 5, Duration.ofHours(1)),
+        )
     }
 
-    fun login(email: String, ip: String) {
-        check("login:email:${digest(email)}", 10, Duration.ofMinutes(15))
+    fun loginIp(ip: String) =
         check("login:ip:${digest(ip)}", 100, Duration.ofMinutes(15))
-    }
+
+    fun loginEmail(email: String) =
+        check("login:email:${digest(email)}", 10, Duration.ofMinutes(15))
 
     fun confirm(tokenId: String) {
         check("confirm:token:${digest(tokenId)}", 10, Duration.ofMinutes(15))
     }
 
-    fun refresh(sessionId: String) {
-        check("refresh:session:${digest(sessionId)}", 30, Duration.ofMinutes(1))
+    fun confirmIp(ip: String) =
+        check("confirm:ip:${digest(ip)}", 60, Duration.ofMinutes(15))
+
+    fun refresh(familyId: String) {
+        check("refresh:family:${digest(familyId)}", 30, Duration.ofMinutes(1))
     }
 
-    fun logout(sessionId: String) {
-        check("logout:session:${digest(sessionId)}", 30, Duration.ofMinutes(1))
+    fun logout(familyId: String) {
+        check("logout:family:${digest(familyId)}", 30, Duration.ofMinutes(1))
     }
 
     fun ipOnly(route: String, ip: String, limit: Int, window: Duration) {
         check("$route:ip:${digest(ip)}", limit, window)
     }
 
-    private fun check(scope: String, limit: Int, window: Duration) {
-        val result = repository.consume(scope, window)
-        if (result.attemptCount > limit) {
-            val remaining = Duration.between(clock.instant(), result.expiresAt).seconds
-            throw RateLimitExceededException(max(1, remaining))
+    /**
+     * Consume every applicable scope before reporting rejection. Otherwise a
+     * saturated narrow scope can prevent the broader IP bucket from advancing.
+     */
+    private fun consumeAll(vararg limits: Limit) {
+        val exceeded = limits.map { limit -> limit to repository.consume(limit.scope, limit.window) }
+            .filter { (limit, result) -> result.attemptCount > limit.maxAttempts }
+        if (exceeded.isNotEmpty()) {
+            val retryAfter = exceeded.maxOf { (_, result) -> result.retryAfterSeconds }
+            throw RateLimitExceededException(retryAfter)
         }
     }
 
-    private fun digest(value: String): String = MessageDigest.getInstance("SHA-256")
-        .digest(value.toByteArray(StandardCharsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(byte) }
-        .take(32)
+    private fun check(scope: String, limit: Int, window: Duration) {
+        val result = repository.consume(scope, window)
+        if (result.attemptCount > limit) {
+            throw RateLimitExceededException(result.retryAfterSeconds)
+        }
+    }
+
+    private fun digest(value: String): String = HexFormat.of().formatHex(
+        MessageDigest.getInstance("SHA-256").digest(value.toByteArray(StandardCharsets.UTF_8)),
+    ).take(32)
+
+    private data class Limit(
+        val scope: String,
+        val maxAttempts: Int,
+        val window: Duration,
+    )
 }

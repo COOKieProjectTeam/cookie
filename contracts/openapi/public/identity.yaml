@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: COOKie Identity Public API
-  version: 0.2.0
+  version: 0.6.0
   description: >-
     Public email/password authentication and session lifecycle owned by
     Identity Service.
@@ -21,10 +21,18 @@ paths:
       operationId: registerWithEmail
       summary: Зарегистрироваться по email и паролю
       description: >-
-        Создаёт аккаунт с неподтверждённым email и отправляет одноразовую ссылку
-        подтверждения. Ответ одинаков для нового и уже зарегистрированного email,
-        чтобы не раскрывать наличие аккаунта. Токены выдаются только после
-        подтверждения email.
+        Создаёт proof-bound попытку регистрации и отправляет одноразовую ссылку.
+        Клиент до запроса генерирует и атомарно сохраняет стабильный registrationAttemptId
+        и независимый 256-битный registrationProof. Точный повтор того же запроса является
+        no-op и после фиксации попытки не расходует email business bucket. Защитный IP bucket
+        применяется ко всем запросам и поэтому повтор также может получить 429. Повтор того же attempt id или
+        proof с изменённым email, password либо locale отклоняется конфликтом.
+        Exact retry истёкшей или проигравшей конкуренцию попытки также остаётся
+        no-op, пока её scrubbed tombstone хранится не менее 30 дней; чтобы получить
+        новое письмо после 24 часов, клиент всегда создаёт новый id и proof.
+        Email token и registrationProof по отдельности не могут активировать credential. Ответ
+        одинаков для нового и уже зарегистрированного email. Сессия выдаётся только
+        отдельным login после подтверждения.
       security: []
       requestBody:
         required: true
@@ -37,6 +45,10 @@ paths:
           description: Если действие допустимо, письмо подтверждения будет отправлено
         "400":
           $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/RegistrationAttemptConflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -61,6 +73,17 @@ paths:
       responses:
         "200":
           description: Токены выданы, refresh-сессия создана
+          headers:
+            Cache-Control:
+              description: Запрещает хранение ответа с bearer credentials
+              schema:
+                type: string
+                example: no-store
+            Pragma:
+              description: Совместимый с HTTP/1.0 запрет кэширования
+              schema:
+                type: string
+                example: no-cache
           content:
             application/json:
               schema:
@@ -73,6 +96,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -84,8 +109,14 @@ paths:
       operationId: confirmEmail
       summary: Подтвердить email одноразовым токеном
       description: >-
-        Одноразово поглощает verification token, помечает email подтверждённым и
-        создаёт первую refresh-сессию.
+        Атомарно проверяет доставленный по email verification token и независимый
+        client-held registrationProof, после чего активирует связанный с ними password hash.
+        Token содержит публичный registrationAttemptId, по которому клиент выбирает proof
+        из защищённого локального хранилища; сам proof в ссылку не включается.
+        Повтор уже успешно погашенного токена в течение как минимум 30 дней является
+        безопасным no-op; после удаления audit-записи токен снова считается недействительным. Сессия
+        создаётся отдельным login-запросом, поэтому неопределённый результат HTTP
+        confirm не может потерять выданный refresh secret.
       security: []
       requestBody:
         required: true
@@ -94,18 +125,16 @@ paths:
             schema:
               $ref: "#/components/schemas/EmailVerificationConfirmRequest"
       responses:
-        "200":
-          description: Email подтверждён, токены выданы
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TokenPairWithUser"
+        "204":
+          description: Email подтверждён или audit-запись уже фиксирует успешное погашение этого токена
         "400":
-          description: Токен недействителен, уже использован или истёк
+          description: Token/proof pair недействительна, погашена другим запросом или истекла
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -118,7 +147,10 @@ paths:
       summary: Повторно отправить подтверждение email
       description: >-
         Всегда возвращает одинаковый ответ независимо от существования аккаунта и
-        состояния email. Предыдущие неиспользованные verification tokens отзываются.
+        состояния email. Письмо повторно отправляется только для указанной попытки после проверки
+        client-held registrationProof. Попытка живёт 24 часа независимо от cleanup, отдельный token —
+        30 минут. Ранее выданные для этой же попытки неизрасходованные ссылки остаются пригодны
+        до своего expiry; подтверждение одной попытки делает остальные бесполезными.
       security: []
       requestBody:
         required: true
@@ -131,6 +163,8 @@ paths:
           description: Если действие допустимо, письмо будет отправлено
         "400":
           $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -142,10 +176,25 @@ paths:
       operationId: refreshSession
       summary: Обновить пару токенов (refresh token rotation)
       description: >-
-        Одноразово использует текущий refresh token и возвращает новую пару.
-        Повторное использование уже ротированного токена считается replay:
-        Identity отзывает всё семейство refresh-сессии.
+        Однократно использует текущий refresh credential и возвращает новую пару.
+        Для повтора того же HTTP-запроса в течение 30 секунд клиент обязан
+        повторить тот же Idempotency-Key: пока непосредственный successor ещё
+        текущий, Identity вернёт тот же новый refresh token. Точный, но уже
+        устаревший retry отклоняется без отзыва сессии. Другой ключ для уже
+        использованного credential считается reuse и отзывает всё семейство
+        refresh-сессии.
       security: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >-
+            UUID одной логической попытки refresh. Новый UUID создаётся для
+            каждой rotation и повторяется только при сетевом retry того же
+            refresh token.
+          schema:
+            type: string
+            format: uuid
       requestBody:
         required: true
         content:
@@ -155,6 +204,17 @@ paths:
       responses:
         "200":
           description: Новая пара токенов
+          headers:
+            Cache-Control:
+              description: Запрещает хранение ответа с bearer credentials
+              schema:
+                type: string
+                example: no-store
+            Pragma:
+              description: Совместимый с HTTP/1.0 запрет кэширования
+              schema:
+                type: string
+                example: no-cache
           content:
             application/json:
               schema:
@@ -165,6 +225,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -191,6 +255,8 @@ paths:
           description: Сессия завершена или уже была завершена
         "400":
           $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -227,6 +293,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: Тело запроса превышает серверный лимит 16 KiB
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     TooManyRequests:
       description: Слишком много запросов; повторите позднее
       headers:
@@ -251,50 +323,98 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    RegistrationAttemptConflict:
+      description: Attempt id или registration proof уже связан с другим запросом
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
     EmailAddress:
       type: string
       format: email
-      maxLength: 254
       description: >-
-        Разрешены только адреса с ASCII local-part и российским доменом верхнего
-        уровня .ru или .рф. Перед сравнением адрес проходит trim, Unicode NFC,
-        IDNA-преобразование домена и приведение к нижнему регистру.
+        Структурно корректный email с ASCII local-part и Unicode- или ASCII-доменом.
+        Перед сравнением пробелы по краям удаляются, домен проходит
+        non-transitional UTS #46 IDNA-преобразование, а весь адрес приводится к
+        нижнему регистру. Лимит 254 символа проверяется для канонической ASCII-формы,
+        а не для исходной JSON-строки. Ограничение новых регистраций доменами .ru и .рф не
+        применяется к login/resend, чтобы сохранённые credentials оставались
+        доступны после изменения admission policy.
+
+    RegistrationEmailAddress:
+      type: string
+      format: email
+      description: >-
+        Email для новой регистрации: ASCII local-part, Unicode- или ASCII-домен
+        и максимум 254 символа в канонической ASCII-форме после IDNA-преобразования.
+        Итоговый домен верхнего
+        уровня должен быть .ru или .рф (xn--p1ai).
 
     Password:
       type: string
       format: password
       writeOnly: true
-      minLength: 15
-      maxLength: 128
       description: >-
-        От 15 до 128 Unicode code points. Пробелы, Unicode whitespace/separator
-        и управляющие символы запрещены; остальные требования к составу не
-        навязываются. На сервере хранится только Argon2id encoded hash.
+        От 15 до 128 Unicode code points после NFC-нормализации. Обычные пробелы,
+        Unicode и emoji разрешены; управляющие символы и разделители строк и
+        абзацев запрещены. Требования к составу не навязываются. На сервере
+        хранится только Argon2id encoded hash нормализованного значения.
 
     LoginPassword:
       type: string
       format: password
       writeOnly: true
-      minLength: 1
-      maxLength: 128
       description: >-
         Пароль для проверки существующего credential. Текущая registration
         policy намеренно не применяется при login, чтобы её ужесточение не
-        блокировало ранее созданные аккаунты.
+        блокировало ранее созданные аккаунты. Перед проверкой применяется та же
+        NFC-нормализация и безопасный максимум, что и при регистрации.
+
+    RegistrationProof:
+      type: string
+      minLength: 43
+      maxLength: 43
+      pattern: "^[A-Za-z0-9_-]{43}$"
+      writeOnly: true
+      description: >-
+        Base64url без padding от 32 криптографически случайных байтов. Клиент
+        генерирует новое значение для каждой логической регистрации, хранит его как secret
+        и повторяет в resend/confirm. Identity хранит только SHA-256 verifier.
+
+    RegistrationAttemptId:
+      type: string
+      format: uuid
+      description: >-
+        Криптографически случайный UUID одной логической регистрации. Клиент создаёт
+        его вместе с registrationProof, хранит эту пару до завершения flow и повторяет
+        идентификатор при register/resend. Он не является secret и встроен в email token,
+        чтобы deep-link можно было однозначно сопоставить с сохранённым proof.
+
+    LocaleTag:
+      type: string
+      maxLength: 255
+      example: ru-RU
+      description: >-
+        Well-formed BCP 47 language tag. Сервер канонизирует регистр subtags.
+        Ограничение 255 символов является защитным product/storage bound, а не
+        ограничением стандарта BCP 47.
 
     EmailRegistrationRequest:
       type: object
-      required: [email, password]
+      required: [registrationAttemptId, email, password, registrationProof]
       properties:
+        registrationAttemptId:
+          $ref: "#/components/schemas/RegistrationAttemptId"
         email:
-          $ref: "#/components/schemas/EmailAddress"
+          $ref: "#/components/schemas/RegistrationEmailAddress"
         password:
           $ref: "#/components/schemas/Password"
+        registrationProof:
+          $ref: "#/components/schemas/RegistrationProof"
         locale:
-          type: string
-          maxLength: 35
+          $ref: "#/components/schemas/LocaleTag"
 
     EmailLoginRequest:
       type: object
@@ -306,26 +426,36 @@ components:
           $ref: "#/components/schemas/LoginPassword"
         deviceId:
           type: string
+          minLength: 1
           maxLength: 255
+          description: >-
+            Opaque id установки клиента; непустой, не blank и без control,
+            format, line/paragraph separator или malformed surrogate code points.
 
     EmailActionRequest:
       type: object
-      required: [email]
+      required: [registrationAttemptId, email, registrationProof]
       properties:
+        registrationAttemptId:
+          $ref: "#/components/schemas/RegistrationAttemptId"
         email:
           $ref: "#/components/schemas/EmailAddress"
+        registrationProof:
+          $ref: "#/components/schemas/RegistrationProof"
 
     EmailVerificationConfirmRequest:
       type: object
-      required: [token]
+      required: [token, registrationProof]
       properties:
         token:
           type: string
-          minLength: 32
-          maxLength: 512
-        deviceId:
-          type: string
-          maxLength: 255
+          minLength: 121
+          maxLength: 121
+          description: >-
+            Opaque email token, содержащий публичные attempt/token UUID и
+            256-битный secret. Клиент не должен логировать или сохранять его вне flow.
+        registrationProof:
+          $ref: "#/components/schemas/RegistrationProof"
 
     RefreshTokenRequest:
       type: object
@@ -340,8 +470,8 @@ components:
       type: object
       description: >-
         Access token — короткоживущий JWT и не хранится на сервере. Refresh token —
-        случайный opaque secret; клиент хранит его в Keychain/Keystore, а Identity
-        сохраняет в PostgreSQL только hash и состояние rotation family.
+        256-битный opaque secret; клиент хранит его в Keychain/Keystore, а Identity
+        сохраняет в PostgreSQL только verifier и состояние rotation family.
       required: [accessToken, accessTokenExpiresIn, refreshToken, refreshTokenExpiresIn]
       properties:
         accessToken:
@@ -367,14 +497,12 @@ components:
 
     AuthenticatedUser:
       type: object
-      required: [id, newUser]
+      required: [id]
       properties:
         id:
           type: string
           format: uuid
           description: UUIDv7 account identifier.
-        newUser:
-          type: boolean
 
     JsonWebKeySet:
       type: object
@@ -410,6 +538,13 @@ components:
 
     Error:
       type: object
+      description: >-
+        Стабильная публичная ошибка. Для валидации используются коды
+        INVALID_EMAIL_FORMAT, EMAIL_TOO_LONG, EMAIL_LOCAL_PART_UNSUPPORTED,
+        EMAIL_DOMAIN_NOT_SUPPORTED, PASSWORD_TOO_SHORT, PASSWORD_TOO_LONG,
+        PASSWORD_INVALID_CHARACTERS, INVALID_LOCALE, INVALID_DEVICE_ID,
+        INVALID_REQUEST, INVALID_CREDENTIALS, INVALID_REFRESH_TOKEN,
+        INVALID_VERIFICATION_TOKEN, REGISTRATION_ATTEMPT_CONFLICT и PAYLOAD_TOO_LARGE.
       required: [code, message]
       properties:
         code:

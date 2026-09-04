@@ -4,9 +4,10 @@ import java.time.Instant
 import java.util.UUID
 import kotlin.math.min
 
-enum class AccountStatus {
-    PENDING_VERIFICATION,
-    ACTIVE,
+enum class PasswordAuthenticationResult {
+    AUTHENTICATED,
+    REJECTED,
+    REJECTED_WITH_RECORDED_FAILURE,
 }
 
 data class AccountActivated(
@@ -15,58 +16,49 @@ data class AccountActivated(
     val activatedAt: Instant,
 )
 
+data class AccountRegistration(
+    val account: Account,
+    val event: AccountActivated,
+)
+
+/** A registered account. Pending signup state belongs to RegistrationAttempt. */
 class Account private constructor(
     val id: UUID,
     val email: CanonicalEmail,
     val passwordHash: String,
     val createdAt: Instant,
-    status: AccountStatus,
-    activatedAt: Instant?,
-    emailVerifiedAt: Instant?,
     failedLoginCount: Int,
     lockedUntil: Instant?,
 ) {
     init {
         require(passwordHash.isNotBlank()) { "Password hash must not be blank" }
         require(failedLoginCount >= 0) { "Failed login count must not be negative" }
-        require(activatedAt == null || !activatedAt.isBefore(createdAt)) { "Activation cannot precede registration" }
-        require(emailVerifiedAt == null || !emailVerifiedAt.isBefore(createdAt)) {
-            "Email verification cannot precede registration"
+        require(lockedUntil == null || !lockedUntil.isBefore(createdAt)) {
+            "Account lock cannot precede registration"
         }
-        require(
-            (status == AccountStatus.PENDING_VERIFICATION && activatedAt == null && emailVerifiedAt == null) ||
-                (status == AccountStatus.ACTIVE && activatedAt != null && emailVerifiedAt != null),
-        ) { "Account status and activation timestamps are inconsistent" }
     }
 
-    var status: AccountStatus = status
-        private set
-    var activatedAt: Instant? = activatedAt
-        private set
-    var emailVerifiedAt: Instant? = emailVerifiedAt
-        private set
     var failedLoginCount: Int = failedLoginCount
         private set
     var lockedUntil: Instant? = lockedUntil
         private set
 
-    fun activate(now: Instant): AccountActivated? {
-        if (status != AccountStatus.PENDING_VERIFICATION) return null
-        check(!now.isBefore(createdAt)) { "Activation cannot precede registration" }
-        status = AccountStatus.ACTIVE
-        activatedAt = now
-        emailVerifiedAt = now
-        return AccountActivated(id, createdAt, now)
+    fun authenticatePassword(passwordMatches: Boolean, now: Instant): PasswordAuthenticationResult {
+        check(!now.isBefore(createdAt)) { "Login attempt cannot precede registration" }
+        // A request made during an already active lock is observational only.
+        // Neither a correct nor an incorrect password may keep extending a
+        // victim's lockout window.
+        if (lockedUntil?.isAfter(now) == true) return PasswordAuthenticationResult.REJECTED
+        if (!passwordMatches) {
+            recordFailedPassword(now)
+            return PasswordAuthenticationResult.REJECTED_WITH_RECORDED_FAILURE
+        }
+        failedLoginCount = 0
+        lockedUntil = null
+        return PasswordAuthenticationResult.AUTHENTICATED
     }
 
-    fun isLocked(now: Instant): Boolean = lockedUntil?.isAfter(now) == true
-
-    fun canAuthenticate(passwordMatches: Boolean, now: Instant): Boolean =
-        status == AccountStatus.ACTIVE && !isLocked(now) && passwordMatches
-
-    fun recordFailedPassword(now: Instant) {
-        if (status != AccountStatus.ACTIVE) return
-        check(!now.isBefore(createdAt)) { "Login attempt cannot precede registration" }
+    private fun recordFailedPassword(now: Instant) {
         failedLoginCount += 1
         if (failedLoginCount >= LOCKOUT_THRESHOLD) {
             val exponent = min(failedLoginCount - LOCKOUT_THRESHOLD, MAX_LOCKOUT_EXPONENT)
@@ -75,40 +67,31 @@ class Account private constructor(
         }
     }
 
-    fun recordSuccessfulLogin() {
-        check(status == AccountStatus.ACTIVE) { "Only active accounts can authenticate" }
-        failedLoginCount = 0
-        lockedUntil = null
-    }
-
-    override fun toString(): String = "Account(id=$id,status=$status)"
+    override fun toString(): String = "Account(id=$id)"
 
     companion object {
-        fun pending(
+        fun register(
             id: UUID,
             email: CanonicalEmail,
             passwordHash: String,
             now: Instant,
-        ): Account = Account(
-            id = id,
-            email = email,
-            passwordHash = passwordHash,
-            createdAt = now,
-            status = AccountStatus.PENDING_VERIFICATION,
-            activatedAt = null,
-            emailVerifiedAt = null,
-            failedLoginCount = 0,
-            lockedUntil = null,
-        )
+        ): AccountRegistration {
+            val account = Account(
+                id = id,
+                email = email,
+                passwordHash = passwordHash,
+                createdAt = now,
+                failedLoginCount = 0,
+                lockedUntil = null,
+            )
+            return AccountRegistration(account, AccountActivated(id, now, now))
+        }
 
         fun reconstitute(
             id: UUID,
             email: CanonicalEmail,
             passwordHash: String,
             createdAt: Instant,
-            status: AccountStatus,
-            activatedAt: Instant?,
-            emailVerifiedAt: Instant?,
             failedLoginCount: Int,
             lockedUntil: Instant?,
         ): Account = Account(
@@ -116,9 +99,6 @@ class Account private constructor(
             email,
             passwordHash,
             createdAt,
-            status,
-            activatedAt,
-            emailVerifiedAt,
             failedLoginCount,
             lockedUntil,
         )

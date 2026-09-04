@@ -54,18 +54,38 @@ class NatsJetStreamConnection(
     private var connection: Connection? = null
 
     fun jetStream(): JetStream {
-        val active = connection?.takeIf { it.status == Connection.Status.CONNECTED }
-        if (active != null) return active.jetStream()
+        connection?.let { current ->
+            if (current.status == Connection.Status.CONNECTED) return current.jetStream()
+        }
 
         return synchronized(connectionMonitor) {
-            val rechecked = connection?.takeIf { it.status == Connection.Status.CONNECTED }
-            if (rechecked != null) return@synchronized rechecked.jetStream()
+            connection?.let { current ->
+                when (existingConnectionAction(current.status)) {
+                    ExistingConnectionAction.USE -> return@synchronized current.jetStream()
+                    ExistingConnectionAction.AWAIT_RECOVERY -> throw NatsConnectionRecoveringException(current.status)
+                    ExistingConnectionAction.REPLACE -> connection = null
+                }
+            }
 
-            connection?.runCatching { close() }
-            val connected = Nats.connect(connectionOptions())
-            if (localProvisioning) ensureDevelopmentStream(connected)
-            connection = connected
-            connected.jetStream()
+            val connected = try {
+                Nats.connect(connectionOptions())
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw interrupted
+            }
+            try {
+                if (localProvisioning) ensureDevelopmentStream(connected)
+                val jetStream = connected.jetStream()
+                connection = connected
+                jetStream
+            } catch (interrupted: InterruptedException) {
+                connected.runCatching { close() }
+                Thread.currentThread().interrupt()
+                throw interrupted
+            } catch (exception: Exception) {
+                connected.runCatching { close() }
+                throw exception
+            }
         }
     }
 
@@ -147,5 +167,23 @@ class NatsJetStreamConnection(
     companion object {
         const val STREAM_NAME = "COOKIE_EVENTS"
         const val INBOX_PREFIX = "_INBOX.cookie.identity"
+
+        internal fun existingConnectionAction(status: Connection.Status): ExistingConnectionAction = when (status) {
+            Connection.Status.CONNECTED -> ExistingConnectionAction.USE
+            Connection.Status.CLOSED -> ExistingConnectionAction.REPLACE
+            Connection.Status.CONNECTING,
+            Connection.Status.RECONNECTING,
+            Connection.Status.DISCONNECTED,
+            -> ExistingConnectionAction.AWAIT_RECOVERY
+        }
     }
 }
+
+internal enum class ExistingConnectionAction {
+    USE,
+    AWAIT_RECOVERY,
+    REPLACE,
+}
+
+private class NatsConnectionRecoveringException(status: Connection.Status) :
+    IllegalStateException("NATS connection is recovering (status=$status)")

@@ -1,6 +1,7 @@
 package com.cookie.identity.messaging
 
 import com.cookie.identity.config.IdentityProperties
+import io.nats.client.Connection
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -66,6 +67,23 @@ class NatsJetStreamConnectionTest {
 
         assertThat(options.isTLSRequired).isFalse()
         assertThat(options.inboxPrefix).isEqualTo("${NatsJetStreamConnection.INBOX_PREFIX}.")
+    }
+
+    @Test
+    fun `automatic recovery states never cause a replacement connection`() {
+        listOf(
+            Connection.Status.CONNECTING,
+            Connection.Status.RECONNECTING,
+            Connection.Status.DISCONNECTED,
+        ).forEach { status ->
+            assertThat(NatsJetStreamConnection.existingConnectionAction(status))
+                .isEqualTo(ExistingConnectionAction.AWAIT_RECOVERY)
+        }
+
+        assertThat(NatsJetStreamConnection.existingConnectionAction(Connection.Status.CONNECTED))
+            .isEqualTo(ExistingConnectionAction.USE)
+        assertThat(NatsJetStreamConnection.existingConnectionAction(Connection.Status.CLOSED))
+            .isEqualTo(ExistingConnectionAction.REPLACE)
     }
 
     private fun writeTruststore(path: Path, password: CharArray) {

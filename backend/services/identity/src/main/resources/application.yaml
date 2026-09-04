@@ -7,10 +7,21 @@ spring:
     password: ${COOKIE_IDENTITY_DATABASE_PASSWORD}
     hikari:
       maximum-pool-size: ${COOKIE_IDENTITY_DATABASE_POOL_SIZE:10}
+      connection-timeout: ${COOKIE_IDENTITY_DATABASE_CONNECTION_TIMEOUT_MS:2000}
+      validation-timeout: ${COOKIE_IDENTITY_DATABASE_VALIDATION_TIMEOUT_MS:1000}
+      data-source-properties:
+        options: "${COOKIE_IDENTITY_DATABASE_OPTIONS:-c statement_timeout=5000 -c lock_timeout=2000}"
+        socketTimeout: ${COOKIE_IDENTITY_DATABASE_SOCKET_TIMEOUT_SECONDS:10}
+        tcpKeepAlive: true
   flyway:
     enabled: true
   jackson:
     default-property-inclusion: non_null
+  task:
+    scheduling:
+      pool:
+        size: 3
+      thread-name-prefix: identity-scheduler-
 
 server:
   port: ${PORT:8080}
@@ -27,6 +38,7 @@ cookie:
   identity:
     access-token-ttl: PT15M
     refresh-family-ttl: P30D
+    registration-attempt-ttl: P1D
     verification-token-ttl: PT30M
     verification-resend-cooldown: PT1M
     issuer: https://api.cookie.app
@@ -39,12 +51,22 @@ cookie:
     nats-credentials-path: ${COOKIE_NATS_CREDENTIALS_PATH:}
     nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
     nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
+    # Comma-separated CIDRs of ingress proxies allowed to supply X-Forwarded-For.
+    # Keep empty when clients connect directly to Identity.
+    trusted-proxy-cidrs: ${COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS:}
+    database:
+      transaction-timeout: PT5S
+      lock-timeout: PT2S
     retention:
+      poll-delay: PT1M
       rate-limit-grace: P1D
-      verification-challenge-audit: P30D
-      refresh-session-audit: P90D
+      completed-registration-attempt-audit: P30D
+      abandoned-registration-attempt-audit: P30D
+      refresh-family-audit: P90D
       published-outbox: P7D
       batch-size: 500
+      max-batches-per-run: 400
+      max-run-duration: PT30S
 
 logging:
   pattern:

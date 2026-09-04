@@ -12,7 +12,7 @@ import com.nimbusds.jose.crypto.ECDSASigner
 import com.nimbusds.jwt.JWTClaimsSet
 import com.nimbusds.jwt.SignedJWT
 import org.springframework.stereotype.Component
-import java.time.Clock
+import java.time.Instant
 import java.util.Date
 import java.util.UUID
 
@@ -21,10 +21,8 @@ class NimbusAccessTokenProvider(
     private val properties: IdentityProperties,
     private val keyMaterial: KeyMaterial,
     private val idGenerator: IdGenerator,
-    private val clock: Clock,
 ) : AccessTokenProvider {
-    override fun issue(accountId: UUID, sessionId: UUID): IssuedAccessToken {
-        val now = clock.instant()
+    override fun issue(accountId: UUID, sessionId: UUID, now: Instant): IssuedAccessToken {
         val claims = JWTClaimsSet.Builder()
             .issuer(properties.issuer.toASCIIString())
             .audience(properties.audience)

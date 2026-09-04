@@ -1,6 +1,7 @@
 package com.cookie.identity.domain
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatCode
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 
@@ -14,11 +15,26 @@ class CanonicalEmailTest {
     }
 
     @Test
-    fun `rejects unsupported domains and unicode local parts`() {
-        assertThatThrownBy { CanonicalEmail.parse("user@example.com") }
-            .isInstanceOf(InvalidInputException::class.java)
+    fun `structural parsing is independent from domain admission policy`() {
+        assertThat(CanonicalEmail.parse("user@example.com").value).isEqualTo("user@example.com")
+
+        val policy = RussianEmailAdmissionPolicy()
+        assertThatCode { policy.validate(CanonicalEmail.parse("user@example.ru")) }.doesNotThrowAnyException()
+        assertThatCode { policy.validate(CanonicalEmail.parse("user@пример.рф")) }.doesNotThrowAnyException()
+        assertThatThrownBy { policy.validate(CanonicalEmail.parse("user@example.com")) }
+            .isInstanceOf(EmailDomainNotAllowedException::class.java)
+        assertThatThrownBy { policy.validate(CanonicalEmail.parse("user@ru")) }
+            .isInstanceOf(EmailDomainNotAllowedException::class.java)
+        assertThatThrownBy { policy.validate(CanonicalEmail.parse("user@xn--p1ai")) }
+            .isInstanceOf(EmailDomainNotAllowedException::class.java)
+    }
+
+    @Test
+    fun `rejects unicode local parts with a typed reason`() {
         assertThatThrownBy { CanonicalEmail.parse("почта@example.ru") }
-            .isInstanceOf(InvalidInputException::class.java)
+            .isInstanceOfSatisfying(InvalidEmailException::class.java) {
+                assertThat(it.reason).isEqualTo(InvalidEmailReason.LOCAL_PART_HAS_UNSUPPORTED_CHARACTERS)
+            }
     }
 
     @Test
@@ -37,6 +53,33 @@ class CanonicalEmailTest {
             "c".repeat(63) + "." + "d".repeat(61) + ".ru"
 
         assertThatThrownBy { CanonicalEmail.parse(oversized) }
-            .isInstanceOf(InvalidInputException::class.java)
+            .isInstanceOfSatisfying(InvalidEmailException::class.java) {
+                assertThat(it.reason).isEqualTo(InvalidEmailReason.ADDRESS_TOO_LONG)
+            }
+    }
+
+    @Test
+    fun `reports structural failures without echoing the submitted address`() {
+        assertThatThrownBy { CanonicalEmail.parse("user.example.ru") }
+            .isInstanceOfSatisfying(InvalidEmailException::class.java) {
+                assertThat(it.reason).isEqualTo(InvalidEmailReason.INVALID_SEPARATOR)
+                assertThat(it.message).doesNotContain("user.example.ru")
+            }
+        assertThatThrownBy { CanonicalEmail.parse("user@") }
+            .isInstanceOfSatisfying(InvalidEmailException::class.java) {
+                assertThat(it.reason).isEqualTo(InvalidEmailReason.DOMAIN_EMPTY)
+            }
+    }
+
+    @Test
+    fun `bounds raw input before invoking idna processing`() {
+        assertThatThrownBy { CanonicalEmail.parse("user@" + "д".repeat(2_000)) }
+            .isInstanceOfSatisfying(InvalidEmailException::class.java) {
+                assertThat(it.reason).isEqualTo(InvalidEmailReason.ADDRESS_TOO_LONG)
+            }
+        assertThatThrownBy { CanonicalEmail.parse(" ".repeat(2_000) + "user@example.ru") }
+            .isInstanceOfSatisfying(InvalidEmailException::class.java) {
+                assertThat(it.reason).isEqualTo(InvalidEmailReason.ADDRESS_TOO_LONG)
+            }
     }
 }

@@ -1,9 +1,10 @@
 import org.openapitools.generator.gradle.plugin.tasks.GenerateTask
 import org.openapitools.generator.gradle.plugin.tasks.ValidateTask
+import org.gradle.api.tasks.testing.Test
 
 plugins {
     id("com.cookie.spring-service")
-    id("org.openapi.generator") version "7.24.0"
+    alias(libs.plugins.openapi.generator)
 }
 
 dependencies {
@@ -15,15 +16,15 @@ dependencies {
 
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.security:spring-security-crypto")
-    implementation("org.bouncycastle:bcprov-jdk18on:1.83")
-    implementation("com.nimbusds:nimbus-jose-jwt:10.7")
-    implementation("io.swagger.core.v3:swagger-annotations-jakarta:2.2.28")
+    implementation(libs.bouncycastle.provider)
+    implementation(libs.nimbus.jose.jwt)
+    implementation(libs.swagger.annotations.jakarta)
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation(project(":backend:platform:starter-testing"))
-    testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
+    testImplementation(platform(libs.testcontainers.bom))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
@@ -110,6 +111,23 @@ tasks.named("check") {
         ":backend:services:identity:domain:check",
         ":backend:services:identity:application:check",
     )
+}
+
+tasks.named<Test>("test") {
+    useJUnitPlatform {
+        excludeTags("integration")
+    }
+}
+
+val integrationTest = tasks.register<Test>("integrationTest") {
+    description = "Runs Identity HTTP and JDBC integration tests against required containers."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("integration")
+    }
+    shouldRunAfter(tasks.named("test"))
 }
 
 springBoot {

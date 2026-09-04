@@ -7,6 +7,13 @@
 .env
 .env.*
 !.env.example
+*.creds
+*.jks
+*.jwk
+*.key
+*.p12
+*.pem
+*.pfx
 *.tfvars
 !*.tfvars.example
 

@@ -2,7 +2,6 @@ package com.cookie.identity.persistence
 
 import com.cookie.identity.application.ports.AccountRepository
 import com.cookie.identity.domain.Account
-import com.cookie.identity.domain.AccountStatus
 import com.cookie.identity.domain.CanonicalEmail
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -58,11 +57,11 @@ class JdbcAccountRepository(
         requireSingleRow(
             "Insert account",
             jdbc.update(
-                "INSERT INTO accounts(id, status, created_at, activated_at) VALUES (?, ?, ?, ?)",
+                """
+                INSERT INTO accounts(id, created_at) VALUES (?, ?)
+                """.trimIndent(),
                 account.id,
-                account.status.name,
                 account.createdAt.asJdbcTimestamp(),
-                account.activatedAt?.asJdbcTimestamp(),
             ),
         )
         requireSingleRow(
@@ -70,14 +69,13 @@ class JdbcAccountRepository(
             jdbc.update(
                 """
                 INSERT INTO email_credentials(
-                    account_id, email, password_hash, email_verified_at,
-                    failed_login_count, locked_until, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    account_id, email, password_hash, failed_login_count,
+                    locked_until, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent(),
                 account.id,
                 account.email.value,
                 account.passwordHash,
-                account.emailVerifiedAt?.asJdbcTimestamp(),
                 account.failedLoginCount,
                 account.lockedUntil?.asJdbcTimestamp(),
                 account.createdAt.asJdbcTimestamp(),
@@ -89,24 +87,14 @@ class JdbcAccountRepository(
     override fun save(account: Account) {
         requireActiveTransaction("Save account")
         requireSingleRow(
-            "Update account",
-            jdbc.update(
-                "UPDATE accounts SET status = ?, activated_at = ? WHERE id = ?",
-                account.status.name,
-                account.activatedAt?.asJdbcTimestamp(),
-                account.id,
-            ),
-        )
-        requireSingleRow(
             "Update email credential",
             jdbc.update(
                 """
                 UPDATE email_credentials
-                SET email_verified_at = ?, failed_login_count = ?, locked_until = ?,
+                SET failed_login_count = ?, locked_until = ?,
                     updated_at = GREATEST(updated_at, clock_timestamp())
                 WHERE account_id = ?
                 """.trimIndent(),
-                account.emailVerifiedAt?.asJdbcTimestamp(),
                 account.failedLoginCount,
                 account.lockedUntil?.asJdbcTimestamp(),
                 account.id,
@@ -120,17 +108,13 @@ class JdbcAccountRepository(
             email = CanonicalEmail.reconstitute(result.getString("email")),
             passwordHash = result.getString("password_hash"),
             createdAt = result.getTimestamp("created_at").toInstant(),
-            status = AccountStatus.valueOf(result.getString("status")),
-            activatedAt = result.getTimestamp("activated_at")?.toInstant(),
-            emailVerifiedAt = result.getTimestamp("email_verified_at")?.toInstant(),
             failedLoginCount = result.getInt("failed_login_count"),
             lockedUntil = result.getTimestamp("locked_until")?.toInstant(),
         )
 
     private companion object {
         val ACCOUNT_SELECT = """
-            SELECT a.id, a.status, a.created_at, a.activated_at,
-                   ec.email, ec.password_hash, ec.email_verified_at,
+            SELECT a.id, a.created_at, ec.email, ec.password_hash,
                    ec.failed_login_count, ec.locked_until
             FROM accounts a
             JOIN email_credentials ec ON ec.account_id = a.id

@@ -17,3 +17,8 @@ data class OutboxRecord(
     val causationId: UUID?,
     val traceId: String?,
 )
+
+data class OutboxBacklogSnapshot(
+    val pendingCount: Long,
+    val oldestPendingAgeSeconds: Double,
+)

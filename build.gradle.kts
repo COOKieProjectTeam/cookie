@@ -28,7 +28,7 @@ buildscript {
 }
 
 plugins {
-    id("org.openapi.generator") version "7.24.0"
+    alias(libs.plugins.openapi.generator)
 }
 
 group = "com.cookie"

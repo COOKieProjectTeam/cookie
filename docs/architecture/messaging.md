@@ -89,6 +89,12 @@ create a bounded single-replica stream only in explicit `dev`/`test` profiles.
 Verification delivery is a special security boundary: outbox/JetStream contain
 only template, expiry and compact JWE (`RSA-OAEP-256` + `A256GCM`). Recipient,
 locale and raw one-time token exist only inside the encrypted payload.
+Notification consumers discard a delivery whose payload expiry is not in the
+future. They must also deduplicate `event_id`; broker acknowledgement alone does
+not make the SMTP side effect idempotent.
+The local Mailpit sink uses a bounded process-local deduplication cache; this is
+deliberately development-only. A production notification service needs a durable
+inbox/idempotency record coordinated with its delivery-provider policy.
 
 ## Required operational fields
 
@@ -97,10 +103,13 @@ creation time, published time and last error. Inbox records у consumers expose
 consumer name, event id, event type and processed time. Retention and cleanup
 must preserve enough data to cover the maximum broker redelivery window.
 
-Identity v1 keeps published outbox rows for 7 days, unusable verification
-challenges for 30 days, expired refresh families for a further 90 days and
-expired rate-limit buckets for a 1-day grace period. Cleanup is bounded and
-batched. Consumer inbox retention is selected when a real consumer is built and
+Identity v1 keeps published outbox rows for 7 days, completed and abandoned
+registration-attempt tombstones for at least 30 days, expired refresh families
+for a further 90 days and expired rate-limit buckets for a 1-day grace period.
+Expired active attempts are first marked abandoned and have password hash/locale
+scrubbed atomically; only aged tombstones are deleted. Cleanup polls every minute,
+rotates fairly across tables, and has configurable batch-count and time budgets.
+Consumer inbox retention is selected when a real consumer is built and
 must be no shorter than the matching stream/redelivery window.
 
 ## Forbidden patterns
