@@ -5,6 +5,7 @@ WORKDIR /workspace
 COPY . .
 RUN --mount=type=cache,target=/root/.gradle \
     ./gradlew :backend:tools:notification-sink:bootJar --no-daemon --no-parallel --max-workers=1 \
+    -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=1g -XX:+ExitOnOutOfMemoryError" \
     -Pkotlin.compiler.execution.strategy=in-process
 
 FROM eclipse-temurin:25.0.4_7-jre-noble@sha256:b4c93a50fc67612798db73d68ca3b0ee4ebdd51736e59cca370e689b9797037e
