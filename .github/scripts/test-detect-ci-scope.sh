@@ -92,6 +92,15 @@ expect_flag public_client false
 expect_flag mobile false
 expect_flag planned_openapi true
 
+classify contracts/openapi/generation.yaml
+expect_flag service_contracts true
+expect_flag identity true
+expect_flag public_client true
+expect_flag identity_image true
+expect_flag identity_container true
+expect_flag mobile false
+expect_flag planned_openapi false
+
 for source_set in commonMain commonTest jvmMain jvmTest; do
   classify "apps/mobile/shared/src/${source_set}/kotlin/example.kt"
   expect_flag mobile true
@@ -169,7 +178,7 @@ for unmapped_path in \
   apps/mobile/iosApp/example.swift \
   backend/clients/new-service/src/main/kotlin/example.kt \
   contracts/openapi/internal/new-service.yaml \
-  contracts/openapi/generation.yaml \
+  contracts/openapi/openapi.yaml \
   deploy/new-environment/compose.yaml \
   infra/terraform/environments/new-environment/main.tf \
   infra/terraform/root.tf; do
@@ -183,5 +192,78 @@ done
 classify deploy/docker/new-service.Dockerfile
 expect_flag compose true
 expect_flag identity_image false
+
+unsafe_path=$'apps/unmapped/\n::warning::unexpected'
+if case_output="$(printf '%s\0' "$unsafe_path" | env -u GITHUB_OUTPUT -u GITHUB_STEP_SUMMARY \
+  bash "$detector" --paths-from-stdin 2>&1)"; then
+  echo "an unmapped path with a newline unexpectedly passed change detection" >&2
+  exit 1
+fi
+[[ "$case_output" == *"Unmapped CI path: "* ]]
+[[ "$case_output" != *$'\n::warning::unexpected'* ]]
+
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf -- "$fixture_dir"' EXIT
+git init --quiet "$fixture_dir"
+
+fixture_git() {
+  git -C "$fixture_dir" -c core.hooksPath=/dev/null "$@"
+}
+
+commit_fixture() {
+  fixture_git add --all
+  fixture_git -c user.name=Fixture -c user.email=fixture@example.invalid \
+    commit --quiet --allow-empty --no-gpg-sign -m "$1"
+  fixture_git rev-parse HEAD
+}
+
+classify_git() {
+  case_output="$(cd "$fixture_dir" && env -u GITHUB_OUTPUT -u GITHUB_STEP_SUMMARY \
+    bash "$detector" "$1" "$2" "$3" 2>&1)"
+}
+
+expect_git_rejected() {
+  local base="$1"
+  local head="$2"
+  local event="$3"
+  local path="$4"
+  if classify_git "$base" "$head" "$event"; then
+    printf 'an unmapped Git path unexpectedly passed change detection: %s\n' "$path" >&2
+    exit 1
+  fi
+  [[ "$case_output" == *"Unmapped CI path: ${path}"* ]]
+}
+
+empty_head="$(commit_fixture empty)"
+mkdir -p "$fixture_dir/contracts/openapi"
+printf 'legacy contract\n' > "$fixture_dir/contracts/openapi/openapi.yaml"
+legacy_head="$(commit_fixture legacy)"
+expect_git_rejected "$empty_head" "$legacy_head" push contracts/openapi/openapi.yaml
+
+printf 'modified legacy contract\n' > "$fixture_dir/contracts/openapi/openapi.yaml"
+modified_head="$(commit_fixture modify-legacy)"
+rm "$fixture_dir/contracts/openapi/openapi.yaml"
+expect_git_rejected "$legacy_head" "$modified_head" pull_request contracts/openapi/openapi.yaml
+deleted_head="$(commit_fixture delete-legacy)"
+classify_git "$modified_head" "$deleted_head" push
+expect_flag service_contracts true
+expect_flag planned_openapi true
+expect_flag public_client true
+
+fixture_git checkout "$legacy_head" -- contracts/openapi/openapi.yaml
+restored_head="$(commit_fixture restore-legacy)"
+mv "$fixture_dir/contracts/openapi/openapi.yaml" "$fixture_dir/contracts/openapi/planned.yaml"
+renamed_head="$(commit_fixture rename-legacy)"
+classify_git "$restored_head" "$renamed_head" pull_request
+expect_flag service_contracts true
+expect_flag planned_openapi true
+expect_flag public_client true
+
+printf 'unknown contract\n' > "$fixture_dir/contracts/openapi/unknown.yaml"
+unknown_head="$(commit_fixture unknown-contract)"
+expect_git_rejected "$renamed_head" "$unknown_head" push contracts/openapi/unknown.yaml
+rm "$fixture_dir/contracts/openapi/unknown.yaml"
+unknown_deleted_head="$(commit_fixture delete-unknown)"
+expect_git_rejected "$unknown_head" "$unknown_deleted_head" pull_request contracts/openapi/unknown.yaml
 
 echo "CI scope mapping tests passed."

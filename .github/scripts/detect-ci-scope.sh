@@ -55,7 +55,7 @@ compose=false
 terraform=false
 identity_image=false
 identity_container=false
-unmapped_component=false
+unmapped_paths=()
 changed_count=0
 
 enable_all_gradle_checks() {
@@ -93,6 +93,7 @@ fi
 
 while IFS= read -r -d '' path; do
   ((changed_count += 1))
+  unmapped_component=false
 
   case "$path" in
     */src/*)
@@ -308,7 +309,24 @@ while IFS= read -r -d '' path; do
     contracts/openapi/planned.yaml)
       planned_openapi=true
       ;;
-    contracts/openapi/generation.yaml | contracts/openapi/internal/*.yaml)
+    contracts/openapi/generation.yaml)
+      service_contracts=true
+      identity=true
+      public_client=true
+      identity_image=true
+      ;;
+    contracts/openapi/openapi.yaml)
+      if [[ "$explicit_paths" == "false" ]] \
+        && git cat-file -e "${diff_base}:${path}" 2>/dev/null \
+        && ! git cat-file -e "${head_sha}:${path}" 2>/dev/null; then
+        service_contracts=true
+        planned_openapi=true
+        public_client=true
+      else
+        unmapped_component=true
+      fi
+      ;;
+    contracts/openapi/internal/*.yaml)
       # These files do not have executable validators yet; never report a false green.
       unmapped_component=true
       ;;
@@ -361,6 +379,10 @@ while IFS= read -r -d '' path; do
       unmapped_component=true
       ;;
   esac
+
+  if [[ "$unmapped_component" == "true" ]]; then
+    unmapped_paths+=("$path")
+  fi
 done < "$changed_paths_file"
 
 if [[ "$identity_image" == "true" ]]; then
@@ -417,7 +439,10 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 
-if [[ "$unmapped_component" == "true" ]]; then
-  echo "::error::Changed application/backend component has no CI mapping. Update .github/scripts/detect-ci-scope.sh."
+if (( ${#unmapped_paths[@]} > 0 )); then
+  echo "::error::Changed paths have no CI mapping. Update .github/scripts/detect-ci-scope.sh." >&2
+  for path in "${unmapped_paths[@]}"; do
+    printf 'Unmapped CI path: %q\n' "$path" >&2
+  done
   exit 1
 fi

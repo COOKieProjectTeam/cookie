@@ -2,6 +2,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
@@ -12,6 +13,7 @@ import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.openapitools.generator.gradle.plugin.tasks.GenerateTask
 import org.openapitools.generator.gradle.plugin.tasks.ValidateTask
+import org.openapitools.codegen.utils.ImplementationVersion
 import org.yaml.snakeyaml.DumperOptions
 import org.yaml.snakeyaml.LoaderOptions
 import org.yaml.snakeyaml.Yaml
@@ -477,6 +479,177 @@ abstract class ValidateServiceDescriptorsTask : DefaultTask() {
     }
 }
 
+abstract class ValidateOpenApiGenerationConfigTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val generationConfig: RegularFileProperty
+
+    @get:Input
+    abstract val generatorVersion: Property<String>
+
+    @get:Input
+    abstract val implementedGeneration: MapProperty<String, Any>
+
+    @TaskAction
+    fun validateConfiguration() {
+        val implemented = implementedGeneration.get()
+        val yaml = Yaml(SafeConstructor(LoaderOptions().apply { isAllowDuplicateKeys = false }))
+        val config = mapping(yaml.load<Any>(generationConfig.get().asFile.readText()), "generation config")
+        require(config.keys == setOf("schema_version", "status", "source_contracts", "generator", "rules", "targets", "ci")) {
+            "Unsupported or missing OpenAPI generation config fields"
+        }
+        expect(config["schema_version"], 1, "schema_version")
+        expect(config["status"], "accepted", "status")
+        val loadedVersion = ImplementationVersion.read()
+        expect(generatorVersion.get(), loadedVersion, "Gradle OpenAPI generator version")
+        expect(config["generator"], mapOf(
+            "product" to "openapi-generator", "version" to loadedVersion,
+            "templates_version" to "upstream-$loadedVersion",
+        ), "generator")
+
+        val sources = mapping(config["source_contracts"], "source_contracts")
+        expect(sources, mapOf(
+            "public_services" to "contracts/openapi/public/{service-id}.yaml",
+            "public_bundle" to "build/generated/openapi/bundled/public.yaml",
+            "public_roadmap" to "contracts/openapi/planned.yaml",
+            "runtime" to "contracts/openapi/runtime.yaml",
+            "internal_service_contracts" to "contracts/openapi/internal/{service-id}.yaml",
+        ), "source_contracts")
+        expect(config["rules"], mapOf(
+            "contract_first" to true, "public_service_source_of_truth" to true,
+            "public_bundle_generated" to true, "public_roadmap_generation" to "forbidden",
+            "generated_sources_committed" to false,
+            "generated_output_pattern" to "{module}/build/generated/openapi",
+            "manual_edits_to_generated_sources" to "forbidden",
+            "server_business_logic_generation" to "forbidden",
+            "stable_unique_operation_ids" to "required",
+            "public_tag_owner_source" to "docs/architecture/model/services.yaml",
+            "internal_contract_owner" to "callee_service", "internal_client_granularity" to "per_callee",
+            "aggregate_internal_client" to "forbidden",
+        ), "rules")
+        expect(config["ci"], mapOf(
+            "validate_active_service_openapi" to "required", "validate_generated_public_bundle" to "required",
+            "validate_local_refs" to "required", "validate_unique_operation_ids" to "required",
+            "validate_tag_ownership" to "required",
+            "validate_internal_permissions" to "required_after_first_internal_contract",
+            "validate_internal_callers" to "required_after_first_internal_contract",
+            "validate_client_dependencies_against_sync_calls" to "required_after_gradle_bootstrap",
+            "compile_generated_sources" to "required", "regeneration_diff_check" to "required",
+        ), "ci")
+
+        val targets = (config["targets"] as? List<*>)?.map { mapping(it, "target") }
+            ?: error("targets must be a list")
+        val targetsById = targets.associateBy { it["id"] }
+        require(targetsById.size == targets.size) { "Duplicate OpenAPI generation target id" }
+        expect(targetsById.keys, setOf(
+            "kotlin_server_transport", "kotlin_runtime_probes", "kmp_public_client", "kotlin_internal_clients",
+        ), "target ids")
+        val server = targetsById.getValue("kotlin_server_transport")
+        val runtime = targetsById.getValue("kotlin_runtime_probes")
+        val client = targetsById.getValue("kmp_public_client")
+        expect(server - setOf("id", "generator_name", "options"), mapOf(
+            "status" to "active", "source" to "public_services", "language" to "kotlin", "runtime" to "jvm",
+            "output" to "server_interfaces_routing_and_transport_models", "partition" to "service_contract",
+        ), "kotlin_server_transport")
+        expect(runtime - setOf("id", "generator_name", "options"), mapOf(
+            "status" to "active", "source" to "runtime", "language" to "kotlin", "runtime" to "jvm",
+            "output" to "shared_server_interfaces_and_transport_models",
+        ), "kotlin_runtime_probes")
+        expect(client - setOf("id", "generator_name", "library", "output", "options"), mapOf(
+            "status" to "configured", "source" to "public_bundle", "language" to "kotlin",
+            "runtime" to "kotlin_multiplatform",
+        ), "kmp_public_client")
+        expect(targetsById.getValue("kotlin_internal_clients"), mapOf(
+            "id" to "kotlin_internal_clients", "status" to "blocked", "source" to "internal_service_contracts",
+            "language" to "kotlin", "runtime" to "jvm",
+            "output" to "backend/clients/{service-id}/build/generated/openapi",
+            "module_granularity" to "one_per_callee",
+            "allowed_dependencies" to "docs/architecture/model/sync-calls.yaml",
+            "access_policy" to "backend/services/{service-id}/service.yaml",
+        ), "kotlin_internal_clients")
+        val serverOptions = mapping(server["options"], "kotlin_server_transport.options")
+        require(serverOptions.keys.containsAll(setOf(
+            "interfaceOnly", "skipDefaultInterface", "useTags", "useSpringBoot4", "useJackson3", "useBeanValidation",
+        ))) { "kotlin_server_transport.options is missing declared transport generation options" }
+        expect(serverOptions["interfaceOnly"], true, "server_business_logic_generation forbids implementations")
+        expect(serverOptions["skipDefaultInterface"], true, "server_business_logic_generation forbids default handlers")
+
+        fun source(name: String) = sources.getValue(name).toString()
+        expect(implemented["bundleOutput"], source("public_bundle"), "bundle output")
+        expect(implemented["tagOwnerSource"],
+            mapping(config["rules"], "rules").getValue("public_tag_owner_source"),
+            "bundle tag ownership source")
+        val contracts = implemented.getValue("publicContracts") as List<*>
+        require(contracts.isNotEmpty()) { "No implemented public service contracts" }
+        val configuredTasks = mapping(implemented["tasks"], "configured generation tasks")
+        val serviceOutputs = mapping(implemented["serviceOutputs"], "service outputs")
+        val expectedTasks = linkedSetOf<String>()
+
+        fun validateTask(path: String, target: Map<String, Any?>, input: String, output: String) {
+            expectedTasks += path
+            val task = mapping(configuredTasks[path], "Generator task $path")
+            expect(task["enabled"], true, "$path must execute generation")
+            expect(task["input"], input, "$path inputSpec")
+            expect(task["output"], output, "$path outputDir")
+            expect(task["generator"], target["generator_name"], "$path generatorName")
+            expect(task["library"], target["library"] ?: "", "$path library")
+            require(task["customTemplates"] == false) {
+                "$path overrides the declared upstream templates"
+            }
+            require(task["externalConfiguration"] == false) {
+                "$path has generator configuration outside the validated task options"
+            }
+            require(task["sourceOverride"] == false) {
+                "$path overrides its declared source contract"
+            }
+            val options = target["options"]?.let { mapping(it, "${target["id"]}.options") }.orEmpty()
+            val actualOptions = mapping(task["options"], "$path options")
+            if (target["runtime"] == "jvm") {
+                expect(actualOptions["interfaceOnly"], "true", "$path must generate server interfaces")
+                expect(actualOptions["skipDefaultInterface"], "true", "$path must not generate business handlers")
+            }
+            options.forEach { (key, value) ->
+                require(value is Boolean || value is String || value is Number) { "Invalid option $key" }
+                expect(actualOptions[key], value.toString(), "$path option $key")
+            }
+        }
+
+        contracts.forEach { contractValue ->
+            val contract = contractValue as? String ?: error("Public contract path must be a string")
+            val serviceId = java.io.File(contract).nameWithoutExtension
+            expect(contract, source("public_services").replace("{service-id}", serviceId), "public contract $serviceId")
+            val output = serviceOutputs[serviceId]?.toString()
+                ?: error("Public contract $serviceId has no Gradle service module")
+            expect(output, "backend/services/$serviceId/build/generated/openapi", "service generated_output_pattern")
+            validateTask(":backend:services:$serviceId:openApiGenerate", server, contract, "$output/public")
+            validateTask(":backend:services:$serviceId:generateRuntimeOpenApi", runtime, source("runtime"), "$output/runtime")
+        }
+        validateTask(":generateKmpPublicClient", client,
+            source("public_bundle"), client["output"]?.toString() ?: error("KMP output is required"))
+        expect(configuredTasks.keys, expectedTasks, "configured generation tasks; roadmap/internal generation is forbidden")
+        expect(implemented["roadmapValidation"], source("public_roadmap"), "roadmap validation source")
+        expect(implemented["bundleValidation"], source("public_bundle"), "bundle validation source")
+    }
+
+    private fun mapping(value: Any?, context: String): Map<String, Any?> {
+        val source = value as? Map<*, *> ?: error("$context must be a mapping")
+        return source.entries.associate { (key, nested) ->
+            (key as? String ?: error("$context keys must be strings")) to nested
+        }
+    }
+
+    private fun expect(actual: Any?, expected: Any?, context: String) {
+        require(actual == expected) { "$context does not match implemented generation: expected $expected, got $actual" }
+    }
+}
+
+val validateOpenApiGenerationConfig = tasks.register<ValidateOpenApiGenerationConfigTask>("validateOpenApiGenerationConfig") {
+    group = "verification"
+    description = "Validate the OpenAPI generation contract against configured Gradle generators."
+    generationConfig.set(layout.projectDirectory.file("contracts/openapi/generation.yaml"))
+    generatorVersion.set(libs.versions.openapi.generator)
+}
+
 val bundledPublicSpec = layout.buildDirectory.file("generated/openapi/bundled/public.yaml")
 val validatePlannedOpenApi = tasks.register<ValidateTask>("validatePlannedOpenApi") {
     group = "verification"
@@ -487,6 +660,7 @@ val validatePlannedOpenApi = tasks.register<ValidateTask>("validatePlannedOpenAp
 val validateServiceDescriptors = tasks.register<ValidateServiceDescriptorsTask>("validateServiceDescriptors") {
     group = "verification"
     description = "Validate service descriptors against architecture events, services and active OpenAPI contracts."
+    dependsOn(validateOpenApiGenerationConfig)
     descriptors.from(fileTree("backend/services") { include("*/service.yaml") })
     publicContracts.from(fileTree("contracts/openapi/public") { include("*.yaml") })
     serviceModel.set(layout.projectDirectory.file("docs/architecture/model/services.yaml"))
@@ -542,4 +716,36 @@ tasks.register("compileKmpPublicClient") {
     group = "verification"
     description = "Generate the active public KMP client and compile its JVM target."
     dependsOn(validateServiceDescriptors, ":apps:mobile:shared:compileKotlinJvm")
+}
+
+gradle.projectsEvaluated {
+    val bundle = bundlePublicOpenApi.get()
+    val generators = allprojects.flatMap { it.tasks.withType(GenerateTask::class.java).toList() }
+        .filter {
+            it.inputSpec.isPresent || !it.remoteInputSpec.orNull.isNullOrBlank() ||
+                it.inputSpecRootDirectory.isPresent || it.inputSpecFiles.files.isNotEmpty()
+        }
+    validateOpenApiGenerationConfig.configure {
+        implementedGeneration.set(mapOf(
+            "bundleOutput" to relativePath(bundle.outputSpec.get().asFile),
+            "tagOwnerSource" to relativePath(bundle.architectureModel.get().asFile),
+            "publicContracts" to bundle.sourceSpecs.files.map { relativePath(it) }.sorted(),
+            "roadmapValidation" to relativePath(validatePlannedOpenApi.get().inputSpec.get().asFile),
+            "bundleValidation" to relativePath(validateBundledPublicOpenApi.get().inputSpec.get().asFile),
+            "serviceOutputs" to allprojects.filter { it.path.matches(Regex(":backend:services:[^:]+")) }
+                .associate { it.name to relativePath(it.layout.buildDirectory.dir("generated/openapi").get().asFile) },
+            "tasks" to generators.associate { generator -> generator.path to mapOf(
+                "enabled" to (generator.enabled && !generator.dryRun.getOrElse(false)),
+                "input" to (generator.inputSpec.orNull?.asFile?.let { relativePath(it) } ?: ""),
+                "output" to (generator.outputDir.orNull?.asFile?.let { relativePath(it) } ?: ""),
+                "generator" to generator.generatorName.getOrElse(""),
+                "library" to generator.library.getOrElse(""),
+                "customTemplates" to (generator.templateDir.isPresent || !generator.templateResourcePath.orNull.isNullOrBlank()),
+                "externalConfiguration" to (generator.configFile.isPresent || generator.additionalProperties.getOrElse(emptyMap()).isNotEmpty()),
+                "sourceOverride" to (!generator.remoteInputSpec.orNull.isNullOrBlank() || generator.inputSpecRootDirectory.isPresent ||
+                    generator.inputSpecFiles.files.any { it.canonicalFile != generator.inputSpec.orNull?.asFile?.canonicalFile }),
+                "options" to generator.configOptions.getOrElse(emptyMap()),
+            ) },
+        ))
+    }
 }

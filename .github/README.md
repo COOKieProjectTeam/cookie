@@ -32,6 +32,8 @@ check is available in GitHub's selector.
 | Any platform module's own `src/test/**` | Only that platform module |
 | `contracts/openapi/public/identity.yaml` | Contracts, Identity, generated-client compatibility smoke |
 | `contracts/openapi/runtime.yaml` | Contracts and Identity |
+| `contracts/openapi/generation.yaml` | Generation configuration validation, Identity, generated-client compatibility and Identity image build |
+| Deleted legacy `contracts/openapi/openapi.yaml` | Contracts, planned OpenAPI and generated-client compatibility; deletion must be confirmed against the Git base/head trees |
 | `apps/mobile/shared/src/commonMain/**`, `commonTest/**`, `jvmMain/**`, `jvmTest/**`, mobile build files | Configured Mobile JVM/shared checks |
 | Supported `deploy/docker/**`, `deploy/production/**`, `.dockerignore`, `Makefile` | Compose/deployment bundle |
 | Terraform dev, production, or naming-module implementation | Terraform only |
