@@ -2,6 +2,7 @@ package com.cookie.identity.persistence
 
 import com.cookie.identity.application.ports.AccountRepository
 import com.cookie.identity.domain.Account
+import com.cookie.identity.domain.AccountStatus
 import com.cookie.identity.domain.CanonicalEmail
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -20,6 +21,12 @@ class JdbcAccountRepository(
         "$ACCOUNT_SELECT WHERE ec.email = ?",
         ::mapAccount,
         email.value,
+    ).singleOrNull()
+
+    override fun findById(accountId: UUID): Account? = jdbc.query(
+        "$ACCOUNT_SELECT WHERE a.id = ?",
+        ::mapAccount,
+        accountId,
     ).singleOrNull()
 
     /**
@@ -58,9 +65,10 @@ class JdbcAccountRepository(
             "Insert account",
             jdbc.update(
                 """
-                INSERT INTO accounts(id, created_at) VALUES (?, ?)
+                INSERT INTO accounts(id, status, created_at) VALUES (?, ?, ?)
                 """.trimIndent(),
                 account.id,
+                account.status.name,
                 account.createdAt.asJdbcTimestamp(),
             ),
         )
@@ -87,6 +95,14 @@ class JdbcAccountRepository(
     override fun save(account: Account) {
         requireActiveTransaction("Save account")
         requireSingleRow(
+            "Update account",
+            jdbc.update(
+                "UPDATE accounts SET status = ? WHERE id = ?",
+                account.status.name,
+                account.id,
+            ),
+        )
+        requireSingleRow(
             "Update email credential",
             jdbc.update(
                 """
@@ -110,11 +126,12 @@ class JdbcAccountRepository(
             createdAt = result.getTimestamp("created_at").toInstant(),
             failedLoginCount = result.getInt("failed_login_count"),
             lockedUntil = result.getTimestamp("locked_until")?.toInstant(),
+            status = AccountStatus.valueOf(result.getString("status")),
         )
 
     private companion object {
         val ACCOUNT_SELECT = """
-            SELECT a.id, a.created_at, ec.email, ec.password_hash,
+            SELECT a.id, a.status, a.created_at, ec.email, ec.password_hash,
                    ec.failed_login_count, ec.locked_until
             FROM accounts a
             JOIN email_credentials ec ON ec.account_id = a.id

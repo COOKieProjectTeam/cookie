@@ -3,6 +3,7 @@
 erDiagram
   Accounts {
     uuid id PK
+    varchar status
     timestamptz created_at
   }
 
@@ -14,6 +15,14 @@ erDiagram
     timestamptz locked_until
     timestamptz created_at
     timestamptz updated_at
+  }
+
+  AccountDeletionRequests {
+    uuid id PK
+    uuid account_id
+    uuid idempotency_key
+    varchar status
+    timestamptz requested_at
   }
 
   RegistrationAttempts {
@@ -91,6 +100,7 @@ erDiagram
   }
 
   Accounts ||--o| EmailCredentials : "account_id"
+  Accounts ||--o| AccountDeletionRequests : "account_id (no cascade; max one pending)"
   RegistrationAttempts ||--|{ RegistrationVerificationTokens : "attempt_id"
   Accounts ||--o{ RefreshFamilies : "account_id"
   RefreshFamilies ||--|{ RefreshCredentials : "family_id"

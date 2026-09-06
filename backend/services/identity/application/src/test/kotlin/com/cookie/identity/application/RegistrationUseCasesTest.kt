@@ -11,6 +11,7 @@ import com.cookie.identity.application.ports.RegistrationSecretService
 import com.cookie.identity.application.ports.TransactionRunner
 import com.cookie.identity.domain.Account
 import com.cookie.identity.domain.AccountActivated
+import com.cookie.identity.domain.AccountDeletionRequested
 import com.cookie.identity.domain.CanonicalEmail
 import com.cookie.identity.domain.LocaleTag
 import com.cookie.identity.domain.NormalizedPassword
@@ -265,6 +266,7 @@ class RegistrationUseCasesTest {
             expiresAt: Instant, now: Instant,
         ) { requests += rawToken }
         override fun accountActivated(event: AccountActivated) = error("Not used")
+        override fun accountDeletionRequested(event: AccountDeletionRequested) = error("Not used")
     }
 
     private class SequenceIds(vararg ids: UUID) : IdGenerator {
@@ -281,6 +283,7 @@ class RegistrationUseCasesTest {
         var account: Account? = null
         override fun lockRegistration(email: CanonicalEmail) = Unit
         override fun findByEmail(email: CanonicalEmail): Account? = account?.takeIf { it.email == email }
+        override fun findById(accountId: UUID): Account? = account?.takeIf { it.id == accountId }
         override fun findByEmailForUpdate(email: CanonicalEmail): Account? = findByEmail(email)
         override fun findByIdForUpdate(accountId: UUID): Account? = account?.takeIf { it.id == accountId }
         override fun add(account: Account) { check(this.account == null); this.account = account }

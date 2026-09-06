@@ -124,6 +124,7 @@ class AuthenticationUseCasesTest {
         val families = InMemoryRefreshFamilies(family)
         val tokens = DeterministicSecretTokens(predecessorId, verifierHash("a"))
         val handler = RefreshSessionHandler(
+            accounts = accountRepositoryFor(family),
             families = families,
             transactions = ImmediateTransactions(),
             refreshTokens = tokens,
@@ -148,6 +149,7 @@ class AuthenticationUseCasesTest {
         val tokens = DeterministicSecretTokens(family.currentCredentialId, verifierHash("a"))
         val rateLimits = RecordingRateLimits(now)
         val handler = RefreshSessionHandler(
+            accountRepositoryFor(family),
             families,
             ImmediateTransactions(),
             tokens,
@@ -182,6 +184,7 @@ class AuthenticationUseCasesTest {
         val tokens = DeterministicSecretTokens(predecessorId, verifierHash("a"))
         val rateLimits = SaturatedRefreshFamilyRates()
         val handler = RefreshSessionHandler(
+            accountRepositoryFor(family),
             families,
             ImmediateTransactions(),
             tokens,
@@ -204,6 +207,7 @@ class AuthenticationUseCasesTest {
         val families = InMemoryRefreshFamilies(family)
         val rateLimits = SaturatedRefreshIpRates()
         val handler = RefreshSessionHandler(
+            accountRepositoryFor(family),
             families,
             ImmediateTransactions(),
             DeterministicSecretTokens(family.currentCredentialId, verifierHash("a")),
@@ -228,6 +232,7 @@ class AuthenticationUseCasesTest {
         val tokens = DeterministicSecretTokens(predecessorId, verifierHash("a"))
         val rateLimits = SaturatedRefreshFamilyRates()
         val handler = RefreshSessionHandler(
+            accountRepositoryFor(family),
             families,
             ImmediateTransactions(),
             tokens,
@@ -253,6 +258,7 @@ class AuthenticationUseCasesTest {
         val tokens = DeterministicSecretTokens(family.currentCredentialId, verifierHash("b"))
         val rateLimits = RecordingRateLimits(now)
         val handler = RefreshSessionHandler(
+            accounts = accountRepositoryFor(family),
             families = families,
             transactions = ImmediateTransactions(),
             refreshTokens = tokens,
@@ -271,6 +277,33 @@ class AuthenticationUseCasesTest {
     }
 
     @Test
+    fun `refresh locks account first and rejects a deletion-pending account before locking family`() {
+        val family = activeFamily(UUID.randomUUID(), UUID.randomUUID())
+        val account = account(family.accountId, "encoded-password")
+        account.requestDeletion(now.minusSeconds(1))
+        val accounts = InMemoryAccountRepository(account)
+        val families = InMemoryRefreshFamilies(family)
+        val tokens = DeterministicSecretTokens(family.currentCredentialId, verifierHash("a"))
+        val handler = RefreshSessionHandler(
+            accounts,
+            families,
+            ImmediateTransactions(),
+            tokens,
+            rateLimiter(),
+            sessionIssuer(families, tokens, UUID.randomUUID()),
+            currentTime,
+        )
+
+        assertThatThrownBy {
+            handler.execute("current-refresh-token", UUID.randomUUID(), "127.0.0.1")
+        }.isInstanceOf(InvalidTokenException::class.java)
+
+        assertThat(accounts.idForUpdateCount).isEqualTo(1)
+        assertThat(families.forUpdateCount).isZero()
+        assertThat(families.saveCount).isZero()
+    }
+
+    @Test
     fun `redeemed predecessor with different idempotency key revokes and saves family`() {
         val predecessorId = UUID.randomUUID()
         val replacementId = UUID.randomUUID()
@@ -285,7 +318,7 @@ class AuthenticationUseCasesTest {
         val tokens = DeterministicSecretTokens(predecessorId, verifierHash("a"))
         val rateLimits = SaturatedRefreshFamilyRates()
         val handler = RefreshSessionHandler(
-            families, ImmediateTransactions(), tokens,
+            accountRepositoryFor(family), families, ImmediateTransactions(), tokens,
             IdentityRateLimiter(rateLimits, TEST_RATE_LIMIT_SCOPE_HASHER),
             sessionIssuer(families, tokens, UUID.randomUUID()), currentTime,
         )
@@ -318,7 +351,7 @@ class AuthenticationUseCasesTest {
         val tokens = DeterministicSecretTokens(predecessorId, verifierHash("a"))
         val rateLimits = RecordingRateLimits(now)
         val handler = RefreshSessionHandler(
-            families, ImmediateTransactions(), tokens,
+            accountRepositoryFor(family), families, ImmediateTransactions(), tokens,
             IdentityRateLimiter(rateLimits, TEST_RATE_LIMIT_SCOPE_HASHER),
             sessionIssuer(families, tokens, UUID.randomUUID()), currentTime,
         )
@@ -493,6 +526,9 @@ class AuthenticationUseCasesTest {
         now = now.minusSeconds(60),
     )
 
+    private fun accountRepositoryFor(family: RefreshFamily): AccountRepository =
+        InMemoryAccountRepository(account(family.accountId, "encoded-password"))
+
     private fun verifierHash(character: String): VerifierHash =
         VerifierHash.fromSha256Hex(character.repeat(64))
 
@@ -521,11 +557,17 @@ class AuthenticationUseCasesTest {
             private set
         var saveCount: Int = 0
             private set
+        var idForUpdateCount: Int = 0
+            private set
 
         override fun lockRegistration(email: CanonicalEmail) = Unit
         override fun findByEmail(email: CanonicalEmail): Account? = account?.takeIf { it.email == email }
+        override fun findById(accountId: UUID): Account? = account?.takeIf { it.id == accountId }
         override fun findByEmailForUpdate(email: CanonicalEmail): Account? = findByEmail(email)
-        override fun findByIdForUpdate(accountId: UUID): Account? = account?.takeIf { it.id == accountId }
+        override fun findByIdForUpdate(accountId: UUID): Account? {
+            idForUpdateCount += 1
+            return account?.takeIf { it.id == accountId }
+        }
         override fun add(account: Account) {
             check(this.account == null)
             this.account = account
@@ -547,6 +589,7 @@ class AuthenticationUseCasesTest {
         var saveCount = 0
         override fun lockRegistration(email: CanonicalEmail) = Unit
         override fun findByEmail(email: CanonicalEmail): Account? = snapshots.pollFirst()
+        override fun findById(accountId: UUID): Account? = error("Not used")
         override fun findByEmailForUpdate(email: CanonicalEmail): Account? = lockedValues.pollFirst()
         override fun findByIdForUpdate(accountId: UUID): Account? = error("Not used")
         override fun add(account: Account) = error("Not used")
@@ -561,10 +604,12 @@ class AuthenticationUseCasesTest {
         var forUpdateCount: Int = 0
             private set
 
-        override fun findCredentialLookup(id: UUID): RefreshCredentialLookup? =
-            family?.credentialSnapshots()?.singleOrNull { it.id == id }?.let { credential ->
-                RefreshCredentialLookup(credential.familyId, credential.verifierHash)
+        override fun findCredentialLookup(id: UUID): RefreshCredentialLookup? {
+            val candidate = family ?: return null
+            return candidate.credentialSnapshots().singleOrNull { it.id == id }?.let { credential ->
+                RefreshCredentialLookup(credential.familyId, candidate.accountId, credential.verifierHash)
             }
+        }
 
         override fun findByCredentialIdForUpdate(credentialId: UUID): RefreshFamily? {
             forUpdateCount += 1
@@ -580,6 +625,10 @@ class AuthenticationUseCasesTest {
             check(this.family?.id == family.id)
             this.family = family
             saveCount += 1
+        }
+
+        override fun revokeAllForAccount(accountId: UUID, now: Instant) {
+            family?.takeIf { it.accountId == accountId }?.revoke(RefreshFamilyRevokeReason.LOGOUT, now)
         }
     }
 

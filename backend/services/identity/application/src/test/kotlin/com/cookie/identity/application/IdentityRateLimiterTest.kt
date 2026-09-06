@@ -47,13 +47,36 @@ class IdentityRateLimiterTest {
         limiter.registerEmail("same-value")
         limiter.confirm("same-value")
         limiter.refresh("same-value")
+        limiter.accountDeletionAccount("same-value")
 
         assertThat(hashed).containsExactly(
             "ip" to "same-value",
             "email" to "same-value",
             "verification-token" to "same-value",
             "refresh-family" to "same-value",
+            "account" to "same-value",
         )
+    }
+
+    @Test
+    fun `account deletion applies hourly ip and account ceilings`() {
+        val counts = mutableMapOf<String, Int>()
+        val repository = object : RateLimitRepository {
+            override fun consume(scopeKey: String, window: Duration): RateLimitWindow {
+                assertThat(window).isEqualTo(Duration.ofHours(1))
+                val count = counts.merge(scopeKey, 1, Int::plus) ?: error("Missing count")
+                return RateLimitWindow(count, window.seconds)
+            }
+        }
+        val limiter = IdentityRateLimiter(repository, RateLimitScopeHasher { _, _ -> "opaque" })
+
+        repeat(30) { limiter.accountDeletionIp("192.0.2.1") }
+        repeat(10) { limiter.accountDeletionAccount("account-id") }
+
+        assertThatThrownBy { limiter.accountDeletionIp("192.0.2.1") }
+            .isInstanceOf(RateLimitExceededException::class.java)
+        assertThatThrownBy { limiter.accountDeletionAccount("account-id") }
+            .isInstanceOf(RateLimitExceededException::class.java)
     }
 
     @Test

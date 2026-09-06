@@ -21,13 +21,17 @@ defaults:
 infrastructure:
   edge_gateway:
     product: caddy
+    initial_production_ingress: yandex_api_gateway_default_https_domain
+    initial_production_ingress_scope: identity /v1/auth/* only; temporary until a custom domain and Caddy TLS edge exist
   relational_database:
     product: postgresql
     rule: each stateful domain service owns an isolated database or schema
-    deployment_topology: TBD
+    initial_production_topology: one non-HA instance on the production VM; Identity database only
+    target_deployment_topology: TBD after the single-VM bootstrap
   event_bus:
     product: nats_jetstream
     stream_topology: COOKIE_EVENTS captures cookie.events.> for v1 domain events
+    initial_production_topology: one non-HA node on the production VM
   ephemeral_store:
     product: redis
     rule: not a system of record; only declared uses are allowed
@@ -39,6 +43,16 @@ infrastructure:
   object_storage:
     protocol: s3_compatible
     product: TBD
+
+deployment:
+  active_environments: [local_dev, production]
+  persistent_test_environment: disabled
+  production:
+    cloud: yandex_cloud
+    topology: single_vm_non_ha
+    deployed_services: [identity]
+    artifact_source: yandex_container_registry
+    artifact_identity: immutable_digest
 
 services:
   - id: api_gateway
@@ -77,11 +91,12 @@ services:
     name: Identity Service
     kind: domain_service
     stateful: true
-    purpose: email/password accounts, credentials and access/refresh sessions
+    purpose: email/password account lifecycle, credentials and access/refresh sessions
     openapi_tags: [auth]
     dbml: contracts/dbml/identity.dbml
     publishes:
       - account.activated
+      - account.deletion.requested
       - notification.email.requested
     consumes: []
 
@@ -97,7 +112,7 @@ services:
       - user.goal.changed
       - user.goal_override.changed
       - user.hydration_goal.changed
-    consumes: [account.activated]
+    consumes: [account.activated, account.deletion.requested]
 
   - id: food_catalog
     name: Food Catalog Service
@@ -106,6 +121,7 @@ services:
     purpose: custom foods and proxy search/barcode lookup in Open Food Facts
     openapi_tags: [food]
     dbml: contracts/dbml/food-catalog.dbml
+    consumes: [account.deletion.requested]
     synchronous_dependencies: [open_food_facts]
     redis:
       - keyspace: off_search
@@ -128,6 +144,7 @@ services:
       - nutrition.meal.deleted
       - nutrition.day.changed
       - nutrition.water.changed
+    consumes: [account.deletion.requested]
     synchronous_dependencies: [recipe, media]
 
   - id: recipe
@@ -140,6 +157,7 @@ services:
     publishes:
       - recipe.customization.updated
       - recipe.customization.deleted
+    consumes: [account.deletion.requested]
     synchronous_dependencies: [media]
 
   - id: shopping
@@ -150,6 +168,7 @@ services:
     openapi_tags: [shopping]
     dbml: contracts/dbml/shopping.dbml
     consumes:
+      - account.deletion.requested
       - recipe.customization.updated
       - recipe.customization.deleted
     synchronous_dependencies: [recipe]
@@ -164,6 +183,7 @@ services:
     publishes:
       - health.activity.changed
       - health.weight.changed
+    consumes: [account.deletion.requested]
     external_dependencies: [apple_healthkit, android_health_connect]
 
   - id: progress
@@ -176,6 +196,7 @@ services:
     publishes:
       - progress.day.updated
     consumes:
+      - account.deletion.requested
       - nutrition.day.changed
       - nutrition.water.changed
       - health.activity.changed
@@ -193,6 +214,7 @@ services:
     openapi_tags: [notifications]
     dbml: contracts/dbml/notification.dbml
     consumes:
+      - account.deletion.requested
       - notification.email.requested
       - account.activated
       - nutrition.meal.created
@@ -216,6 +238,7 @@ services:
     purpose: media metadata, ownership, lifecycle and pre-signed object access
     openapi_tags: [media]
     dbml: contracts/dbml/media.dbml
+    consumes: [account.deletion.requested]
     synchronous_dependencies: [object_storage]
 
   - id: meal_planner
@@ -225,6 +248,7 @@ services:
     purpose: asynchronous generation and execution of 14-day meal plans
     openapi_tags: [meal-plan]
     dbml: contracts/dbml/meal-planner.dbml
+    consumes: [account.deletion.requested]
     synchronous_dependencies: [user, recipe, shopping]
 
 external_systems:

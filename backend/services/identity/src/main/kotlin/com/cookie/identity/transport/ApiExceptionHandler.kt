@@ -1,8 +1,10 @@
 package com.cookie.identity.transport
 
 import com.cookie.identity.application.IdentityUnavailableException
+import com.cookie.identity.application.InvalidAccessTokenException
 import com.cookie.identity.application.InvalidActionTokenException
 import com.cookie.identity.application.InvalidCredentialsException
+import com.cookie.identity.application.InvalidRequestException
 import com.cookie.identity.application.InvalidTokenException
 import com.cookie.identity.application.RateLimitExceededException
 import com.cookie.identity.application.RegistrationAttemptConflictException
@@ -76,7 +78,7 @@ class ApiExceptionHandler {
             request,
         )
 
-    @ExceptionHandler(InvalidInputException::class)
+    @ExceptionHandler(InvalidInputException::class, InvalidRequestException::class)
     fun badRequest(request: HttpServletRequest): ResponseEntity<Error> =
         response(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Invalid request", request)
 
@@ -141,6 +143,12 @@ class ApiExceptionHandler {
     @ExceptionHandler(InvalidCredentialsException::class)
     fun invalidCredentials(request: HttpServletRequest): ResponseEntity<Error> =
         response(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "Invalid credentials", request)
+
+    @ExceptionHandler(InvalidAccessTokenException::class)
+    fun invalidAccessToken(request: HttpServletRequest): ResponseEntity<Error> =
+        ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+            .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer")
+            .body(error("INVALID_ACCESS_TOKEN", "Invalid or expired access token", request))
 
     @ExceptionHandler(InvalidTokenException::class)
     fun invalidRefreshToken(request: HttpServletRequest): ResponseEntity<Error> =

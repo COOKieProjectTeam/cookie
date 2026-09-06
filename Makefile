@@ -1,7 +1,7 @@
-.PHONY: api-run identity-run test fmt openapi-generate compose-up compose-down terraform-fmt
+.PHONY: api-run identity-run test fmt openapi-generate dev-build dev-build-identity dev-build-notification-sink dev-up dev-down compose-up compose-down terraform-fmt
 
 GO_ENV = GOCACHE=$(CURDIR)/.cache/go-build GOENV=$(CURDIR)/.cache/go-env/goenv
-COMPOSE ?= docker-compose
+COMPOSE ?= $(shell if docker compose version >/dev/null 2>&1; then printf '%s' 'docker compose'; else printf '%s' 'docker-compose'; fi)
 
 api-run:
 	$(GO_ENV) go run ./apps/api/cmd/api
@@ -20,11 +20,23 @@ fmt:
 openapi-generate:
 	./gradlew :backend:services:identity:openApiGenerate :backend:services:identity:generateRuntimeOpenApi bundlePublicOpenApi validateBundledPublicOpenApi validatePlannedOpenApi validateServiceDescriptors compileKmpPublicClient
 
-compose-up:
+dev-build: dev-build-identity dev-build-notification-sink
+
+dev-build-identity:
+	$(COMPOSE) -f deploy/docker/compose.yaml build identity
+
+dev-build-notification-sink:
+	$(COMPOSE) -f deploy/docker/compose.yaml build notification-sink
+
+dev-up:
 	$(COMPOSE) -f deploy/docker/compose.yaml up --build
 
-compose-down:
+dev-down:
 	$(COMPOSE) -f deploy/docker/compose.yaml down
+
+compose-up: dev-up
+
+compose-down: dev-down
 
 terraform-fmt:
 	terraform fmt -recursive infra/terraform

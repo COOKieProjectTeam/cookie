@@ -1,6 +1,6 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-08-20
+updated_at: 2026-09-04
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
 
@@ -37,6 +37,18 @@ events:
     producer: identity
     consumers: [user, notification]
     payload: [userId, accountMetadata]
+
+  - type: account.deletion.requested
+    version: 1
+    producer: identity
+    consumers: [user, food_catalog, nutrition, recipe, shopping, health, progress, notification, media, meal_planner]
+    payload: [accountId, deletionRequestId, requestedAt]
+    implementation_note: >-
+      Identity is the only implemented participant in v1. The listed consumers
+      are target data owners and do not yet have inbox handlers or acknowledgement
+      events. The account therefore remains DELETION_PENDING. event_id and
+      occurred_at are mandatory envelope fields and are intentionally not
+      duplicated in this PII-free business payload.
 
   - type: notification.email.requested
     version: 1

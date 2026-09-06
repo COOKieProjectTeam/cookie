@@ -9,9 +9,12 @@ import com.cookie.identity.application.LogoutHandler
 import com.cookie.identity.application.RefreshSessionHandler
 import com.cookie.identity.application.RegistrationAttemptIssuer
 import com.cookie.identity.application.RegisterWithEmailHandler
+import com.cookie.identity.application.RequestAccountDeletionHandler
 import com.cookie.identity.application.ResendEmailVerificationHandler
 import com.cookie.identity.application.SessionIssuer
 import com.cookie.identity.application.ports.AccessTokenProvider
+import com.cookie.identity.application.ports.AccessTokenVerifier
+import com.cookie.identity.application.ports.AccountDeletionRequestRepository
 import com.cookie.identity.application.ports.AccountRepository
 import com.cookie.identity.application.ports.CurrentTimeProvider
 import com.cookie.identity.application.ports.IdGenerator
@@ -170,13 +173,41 @@ class IdentityConfiguration {
 
     @Bean
     fun refreshSessionHandler(
+        accounts: AccountRepository,
         families: RefreshFamilyRepository,
         transactions: TransactionRunner,
         refreshTokens: RefreshTokenService,
         rateLimiter: IdentityRateLimiter,
         sessionIssuer: SessionIssuer,
         currentTime: CurrentTimeProvider,
-    ) = RefreshSessionHandler(families, transactions, refreshTokens, rateLimiter, sessionIssuer, currentTime)
+    ) = RefreshSessionHandler(accounts, families, transactions, refreshTokens, rateLimiter, sessionIssuer, currentTime)
+
+    @Bean
+    fun requestAccountDeletionHandler(
+        accounts: AccountRepository,
+        deletionRequests: AccountDeletionRequestRepository,
+        families: RefreshFamilyRepository,
+        transactions: TransactionRunner,
+        accessTokens: AccessTokenVerifier,
+        passwordPolicy: PasswordPolicy,
+        passwordHashing: PasswordHashing,
+        rateLimiter: IdentityRateLimiter,
+        ids: IdGenerator,
+        events: IdentityEventRecorder,
+        currentTime: CurrentTimeProvider,
+    ) = RequestAccountDeletionHandler(
+        accounts,
+        deletionRequests,
+        families,
+        transactions,
+        accessTokens,
+        passwordPolicy,
+        passwordHashing,
+        rateLimiter,
+        ids,
+        events,
+        currentTime,
+    )
 
     @Bean
     fun logoutHandler(

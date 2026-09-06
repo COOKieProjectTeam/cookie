@@ -10,6 +10,11 @@ enum class PasswordAuthenticationResult {
     REJECTED_WITH_RECORDED_FAILURE,
 }
 
+enum class AccountStatus {
+    ACTIVE,
+    DELETION_PENDING,
+}
+
 data class AccountActivated(
     val accountId: UUID,
     val registeredAt: Instant,
@@ -29,6 +34,7 @@ class Account private constructor(
     val createdAt: Instant,
     failedLoginCount: Int,
     lockedUntil: Instant?,
+    status: AccountStatus,
 ) {
     init {
         require(passwordHash.isNotBlank()) { "Password hash must not be blank" }
@@ -36,15 +42,24 @@ class Account private constructor(
         require(lockedUntil == null || !lockedUntil.isBefore(createdAt)) {
             "Account lock cannot precede registration"
         }
+        require(stateIsConsistent(status, lockedUntil)) {
+            "Account lifecycle state is inconsistent"
+        }
     }
 
     var failedLoginCount: Int = failedLoginCount
         private set
     var lockedUntil: Instant? = lockedUntil
         private set
+    var status: AccountStatus = status
+        private set
 
     fun authenticatePassword(passwordMatches: Boolean, now: Instant): PasswordAuthenticationResult {
         check(!now.isBefore(createdAt)) { "Login attempt cannot precede registration" }
+        // A deletion request is irreversible. This explicit state guard keeps a
+        // pending account closed even after the compatibility lock sentinel is
+        // eventually reached and must never mutate the lockout counters.
+        if (status != AccountStatus.ACTIVE) return PasswordAuthenticationResult.REJECTED
         // A request made during an already active lock is observational only.
         // Neither a correct nor an incorrect password may keep extending a
         // victim's lockout window.
@@ -56,6 +71,27 @@ class Account private constructor(
         failedLoginCount = 0
         lockedUntil = null
         return PasswordAuthenticationResult.AUTHENTICATED
+    }
+
+    /**
+     * Irreversibly closes the account for authentication while distributed
+     * data deletion is pending. The far-future lock is deliberately persisted
+     * alongside the new status so an older binary, which only understands
+     * lockout state, also rejects logins during an expand/contract rollout.
+     *
+     * @return `true` only for the first ACTIVE -> DELETION_PENDING transition.
+     */
+    fun requestDeletion(now: Instant): Boolean {
+        check(!now.isBefore(createdAt)) { "Account deletion request cannot precede registration" }
+        when (status) {
+            AccountStatus.DELETION_PENDING -> return false
+            AccountStatus.ACTIVE -> Unit
+        }
+        check(now.isBefore(DELETION_LOCKED_UNTIL)) { "Account deletion request exceeds supported time range" }
+
+        status = AccountStatus.DELETION_PENDING
+        lockedUntil = DELETION_LOCKED_UNTIL
+        return true
     }
 
     private fun recordFailedPassword(now: Instant) {
@@ -83,6 +119,7 @@ class Account private constructor(
                 createdAt = now,
                 failedLoginCount = 0,
                 lockedUntil = null,
+                status = AccountStatus.ACTIVE,
             )
             return AccountRegistration(account, AccountActivated(id, now, now))
         }
@@ -94,6 +131,7 @@ class Account private constructor(
             createdAt: Instant,
             failedLoginCount: Int,
             lockedUntil: Instant?,
+            status: AccountStatus = AccountStatus.ACTIVE,
         ): Account = Account(
             id,
             email,
@@ -101,7 +139,20 @@ class Account private constructor(
             createdAt,
             failedLoginCount,
             lockedUntil,
+            status,
         )
+
+        /** PostgreSQL-safe sentinel used to close pending accounts to old binaries. */
+        val DELETION_LOCKED_UNTIL: Instant = Instant.parse("9999-12-31T23:59:59.999999Z")
+
+        private fun stateIsConsistent(
+            status: AccountStatus,
+            lockedUntil: Instant?,
+        ): Boolean = when (status) {
+            AccountStatus.ACTIVE -> true
+            AccountStatus.DELETION_PENDING ->
+                lockedUntil != null && !lockedUntil.isBefore(DELETION_LOCKED_UNTIL)
+        }
 
         private const val LOCKOUT_THRESHOLD = 5
         private const val MAX_LOCKOUT_EXPONENT = 10

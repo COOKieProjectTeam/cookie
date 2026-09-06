@@ -96,6 +96,25 @@ The local Mailpit sink uses a bounded process-local deduplication cache; this is
 deliberately development-only. A production notification service needs a durable
 inbox/idempotency record coordinated with its delivery-provider policy.
 
+Account deletion uses `account.deletion.requested` version 1 and subject
+`cookie.events.account.deletion.requested.v1`. The common envelope carries
+`event_id` and `occurred_at`; the business payload contains only `accountId`,
+`deletionRequestId` and `requestedAt`, without email, password material, JWT,
+device identity or idempotency key. Identity inserts this outbox row in the same
+transaction that moves Account to `DELETION_PENDING` and revokes every refresh
+family. HTTP retries and competing keys for the same account return the existing
+request and do not create another logical event. Broker redelivery may still
+deliver that event more than once and is handled by future consumer inboxes.
+
+User, Food Catalog, Nutrition, Recipe, Shopping, Health, Progress, Notification,
+Media and Meal Planner are target consumers because they own user-linked data.
+None of those deletion consumers or their acknowledgement events is implemented
+in v1. Identity remains producer-only, does not add a placeholder inbox and does
+not publish `account.deleted`; the account honestly remains
+`DELETION_PENDING`. Before completion is introduced, the system also needs a
+reconciliation/replay path for pending requests whose original event is older
+than broker retention.
+
 ## Required operational fields
 
 Outbox records у publishers expose status, attempt count, next-attempt time,

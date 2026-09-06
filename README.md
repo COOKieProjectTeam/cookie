@@ -13,7 +13,8 @@
 | `backend/tools/notification-sink` | локальная расшифровка email-событий и доставка в Mailpit |
 | `contracts/openapi/public` | активные публичные контракты по одному на сервис |
 | `infra/terraform` | инфраструктура и окружения |
-| `deploy/docker` | локальная контейнерная сборка |
+| `deploy/docker` | локальная development-сборка контейнеров |
+| `deploy/production` | production Compose, bootstrap и deployment runbook |
 | `docs/adr` | технические решения |
 | `docs/architecture` | каноническое LLM-friendly описание архитектуры |
 
@@ -46,7 +47,7 @@ vertical slice является Identity Service из ADR 0008 и ADR 0009. Lega
 ## Локальный Identity stack
 
 ```bash
-make compose-up
+make dev-up
 curl http://localhost:8080/healthz
 open http://localhost:8025
 ```
@@ -56,6 +57,34 @@ Notification sink и Mailpit. Identity публикует только compact J
 расшифровывает его ephemeral ключом из локального volume и отправляет письмо в
 Mailpit. Все опубликованные Compose-порты привязаны к `127.0.0.1` и доступны
 только с development host. Для запуска без контейнеров: `make identity-run`.
+`make dev-build-identity` и `make dev-build-notification-sink` собирают сервисы
+независимо; старые `make compose-up`/`compose-down` сохранены как aliases.
+
+## Production в Yandex Cloud
+
+Постоянного test stand пока нет. Pull request проходит только проверки затронутых
+сервисов и их реальных shared-зависимостей с disposable dependencies. Для
+блокировки merge ruleset ветки `main` должен требовать один стабильный check
+`CI required`: он падает, если change detection или любая выбранная проверка
+завершилась неуспешно. Настройка ruleset и точная матрица путей описаны в
+[`.github/README.md`](.github/README.md).
+
+`push` в `main` после зелёного CI публикует только изменившийся deployable
+Identity image в Yandex Container Registry. Каждый будущий сервис добавляется
+отдельным test и publish job; `latest` при deployment не используется.
+
+CI входит в Yandex Cloud через GitHub OIDC, без service-account key. Для него
+нужны repository variables `YC_REGISTRY_ID` и `YC_CI_SERVICE_ACCOUNT_ID`.
+Production VM получает отдельное pull-only identity и скачивает образ по digest;
+исходники и build toolchain на сервер не копируются.
+
+Начальный контур — одна небольшая non-HA VM с Identity, PostgreSQL и NATS.
+Пока собственного домена нет, публичный `/v1/auth/*` доступен через default HTTPS
+domain Yandex API Gateway; probes, PostgreSQL, NATS и SSH остаются закрытыми.
+Provisioning и deployment выполняются раздельно по инструкциям в
+[`infra/terraform/environments/production`](infra/terraform/environments/production/README.md)
+и [`deploy/production`](deploy/production/README.md). Решение и его ограничения
+зафиксированы в [ADR 0012](docs/adr/0012-yandex-single-environment-deployment.md).
 
 ## Принципы границ
 

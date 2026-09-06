@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
   title: COOKie Identity Public API
-  version: 0.6.0
+  version: 0.7.0
   description: >-
-    Public email/password authentication and session lifecycle owned by
-    Identity Service.
+    Public email/password authentication, session and account lifecycle owned
+    by Identity Service.
 servers:
   - url: https://api.cookie.app/v1
     description: Production
@@ -12,7 +12,7 @@ servers:
     description: Local
 tags:
   - name: auth
-    description: Email/password authentication and session lifecycle.
+    description: Email/password authentication, session and account lifecycle.
 
 paths:
   /auth/email/register:
@@ -268,6 +268,67 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /auth/account-deletion-requests:
+    post:
+      tags: [auth]
+      operationId: requestAccountDeletion
+      summary: Запросить необратимое удаление аккаунта
+      description: >-
+        Повторно подтверждает личность текущим паролем, немедленно переводит
+        аккаунт в DELETION_PENDING, отзывает все refresh-сессии и атомарно
+        записывает integration event для владельцев распределённых данных.
+        Физическое удаление и статус завершения не имитируются: до появления
+        downstream acknowledgements запрос остаётся DELETION_PENDING. После
+        прохождения authentication, validation, rate-limit и availability gates
+        один account и один Idempotency-Key возвращают исходные id, status и
+        requestedAt; другой ключ после принятия удаления возвращает тот же
+        активный deletion request и не создаёт повторное событие. Retry всё ещё может
+        получить описанный 429 или retryable 503 и обязан сохранить ключ. Уже выданный
+        access JWT остаётся криптографически валидным до exp.
+      security:
+        - accessToken: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >-
+            Криптографически случайный RFC 4122 UUIDv4 одной логической
+            операции удаления в канонической 36-символьной текстовой форме.
+            При неопределённом результате клиент повторяет
+            тот же ключ. Значение не должно попадать в логи или telemetry.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountDeletionRequest"
+      responses:
+        "202":
+          description: Запрос принят или ранее уже был принят для этого аккаунта
+          headers:
+            Cache-Control:
+              description: Запрещает хранение ответа account lifecycle
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionRequestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AccountDeletionUnauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /auth/jwks:
     get:
       tags: [auth]
@@ -292,6 +353,15 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
 
 components:
+  securitySchemes:
+    accessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Identity access JWT: ES256, typ=at+jwt, expected issuer and audience,
+        and mandatory valid sub, sid, jti, iat and exp claims.
+
   responses:
     BadRequest:
       description: Ошибка валидации
@@ -331,6 +401,18 @@ components:
             $ref: "#/components/schemas/Error"
     RegistrationAttemptConflict:
       description: Attempt id или registration proof уже связан с другим запросом
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    AccountDeletionUnauthorized:
+      description: Access JWT отсутствует/недействителен либо текущий пароль не подтверждён
+      headers:
+        WWW-Authenticate:
+          description: Bearer challenge; присутствует при отсутствующем/недействительном access JWT
+          schema:
+            type: string
+            example: Bearer
       content:
         application/json:
           schema:
@@ -473,6 +555,29 @@ components:
           minLength: 32
           maxLength: 512
 
+    AccountDeletionRequest:
+      type: object
+      required: [currentPassword]
+      properties:
+        currentPassword:
+          $ref: "#/components/schemas/LoginPassword"
+
+    AccountDeletionRequestAccepted:
+      type: object
+      required: [deletionRequestId, status, requestedAt]
+      properties:
+        deletionRequestId:
+          type: string
+          format: uuid
+          description: UUIDv7 стабильного процесса удаления.
+        status:
+          type: string
+          enum: [DELETION_PENDING]
+        requestedAt:
+          type: string
+          format: date-time
+          description: Момент первого принятия запроса в UTC.
+
     TokenPair:
       type: object
       description: >-
@@ -551,7 +656,8 @@ components:
         EMAIL_DOMAIN_NOT_SUPPORTED, PASSWORD_TOO_SHORT, PASSWORD_TOO_LONG,
         PASSWORD_INVALID_CHARACTERS, INVALID_LOCALE, INVALID_DEVICE_ID,
         INVALID_REQUEST, INVALID_CREDENTIALS, INVALID_REFRESH_TOKEN,
-        INVALID_VERIFICATION_TOKEN, REGISTRATION_ATTEMPT_CONFLICT и PAYLOAD_TOO_LARGE.
+        INVALID_VERIFICATION_TOKEN, INVALID_ACCESS_TOKEN,
+        REGISTRATION_ATTEMPT_CONFLICT и PAYLOAD_TOO_LARGE.
       required: [code, message]
       properties:
         code:

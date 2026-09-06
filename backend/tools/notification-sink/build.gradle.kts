@@ -1,3 +1,5 @@
+import org.springframework.boot.gradle.tasks.bundling.BootJar
+
 plugins {
     id("com.cookie.spring-service")
 }
@@ -10,4 +12,8 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
     testImplementation(project(":backend:platform:starter-testing"))
+}
+
+tasks.named<BootJar>("bootJar") {
+    archiveFileName.set("notification-sink.jar")
 }

@@ -1,0 +1,23 @@
+# Example values only. Copy to terraform.tfvars (ignored by Git) and replace every
+# cloud-specific value before creating a reviewed plan.
+cloud_id  = "replace-with-production-cloud-id"
+folder_id = "replace-with-production-folder-id"
+zone      = "ru-central1-d"
+
+github_repository = "COOKieProjectTeam/cookie"
+# Replace the fake numeric IDs with the exact immutable `sub` claim issued by
+# GitHub for this repository's main branch.
+github_oidc_subject = "repo:COOKieProjectTeam@12345678/cookie@87654321:ref:refs/heads/main"
+
+# Use a current operator or VPN egress address as /32. TEST-NET-3 is deliberately
+# non-routable and must be replaced.
+ssh_allowed_cidrs = ["203.0.113.10/32"]
+ssh_public_key    = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIReplaceThisExamplePublicKey cookie-production"
+
+# Cost-oriented initial capacity. Increase after observing CPU, memory, disk, and
+# JVM pressure; do not add more services to this VM without a reviewed plan.
+vm_cores           = 2
+vm_memory_gib      = 4
+vm_core_fraction   = 50
+boot_disk_size_gib = 30
+data_disk_size_gib = 30

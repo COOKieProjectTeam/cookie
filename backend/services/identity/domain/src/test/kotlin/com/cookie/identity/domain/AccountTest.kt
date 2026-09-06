@@ -20,6 +20,7 @@ class AccountTest {
         assertThat(registration.account.email).isEqualTo(email)
         assertThat(registration.account.passwordHash).isEqualTo("hash")
         assertThat(registration.account.createdAt).isEqualTo(now)
+        assertThat(registration.account.status).isEqualTo(AccountStatus.ACTIVE)
         assertThat(registration.event).isEqualTo(AccountActivated(id, now, now))
     }
 
@@ -69,6 +70,78 @@ class AccountTest {
     }
 
     @Test
+    fun `deletion request irreversibly closes account with compatibility lock`() {
+        val account = account(failedLoginCount = 2, lockedUntil = now.plusSeconds(30))
+
+        assertThat(account.requestDeletion(now)).isTrue()
+
+        assertThat(account.status).isEqualTo(AccountStatus.DELETION_PENDING)
+        assertThat(account.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+        assertThat(account.failedLoginCount).isEqualTo(2)
+    }
+
+    @Test
+    fun `repeated deletion request preserves the original transition`() {
+        val account = account()
+        account.requestDeletion(now)
+
+        assertThat(account.requestDeletion(now.plusSeconds(30))).isFalse()
+
+        assertThat(account.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+    }
+
+    @Test
+    fun `pending deletion rejects either password without mutating lockout state`() {
+        val account = account(failedLoginCount = 3)
+        account.requestDeletion(now)
+        val count = account.failedLoginCount
+        val lockedUntil = account.lockedUntil
+
+        assertThat(account.authenticatePassword(passwordMatches = true, now.plusSeconds(1)))
+            .isEqualTo(PasswordAuthenticationResult.REJECTED)
+        assertThat(account.authenticatePassword(passwordMatches = false, now.plusSeconds(2)))
+            .isEqualTo(PasswordAuthenticationResult.REJECTED)
+
+        assertThat(account.failedLoginCount).isEqualTo(count)
+        assertThat(account.lockedUntil).isEqualTo(lockedUntil)
+    }
+
+    @Test
+    fun `legacy reconstitution defaults to active lifecycle state`() {
+        val account = Account.reconstitute(
+            id = UUID.randomUUID(),
+            email = CanonicalEmail.parse("user@example.ru"),
+            passwordHash = "hash",
+            createdAt = now.minusSeconds(1),
+            failedLoginCount = 0,
+            lockedUntil = null,
+        )
+
+        assertThat(account.status).isEqualTo(AccountStatus.ACTIVE)
+    }
+
+    @Test
+    fun `pending lifecycle state can be reconstituted with its compatibility lock`() {
+        val account = account(
+            status = AccountStatus.DELETION_PENDING,
+            lockedUntil = Account.DELETION_LOCKED_UNTIL,
+        )
+
+        assertThat(account.status).isEqualTo(AccountStatus.DELETION_PENDING)
+        assertThat(account.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+    }
+
+    @Test
+    fun `reconstitution rejects inconsistent lifecycle state`() {
+        assertThatIllegalArgumentException().isThrownBy {
+            account(
+                status = AccountStatus.DELETION_PENDING,
+                lockedUntil = now.plusSeconds(30),
+            )
+        }
+    }
+
+    @Test
     fun `reconstitution rejects a lock preceding account creation`() {
         assertThatIllegalArgumentException().isThrownBy {
             Account.reconstitute(
@@ -85,6 +158,7 @@ class AccountTest {
     private fun account(
         failedLoginCount: Int = 0,
         lockedUntil: Instant? = null,
+        status: AccountStatus = AccountStatus.ACTIVE,
     ): Account = Account.reconstitute(
         id = UUID.randomUUID(),
         email = CanonicalEmail.parse("user@example.ru"),
@@ -92,5 +166,6 @@ class AccountTest {
         createdAt = now.minusSeconds(10),
         failedLoginCount = failedLoginCount,
         lockedUntil = lockedUntil,
+        status = status,
     )
 }

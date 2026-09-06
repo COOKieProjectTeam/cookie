@@ -51,9 +51,15 @@ class IdentityRateLimiter(
         check("logout:family:${digest(FAMILY_NAMESPACE, familyId)}", 30, Duration.ofMinutes(1))
     }
 
+    fun accountDeletionIp(ip: String) =
+        check("account-deletion:ip:${digest(IP_NAMESPACE, ip)}", 30, Duration.ofHours(1))
+
+    fun accountDeletionAccount(accountId: String) =
+        check("account-deletion:account:${digest(ACCOUNT_NAMESPACE, accountId)}", 10, Duration.ofHours(1))
+
     /**
-     * Consume every applicable scope before reporting rejection. Otherwise a
-     * saturated narrow scope can prevent the broader IP bucket from advancing.
+     * Consume every applicable scope before reporting rejection, so a saturated
+     * short window does not prevent the longer window from advancing.
      */
     private fun consumeAll(vararg limits: Limit) {
         val exceeded = limits.map { limit -> limit to repository.consume(limit.scope, limit.window) }
@@ -84,5 +90,6 @@ class IdentityRateLimiter(
         const val EMAIL_NAMESPACE = "email"
         const val TOKEN_NAMESPACE = "verification-token"
         const val FAMILY_NAMESPACE = "refresh-family"
+        const val ACCOUNT_NAMESPACE = "account"
     }
 }

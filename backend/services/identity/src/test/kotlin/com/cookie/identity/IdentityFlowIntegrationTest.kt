@@ -1,5 +1,6 @@
 package com.cookie.identity
 
+import com.cookie.identity.generated.model.AccountDeletionRequest
 import com.cookie.identity.generated.model.EmailLoginRequest
 import com.cookie.identity.generated.model.EmailRegistrationRequest
 import com.cookie.identity.generated.model.EmailVerificationConfirmRequest
@@ -1185,6 +1186,399 @@ class IdentityFlowIntegrationTest {
         assertThat(predictable.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value())
     }
 
+    @Test
+    fun `account deletion is irreversible idempotent and closes login and every refresh family`() {
+        val unique = UUID.randomUUID().toString().take(8)
+        val email = "delete-$unique@example.ru"
+        val password = "ValidPassword-$unique"
+        registerAndConfirm(email, password)
+        val firstLogin = post("/v1/auth/email/login", EmailLoginRequest(email, password, "delete-device-a"))
+        val secondLogin = post("/v1/auth/email/login", EmailLoginRequest(email, password, "delete-device-b"))
+        assertThat(firstLogin.statusCode()).isEqualTo(HttpStatus.OK.value())
+        assertThat(secondLogin.statusCode()).isEqualTo(HttpStatus.OK.value())
+        val loginBody = objectMapper.readTree(firstLogin.body())
+        val accountId = UUID.fromString(loginBody.path("user").path("id").stringValue())
+        val accessToken = loginBody.path("accessToken").stringValue()
+        val refreshToken = loginBody.path("refreshToken").stringValue()
+        val firstKey = UUID.randomUUID().toString()
+
+        val accepted = post(
+            "/v1/auth/account-deletion-requests",
+            AccountDeletionRequest(password),
+            mapOf("Authorization" to "Bearer $accessToken", "Idempotency-Key" to firstKey),
+        )
+
+        assertThat(accepted.statusCode()).isEqualTo(HttpStatus.ACCEPTED.value())
+        assertTokenResponseIsNotCacheable(accepted)
+        val acceptedBody = objectMapper.readTree(accepted.body())
+        val deletionRequestId = UUID.fromString(acceptedBody.path("deletionRequestId").stringValue())
+        assertThat(deletionRequestId.version()).isEqualTo(7)
+        assertThat(acceptedBody.path("status").stringValue()).isEqualTo("DELETION_PENDING")
+        assertThat(Instant.parse(acceptedBody.path("requestedAt").stringValue())).isNotNull()
+        assertThat(
+            jdbc.queryForObject("SELECT status FROM accounts WHERE id = ?", String::class.java, accountId),
+        ).isEqualTo("DELETION_PENDING")
+        assertThat(lockedUntil(email)).isEqualTo(Instant.parse("9999-12-31T23:59:59.999999Z"))
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM refresh_families WHERE account_id = ? AND status = 'ACTIVE'",
+                Int::class.java,
+                accountId,
+            ),
+        ).isZero()
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM refresh_families WHERE account_id = ? AND revoke_reason = 'LOGOUT'",
+                Int::class.java,
+                accountId,
+            ),
+        ).isEqualTo(2)
+
+        val exactRetry = post(
+            "/v1/auth/account-deletion-requests",
+            AccountDeletionRequest(password),
+            mapOf("Authorization" to "Bearer $accessToken", "Idempotency-Key" to firstKey),
+        )
+        val differentKeyRetry = post(
+            "/v1/auth/account-deletion-requests",
+            AccountDeletionRequest(password),
+            mapOf("Authorization" to "Bearer $accessToken", "Idempotency-Key" to UUID.randomUUID().toString()),
+        )
+        assertThat(exactRetry.statusCode()).isEqualTo(HttpStatus.ACCEPTED.value())
+        assertThat(differentKeyRetry.statusCode()).isEqualTo(HttpStatus.ACCEPTED.value())
+        assertThat(exactRetry.body()).isEqualTo(accepted.body())
+        assertThat(differentKeyRetry.body()).isEqualTo(accepted.body())
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM account_deletion_requests WHERE account_id = ?",
+                Int::class.java,
+                accountId,
+            ),
+        ).isEqualTo(1)
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE aggregate_id = ? AND event_type = 'account.deletion.requested'",
+                Int::class.java,
+                accountId.toString(),
+            ),
+        ).isEqualTo(1)
+        val payloadJson = requireNotNull(
+            jdbc.queryForObject(
+                """
+                SELECT payload::text FROM outbox_events
+                WHERE aggregate_id = ? AND event_type = 'account.deletion.requested'
+                """.trimIndent(),
+                String::class.java,
+                accountId.toString(),
+            ),
+        )
+        val payload = objectMapper.readTree(payloadJson)
+        assertThat(payload.size()).isEqualTo(3)
+        assertThat(payload.path("accountId").stringValue()).isEqualTo(accountId.toString())
+        assertThat(payload.path("deletionRequestId").stringValue()).isEqualTo(deletionRequestId.toString())
+        assertThat(Instant.parse(payload.path("requestedAt").stringValue()))
+            .isEqualTo(Instant.parse(acceptedBody.path("requestedAt").stringValue()))
+        assertThat(payloadJson).doesNotContain(email, password, accessToken, firstKey)
+        await().atMost(Duration.ofSeconds(10)).untilAsserted {
+            assertThat(
+                jdbc.queryForObject(
+                    """
+                    SELECT count(*) FROM outbox_events
+                    WHERE aggregate_id = ? AND event_type = 'account.deletion.requested'
+                      AND published_at IS NOT NULL
+                    """.trimIndent(),
+                    Int::class.java,
+                    accountId.toString(),
+                ),
+            ).isEqualTo(1)
+        }
+        assertPublishedEnvelope(accountId, "account.deletion.requested")
+
+        assertThat(
+            post(
+                "/v1/auth/refresh",
+                RefreshTokenRequest(refreshToken),
+                mapOf("Idempotency-Key" to UUID.randomUUID().toString()),
+            ).statusCode(),
+        ).isEqualTo(HttpStatus.UNAUTHORIZED.value())
+        assertThat(
+            post("/v1/auth/email/login", EmailLoginRequest(email, password, null)).statusCode(),
+        ).isEqualTo(HttpStatus.UNAUTHORIZED.value())
+        // Deletion revokes refresh families; this access token remains valid until exp.
+        assertAccessTokenVerifies(accessToken, accountId)
+    }
+
+    @Test
+    fun `account deletion validates bearer key and password without recording failed requests`() {
+        val unique = UUID.randomUUID().toString().take(8)
+        val email = "delete-validation-$unique@example.ru"
+        val password = "ValidPassword-$unique"
+        registerAndConfirm(email, password)
+        val login = post("/v1/auth/email/login", EmailLoginRequest(email, password, null))
+        val loginBody = objectMapper.readTree(login.body())
+        val accountId = UUID.fromString(loginBody.path("user").path("id").stringValue())
+        val accessToken = loginBody.path("accessToken").stringValue()
+        val tokenParts = accessToken.split('.')
+        val tamperedSignature = tokenParts[2].toCharArray().also { chars ->
+            chars[0] = if (chars[0] == 'A') 'B' else 'A'
+        }.concatToString()
+        val tamperedToken = "${tokenParts[0]}.${tokenParts[1]}.$tamperedSignature"
+        val requestBody = AccountDeletionRequest(password)
+
+        val missingAccess = post(
+            "/v1/auth/account-deletion-requests",
+            requestBody,
+            mapOf("Idempotency-Key" to UUID.randomUUID().toString()),
+        )
+        val invalidSignature = post(
+            "/v1/auth/account-deletion-requests",
+            requestBody,
+            mapOf(
+                "Authorization" to "Bearer $tamperedToken",
+                "Idempotency-Key" to UUID.randomUUID().toString(),
+            ),
+        )
+        val missingKey = post(
+            "/v1/auth/account-deletion-requests",
+            requestBody,
+            mapOf("Authorization" to "Bearer $accessToken"),
+        )
+        val malformedKey = post(
+            "/v1/auth/account-deletion-requests",
+            requestBody,
+            mapOf("Authorization" to "Bearer $accessToken", "Idempotency-Key" to "not-a-uuid"),
+        )
+        val abbreviatedKey = post(
+            "/v1/auth/account-deletion-requests",
+            requestBody,
+            mapOf("Authorization" to "Bearer $accessToken", "Idempotency-Key" to "1-1-4000-8000-1"),
+        )
+        val nonRandomKey = post(
+            "/v1/auth/account-deletion-requests",
+            requestBody,
+            mapOf(
+                "Authorization" to "Bearer $accessToken",
+                "Idempotency-Key" to "00000000-0000-0000-0000-000000000000",
+            ),
+        )
+        val wrongPassword = post(
+            "/v1/auth/account-deletion-requests",
+            AccountDeletionRequest("WrongPassword-$unique"),
+            mapOf("Authorization" to "Bearer $accessToken", "Idempotency-Key" to UUID.randomUUID().toString()),
+        )
+
+        assertThat(missingAccess.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value())
+        assertThat(missingAccess.headers().firstValue("WWW-Authenticate")).hasValue("Bearer")
+        assertThat(invalidSignature.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value())
+        assertThat(invalidSignature.headers().firstValue("WWW-Authenticate")).hasValue("Bearer")
+        assertThat(objectMapper.readTree(invalidSignature.body()).path("code").stringValue())
+            .isEqualTo("INVALID_ACCESS_TOKEN")
+        assertThat(missingKey.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value())
+        assertThat(malformedKey.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value())
+        assertThat(abbreviatedKey.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value())
+        assertThat(nonRandomKey.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value())
+        assertThat(wrongPassword.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value())
+        assertThat(objectMapper.readTree(wrongPassword.body()).path("code").stringValue())
+            .isEqualTo("INVALID_CREDENTIALS")
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM account_deletion_requests WHERE account_id = ?",
+                Int::class.java,
+                accountId,
+            ),
+        ).isZero()
+        assertThat(
+            jdbc.queryForObject("SELECT status FROM accounts WHERE id = ?", String::class.java, accountId),
+        ).isEqualTo("ACTIVE")
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE aggregate_id = ? AND event_type = 'account.deletion.requested'",
+                Int::class.java,
+                accountId.toString(),
+            ),
+        ).isZero()
+    }
+
+    @Test
+    fun `parallel account deletion keys converge on one request and one event`() {
+        val unique = UUID.randomUUID().toString().take(8)
+        val email = "delete-race-$unique@example.ru"
+        val password = "ValidPassword-$unique"
+        registerAndConfirm(email, password)
+        val loginBody = objectMapper.readTree(
+            post("/v1/auth/email/login", EmailLoginRequest(email, password, null)).body(),
+        )
+        val accountId = UUID.fromString(loginBody.path("user").path("id").stringValue())
+        val accessToken = loginBody.path("accessToken").stringValue()
+        val sharedKey = UUID.randomUUID().toString()
+        val keys = listOf(sharedKey, sharedKey, UUID.randomUUID().toString(), UUID.randomUUID().toString())
+
+        val responses = simultaneously(
+            keys.map { key ->
+                {
+                    post(
+                        "/v1/auth/account-deletion-requests",
+                        AccountDeletionRequest(password),
+                        mapOf("Authorization" to "Bearer $accessToken", "Idempotency-Key" to key),
+                    )
+                }
+            },
+        )
+
+        assertThat(responses.map { it.statusCode() }).containsOnly(HttpStatus.ACCEPTED.value())
+        assertThat(responses.map { it.body() }.distinct()).hasSize(1)
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM account_deletion_requests WHERE account_id = ?",
+                Int::class.java,
+                accountId,
+            ),
+        ).isEqualTo(1)
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE aggregate_id = ? AND event_type = 'account.deletion.requested'",
+                Int::class.java,
+                accountId.toString(),
+            ),
+        ).isEqualTo(1)
+    }
+
+    @Test
+    fun `outbox failure rolls back account deletion request status and session revocation`() {
+        val unique = UUID.randomUUID().toString().take(8)
+        val email = "delete-rollback-$unique@example.ru"
+        val password = "ValidPassword-$unique"
+        registerAndConfirm(email, password)
+        val loginBody = objectMapper.readTree(
+            post("/v1/auth/email/login", EmailLoginRequest(email, password, null)).body(),
+        )
+        val accountId = UUID.fromString(loginBody.path("user").path("id").stringValue())
+        val accessToken = loginBody.path("accessToken").stringValue()
+        jdbc.update(
+            """
+            ALTER TABLE outbox_events
+            ADD CONSTRAINT ck_test_reject_deletion_event
+            CHECK (
+                event_type <> 'account.deletion.requested'
+                OR aggregate_id <> '${accountId}'
+            ) NOT VALID
+            """.trimIndent(),
+        )
+        val response = try {
+            post(
+                "/v1/auth/account-deletion-requests",
+                AccountDeletionRequest(password),
+                mapOf(
+                    "Authorization" to "Bearer $accessToken",
+                    "Idempotency-Key" to UUID.randomUUID().toString(),
+                ),
+            )
+        } finally {
+            jdbc.update("ALTER TABLE outbox_events DROP CONSTRAINT ck_test_reject_deletion_event")
+        }
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR.value())
+        assertThat(
+            jdbc.queryForObject("SELECT status FROM accounts WHERE id = ?", String::class.java, accountId),
+        ).isEqualTo("ACTIVE")
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM refresh_families WHERE account_id = ? AND status = 'ACTIVE'",
+                Int::class.java,
+                accountId,
+            ),
+        ).isEqualTo(1)
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM account_deletion_requests WHERE account_id = ?",
+                Int::class.java,
+                accountId,
+            ),
+        ).isZero()
+    }
+
+    @Test
+    fun `login and refresh races cannot leave an active session after account deletion`() {
+        val loginRaceUnique = UUID.randomUUID().toString().take(8)
+        val loginRaceEmail = "delete-login-race-$loginRaceUnique@example.ru"
+        val loginRacePassword = "ValidPassword-$loginRaceUnique"
+        registerAndConfirm(loginRaceEmail, loginRacePassword)
+        val loginRaceBody = objectMapper.readTree(
+            post("/v1/auth/email/login", EmailLoginRequest(loginRaceEmail, loginRacePassword, "existing")).body(),
+        )
+        val loginRaceAccount = UUID.fromString(loginRaceBody.path("user").path("id").stringValue())
+        val loginRaceAccess = loginRaceBody.path("accessToken").stringValue()
+
+        val loginRace = simultaneously(
+            listOf(
+                { post("/v1/auth/email/login", EmailLoginRequest(loginRaceEmail, loginRacePassword, "racing")) },
+                {
+                    post(
+                        "/v1/auth/account-deletion-requests",
+                        AccountDeletionRequest(loginRacePassword),
+                        mapOf(
+                            "Authorization" to "Bearer $loginRaceAccess",
+                            "Idempotency-Key" to UUID.randomUUID().toString(),
+                        ),
+                    )
+                },
+            ),
+        )
+        assertThat(loginRace.map { it.statusCode() })
+            .contains(HttpStatus.ACCEPTED.value())
+            .allMatch { it == HttpStatus.ACCEPTED.value() || it == HttpStatus.OK.value() || it == HttpStatus.UNAUTHORIZED.value() }
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM refresh_families WHERE account_id = ? AND status = 'ACTIVE'",
+                Int::class.java,
+                loginRaceAccount,
+            ),
+        ).isZero()
+
+        val refreshRaceUnique = UUID.randomUUID().toString().take(8)
+        val refreshRaceEmail = "delete-refresh-race-$refreshRaceUnique@example.ru"
+        val refreshRacePassword = "ValidPassword-$refreshRaceUnique"
+        registerAndConfirm(refreshRaceEmail, refreshRacePassword)
+        val refreshRaceBody = objectMapper.readTree(
+            post("/v1/auth/email/login", EmailLoginRequest(refreshRaceEmail, refreshRacePassword, "existing")).body(),
+        )
+        val refreshRaceAccount = UUID.fromString(refreshRaceBody.path("user").path("id").stringValue())
+        val refreshRaceAccess = refreshRaceBody.path("accessToken").stringValue()
+        val refreshRaceToken = refreshRaceBody.path("refreshToken").stringValue()
+
+        val refreshRace = simultaneously(
+            listOf(
+                {
+                    post(
+                        "/v1/auth/refresh",
+                        RefreshTokenRequest(refreshRaceToken),
+                        mapOf("Idempotency-Key" to UUID.randomUUID().toString()),
+                    )
+                },
+                {
+                    post(
+                        "/v1/auth/account-deletion-requests",
+                        AccountDeletionRequest(refreshRacePassword),
+                        mapOf(
+                            "Authorization" to "Bearer $refreshRaceAccess",
+                            "Idempotency-Key" to UUID.randomUUID().toString(),
+                        ),
+                    )
+                },
+            ),
+        )
+        assertThat(refreshRace.map { it.statusCode() })
+            .contains(HttpStatus.ACCEPTED.value())
+            .allMatch { it == HttpStatus.ACCEPTED.value() || it == HttpStatus.OK.value() || it == HttpStatus.UNAUTHORIZED.value() }
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM refresh_families WHERE account_id = ? AND status = 'ACTIVE'",
+                Int::class.java,
+                refreshRaceAccount,
+            ),
+        ).isZero()
+    }
+
     private fun registerAndConfirm(email: String, password: String) {
         val registrationProof = registrationProof()
         val registrationAttemptId = UUID.randomUUID()
@@ -1269,6 +1663,8 @@ class IdentityFlowIntegrationTest {
             assertThat(message.subject).isEqualTo("cookie.events.$eventType.v1")
             assertThat(requireNotNull(message.headers).getFirst("Nats-Msg-Id")).isEqualTo(eventId.toString())
             val envelope = objectMapper.readTree(message.data)
+            assertThat(envelope.path("event_id").stringValue()).isEqualTo(eventId.toString())
+            assertThat(envelope.path("occurred_at").stringValue()).isNotBlank()
             assertThat(envelope.path("event_type").stringValue()).isEqualTo(eventType)
             assertThat(envelope.path("aggregate_id").stringValue()).isEqualTo(accountId.toString())
         }

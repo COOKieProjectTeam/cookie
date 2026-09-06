@@ -48,6 +48,7 @@ class SessionIssuerTest {
 
         override fun findCredentialLookup(id: UUID): RefreshCredentialLookup? = error("Not used")
         override fun findByCredentialIdForUpdate(credentialId: UUID): RefreshFamily? = error("Not used")
+        override fun revokeAllForAccount(accountId: UUID, now: Instant) = error("Not used")
         override fun add(family: RefreshFamily) {
             check(added == null)
             added = family

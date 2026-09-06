@@ -1,6 +1,7 @@
 import org.openapitools.generator.gradle.plugin.tasks.GenerateTask
 import org.openapitools.generator.gradle.plugin.tasks.ValidateTask
 import org.gradle.api.tasks.testing.Test
+import org.springframework.boot.gradle.tasks.bundling.BootJar
 
 plugins {
     id("com.cookie.spring-service")
@@ -132,4 +133,8 @@ val integrationTest = tasks.register<Test>("integrationTest") {
 
 springBoot {
     buildInfo()
+}
+
+tasks.named<BootJar>("bootJar") {
+    archiveFileName.set("identity.jar")
 }

@@ -57,8 +57,32 @@ flowchart LR
 - Специализированные workers допустимы там, где они явно нужны: scheduler и
   delivery в Notification, generator/processor в Meal Planner.
 
-Это логические роли: решение о процессах, контейнерах и масштабировании пока не
-принято.
+Это логические роли. ADR 0012 фиксирует только первый production slice: один
+контейнер Identity вместе с PostgreSQL и NATS на одной non-HA VM. Он не задаёт
+топологию или масштабирование будущих сервисов.
+
+## Initial production slice
+
+Постоянный test stand пока отсутствует: pull request проверяется CI и
+disposable Testcontainers, а development stack запускается локально. В Yandex
+Cloud разворачивается только Identity:
+
+```mermaid
+flowchart LR
+    Client["Mobile client"] -->|HTTPS default domain| YAG["Yandex API Gateway"]
+    YAG -->|VPC, /v1/auth/* only| Identity
+    subgraph VM["one non-HA production VM"]
+        Identity --> PG["PostgreSQL"]
+        Identity --> NATS["NATS JetStream"]
+    end
+    CI["GitHub Actions"] -->|OIDC, push SHA image| YCR["Yandex Container Registry"]
+    YCR -->|VM identity, pull by digest| VM
+```
+
+API Gateway является временным TLS ingress до собственного домена и целевого
+Caddy edge. Он не проксирует component probes. Реализация Notification Service
+ещё отсутствует, поэтому development Notification sink и Mailpit в production
+не попадают.
 
 ## Health terminology
 

@@ -1,9 +1,10 @@
 # Identity Service
 
 Identity v1 supports email/password registration, email confirmation, login,
-idempotent refresh rotation, idempotent logout and ES256 JWKS. The public transport is
-generated from the service-owned `contracts/openapi/public/identity.yaml`; generated
-sources live under `build/generated` and are never committed.
+idempotent refresh rotation, idempotent logout, asynchronous account-deletion
+requests and ES256 JWKS. The public transport is generated from the service-owned
+`contracts/openapi/public/identity.yaml`; generated sources live under
+`build/generated` and are never committed.
 
 Email confirmation is an idempotent state transition and does not issue a
 session. After a successful `204`, the client uses the regular email/password
@@ -50,6 +51,52 @@ rate-limit bucket is saturated; only a new rotation spends that family bucket.
 Within the supported `.ru`/`.рф` provider set, email local parts are a
 case-insensitive product identifier and are stored in lower case. Providers
 that distinguish local-part case are outside this contract.
+
+## Account deletion
+
+`POST /v1/auth/account-deletion-requests` accepts an authenticated, irreversible
+request to start distributed deletion. It requires a valid access JWT, the
+current password and a cryptographically random RFC 4122 UUIDv4
+`Idempotency-Key`; account identity is taken only from the verified JWT `sub`.
+No registered-device check, grace period or cancellation exists in v1.
+
+The command is protected before Argon2 verification by PostgreSQL-backed limits
+of `30/IP/hour` and `10/account/hour`. Both dimensions use the existing
+domain-separated HMAC mechanism; account IDs use namespace `account`. Password,
+access JWT and `Idempotency-Key` must never enter logs or events.
+
+One local transaction locks the account root first, converges exact and
+concurrent requests on one `AccountDeletionRequest`, moves the account to
+`DELETION_PENDING`, revokes every refresh family and writes one
+`account.deletion.requested` v1 outbox event. The event envelope owns `event_id`
+and `occurred_at`; its PII-free business payload contains `accountId`,
+`deletionRequestId` and `requestedAt`. A retry with the same account/key returns
+the same accepted result after authentication, validation, rate-limit and
+availability gates; a different key after acceptance returns the same active
+request without a second event. A retry can still receive `429` or retryable
+`503`, retains its key and follows `Retry-After`. A wrong password creates no
+request row.
+
+Downstream inbox consumers and acknowledgements are not implemented yet, so the
+service does not publish `account.deleted` and cannot leave
+`DELETION_PENDING`. Canonical email and the Argon2id password hash remain stored,
+which also prevents registration with the same email, until a later confirmed
+finalization stage. Identity remains producer-only and does not add an inbox.
+
+Revoking refresh families does not invalidate an access JWT already issued to a
+client. It remains cryptographically valid until `exp`, for up to the effective
+configured TTL (15 minutes by default; configuration currently permits up to 24
+hours), because this version has no access-token denylist or introspection.
+Clients delete their local session after a confirmed `202`, but that action does
+not remove this server-side residual window.
+
+For mixed-version safety the additive schema gives `accounts.status` the default
+`ACTIVE`. Acceptance also writes a far-future credential `locked_until`, which
+makes an old binary deny login even though it does not understand the new account
+state. Refresh-family rows retain the existing stored reason `LOGOUT`; introducing
+a new enum value would break old readers. Public routing/mobile rollout must wait
+until all old Identity pods have left service because they return 404 for the new
+route.
 
 ## Local run
 
@@ -99,6 +146,10 @@ Spring, JDBC, Jackson, Nimbus or NATS.
 Without the `dev` or `test` Spring profile, Identity requires deployment-owned
 key material and never generates or writes it:
 
+- `COOKIE_IDENTITY_ISSUER`: externally visible HTTPS origin used in issued and
+  verified access tokens (the temporary API Gateway URL until a custom domain);
+- `COOKIE_IDENTITY_AUDIENCE`: expected access-token audience, `cookie-api` by
+  default;
 - `COOKIE_IDENTITY_JWT_PRIVATE_KEY_PATH`: private P-256 JWK with `kid`,
   `use=sig` and `alg=ES256`;
 - `COOKIE_IDENTITY_JWT_RETIRING_PUBLIC_KEY_PATHS`: comma-separated public P-256
@@ -108,7 +159,7 @@ key material and never generates or writes it:
   JWK (at least 2048 bits) with `use=enc` and `alg=RSA-OAEP-256`;
 - `COOKIE_IDENTITY_RATE_LIMIT_HMAC_KEY`: canonical base64url encoding of a
   dedicated 32-byte secret used to pseudonymise IP, email, token and session
-  rate-limit dimensions;
+  rate-limit dimensions, including the account scope used by deletion;
 - `COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS`: optional comma-separated ingress CIDRs
   whose `X-Forwarded-For` chain may be trusted. Leave empty for direct traffic.
 
@@ -144,10 +195,17 @@ Production NATS is deployment-owned: Identity neither creates nor mutates the
 shared stream outside `dev`/`test`. Production startup requires a `tls://` URL,
 credentials, a dedicated JKS truststore and its password via `COOKIE_NATS_URL`,
 `COOKIE_NATS_CREDENTIALS_PATH`, `COOKIE_NATS_TRUSTSTORE_PATH` and
-`COOKIE_NATS_TRUSTSTORE_PASSWORD`. The credential may publish only the two
-subjects in `service.yaml` and subscribe only to
+`COOKIE_NATS_TRUSTSTORE_PASSWORD`. The credential may publish only the three
+subjects in `service.yaml`, including
+`cookie.events.account.deletion.requested.v1`, and subscribe only to
 `_INBOX.cookie.identity.>` for JetStream acknowledgements; it receives no event
 subscriptions or `$JS.API` stream-management permissions.
+
+Production Compose may mount scalar secret properties as files named
+`spring.datasource.password`, `cookie.identity.rate-limit-hmac-key` and
+`cookie.identity.nats-truststore-password` under `/run/secrets`; Spring imports
+that optional config tree without placing the values in container environment
+metadata. Local development continues to use the explicit non-secret defaults.
 
 An older development Notification JWK without the required `use`/`alg` metadata
 is rejected intentionally. Migrate that file while preserving the RSA key, or
@@ -158,6 +216,15 @@ This pre-release change rewrites the unpublished `V001`/`V002` baseline. An
 existing local Identity database must therefore be recreated rather than
 Flyway-repaired. Once the first environment is promoted, applied migrations are
 immutable and every schema change must use a new migration version.
+Account deletion therefore uses the forward-only `V004` migration and does not
+rewrite the existing baseline.
+
+`V004` adds the account-status check as `NOT VALID`. The new column's constant
+`NOT NULL DEFAULT 'ACTIVE'` makes all pre-existing rows valid, and PostgreSQL
+still enforces the check on every later insert/update. Deferring validation
+avoids holding the add-column `ACCESS EXCLUSIVE` lock through a table scan under
+the service's five-second statement timeout. A later controlled migration must
+validate `ck_accounts_status` with production-sized timeout and observability.
 
 The refresh retry transition intentionally keeps the existing `retry_until`
 column for mixed-version compatibility. New rotations store the family expiry

@@ -4,6 +4,10 @@ import com.cookie.identity.domain.IdentityException
 
 class InvalidCredentialsException : IdentityException("Invalid credentials")
 
+class InvalidAccessTokenException : IdentityException("Invalid or expired access token")
+
+class InvalidRequestException : IdentityException("Invalid request")
+
 open class InvalidTokenException : IdentityException("Invalid or expired token")
 
 class InvalidActionTokenException : IdentityException("Invalid or expired verification token")

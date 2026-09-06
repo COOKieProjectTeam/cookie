@@ -19,10 +19,16 @@ class JdbcRefreshFamilyRepository(
     private val jdbc: JdbcTemplate,
 ) : RefreshFamilyRepository {
     override fun findCredentialLookup(id: UUID): RefreshCredentialLookup? = jdbc.query(
-        "SELECT family_id, verifier_hash FROM refresh_credentials WHERE id = ?",
+        """
+        SELECT c.family_id, f.account_id, c.verifier_hash
+        FROM refresh_credentials c
+        JOIN refresh_families f ON f.id = c.family_id
+        WHERE c.id = ?
+        """.trimIndent(),
         { result, _ ->
             RefreshCredentialLookup(
                 familyId = result.getObject("family_id", UUID::class.java),
+                accountId = result.getObject("account_id", UUID::class.java),
                 verifierHash = VerifierHash.fromSha256Hex(result.getString("verifier_hash")),
             )
         },
@@ -70,6 +76,22 @@ class JdbcRefreshFamilyRepository(
             revokeReason = family.revokeReason,
             reuseDetectedAt = family.reuseDetectedAt,
             credentials = credentials,
+        )
+    }
+
+    override fun revokeAllForAccount(accountId: UUID, now: Instant) {
+        requireActiveTransaction("Revoke refresh families for account")
+        jdbc.update(
+            """
+            UPDATE refresh_families
+            SET status = 'REVOKED',
+                revoked_at = GREATEST(last_activity_at, ?),
+                revoke_reason = 'LOGOUT',
+                reuse_detected_at = NULL
+            WHERE account_id = ? AND status = 'ACTIVE'
+            """.trimIndent(),
+            now.asJdbcTimestamp(),
+            accountId,
         )
     }
 

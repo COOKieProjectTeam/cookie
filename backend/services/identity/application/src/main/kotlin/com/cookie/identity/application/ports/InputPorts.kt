@@ -1,5 +1,7 @@
 package com.cookie.identity.application.ports
 
+import com.cookie.identity.application.AccountDeletionCommand
+import com.cookie.identity.application.AccountDeletionResult
 import com.cookie.identity.application.IssuedTokens
 import com.cookie.identity.application.PublicJwk
 import java.util.UUID
@@ -33,6 +35,10 @@ fun interface RefreshSessionUseCase {
 
 fun interface LogoutUseCase {
     fun execute(rawToken: String, ip: String)
+}
+
+fun interface RequestAccountDeletionUseCase {
+    fun execute(command: AccountDeletionCommand): AccountDeletionResult
 }
 
 fun interface GetIdentityJwksUseCase {

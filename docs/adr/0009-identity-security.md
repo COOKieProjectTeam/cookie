@@ -3,6 +3,8 @@
 - Status: accepted
 - Date: 2026-08-19
 - Amended: 2026-09-04
+- Account deletion amendment: ADR 0011 supersedes the earlier decision to defer
+  the delete flow; the remaining Identity security profile stays in force.
 
 ## Context
 
@@ -90,7 +92,8 @@ Identity v1 реализует только email/password. Контракт д�
   применяется первым. Logout идемпотентен и по любому криптографически валидному
   credential отзывает family.
 - Access JWT: ES256, `typ=at+jwt`, `iss=https://api.cookie.app`,
-  `aud=cookie-api`, TTL 15 минут; claims `sub`, `sid`, `jti`, `iat`, `exp`.
+  `aud=cookie-api`, configured TTL 15 минут по умолчанию и не более 24 часов;
+  claims `sub`, `sid`, `jti`, `iat`, `exp`.
   `sid` содержит стабильный `RefreshFamily.id` и не меняется при rotation; email
   и роли не включаются. Public active/retiring keys доступны через JWKS с
   `max-age=300`; private key монтируется в deployable.
@@ -186,8 +189,9 @@ Raw secrets не хранятся в outbox, JetStream и logs.
 
 ## Consequences
 
-- Public auth contract v0.6 содержит register, confirm, resend, login, refresh,
-  logout и JWKS; OAuth/reset/change/delete flows откладываются до реализации.
+- Public auth contract v0.6 содержал register, confirm, resend, login, refresh,
+  logout и JWKS. ADR 0011 отдельно вводит account deletion; OAuth/reset/change
+  flows по-прежнему отложены до реализации.
 - Refresh является идемпотентным только для того же predecessor token и того же
   обязательного криптографически случайного RFC 4122 UUIDv4 `Idempotency-Key`,
   пока его непосредственный successor остаётся current, а family активна и не

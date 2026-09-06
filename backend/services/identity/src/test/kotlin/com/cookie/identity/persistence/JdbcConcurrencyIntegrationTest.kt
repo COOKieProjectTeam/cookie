@@ -1,12 +1,47 @@
 package com.cookie.identity.persistence
 
+import com.cookie.identity.application.AccountDeletionCommand
+import com.cookie.identity.application.GeneratedSecretToken
+import com.cookie.identity.application.IdentityPolicy
+import com.cookie.identity.application.IdentityRateLimiter
+import com.cookie.identity.application.InvalidCredentialsException
+import com.cookie.identity.application.InvalidTokenException
+import com.cookie.identity.application.IssuedAccessToken
+import com.cookie.identity.application.LoginWithEmailHandler
+import com.cookie.identity.application.ParsedSecretToken
+import com.cookie.identity.application.PublicJwk
+import com.cookie.identity.application.RateLimitWindow
+import com.cookie.identity.application.RefreshSessionHandler
+import com.cookie.identity.application.RequestAccountDeletionHandler
+import com.cookie.identity.application.SessionIssuer
+import com.cookie.identity.application.VerifiedAccessToken
+import com.cookie.identity.application.ports.AccessTokenProvider
+import com.cookie.identity.application.ports.AccessTokenVerifier
+import com.cookie.identity.application.ports.AccountRepository
+import com.cookie.identity.application.ports.CurrentTimeProvider
+import com.cookie.identity.application.ports.IdGenerator
+import com.cookie.identity.application.ports.IdentityEventRecorder
+import com.cookie.identity.application.ports.PasswordHashing
+import com.cookie.identity.application.ports.RateLimitRepository
+import com.cookie.identity.application.ports.RateLimitScopeHasher
+import com.cookie.identity.application.ports.RefreshTokenService
+import com.cookie.identity.application.ports.TransactionRunner
+import com.cookie.identity.domain.Account
+import com.cookie.identity.domain.AccountActivated
+import com.cookie.identity.domain.AccountDeletionRequest
+import com.cookie.identity.domain.AccountDeletionRequested
+import com.cookie.identity.domain.AccountStatus
 import com.cookie.identity.domain.CanonicalEmail
 import com.cookie.identity.domain.LocaleTag
+import com.cookie.identity.domain.PasswordPolicy
+import com.cookie.identity.domain.RefreshFamily
+import com.cookie.identity.domain.RefreshFamilyRevokeReason
 import com.cookie.identity.domain.RegistrationAttempt
 import com.cookie.identity.domain.VerifierHash
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.flywaydb.core.Flyway
+import org.flywaydb.core.api.MigrationVersion
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
@@ -51,7 +86,8 @@ class JdbcConcurrencyIntegrationTest {
         jdbc.update(
             "TRUNCATE TABLE outbox_events, rate_limit_buckets, registration_verification_tokens, " +
                 "registration_attempts, " +
-                "refresh_credentials, refresh_families, email_credentials, accounts",
+                "refresh_credentials, refresh_families, account_deletion_requests, " +
+                "email_credentials, accounts",
         )
     }
 
@@ -116,6 +152,415 @@ class JdbcConcurrencyIntegrationTest {
                   AND column_name = 'retry_until'
                 """.trimIndent(),
                 Int::class.java,
+            ),
+        ).isEqualTo(1)
+    }
+
+    @Test
+    fun `account deletion schema enforces lifecycle idempotency ownership and timestamp constraints`() {
+        val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
+        val firstAccountId = insertAccount(now)
+        val secondAccountId = insertAccount(now)
+        val invalidKeyAccountId = insertAccount(now)
+        val invalidStatusAccountId = insertAccount(now)
+        val sharedKey = UUID.fromString("11111111-1111-4111-8111-111111111111")
+
+        insertDeletionRequest(firstAccountId, sharedKey, now)
+        insertDeletionRequest(secondAccountId, sharedKey, now.plusSeconds(1))
+
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = 'account_deletion_requests'::regclass
+                  AND conname = 'uq_account_deletion_requests_account_key'
+                """.trimIndent(),
+                String::class.java,
+            ),
+        ).contains("UNIQUE (account_id, idempotency_key)")
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'account_deletion_requests'
+                  AND column_name = 'requested_at'
+                """.trimIndent(),
+                String::class.java,
+            ),
+        ).isEqualTo("timestamp with time zone")
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT confdeltype::text
+                FROM pg_constraint
+                WHERE conrelid = 'account_deletion_requests'::regclass
+                  AND conname = 'fk_account_deletion_requests_account'
+                """.trimIndent(),
+                String::class.java,
+            ),
+        ).isEqualTo("r")
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT convalidated
+                FROM pg_constraint
+                WHERE conrelid = 'accounts'::regclass
+                  AND conname = 'ck_accounts_status'
+                """.trimIndent(),
+                Boolean::class.java,
+            ),
+        ).isFalse()
+
+        assertThatThrownBy {
+            insertDeletionRequest(
+                accountId = invalidKeyAccountId,
+                idempotencyKey = UUID.fromString("11111111-1111-1111-8111-111111111111"),
+                requestedAt = now,
+            )
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
+        assertThatThrownBy {
+            insertDeletionRequest(firstAccountId, UUID.randomUUID(), now.plusSeconds(2))
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
+        assertThatThrownBy {
+            insertDeletionRequest(
+                accountId = invalidStatusAccountId,
+                idempotencyKey = UUID.randomUUID(),
+                requestedAt = now,
+                status = "COMPLETED",
+            )
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
+        assertThatThrownBy {
+            jdbc.update("UPDATE accounts SET status = 'DELETED' WHERE id = ?", invalidStatusAccountId)
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
+        assertThatThrownBy {
+            jdbc.update("DELETE FROM accounts WHERE id = ?", firstAccountId)
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
+
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM account_deletion_requests WHERE id IS NOT NULL",
+                Int::class.java,
+            ),
+        ).isEqualTo(2)
+    }
+
+    @Test
+    fun `account and deletion request repositories persist the pending lifecycle state`() {
+        val accountRepository = JdbcAccountRepository(jdbc)
+        val deletionRepository = JdbcAccountDeletionRequestRepository(jdbc)
+        val createdAt = Instant.now().minusSeconds(60).truncatedTo(ChronoUnit.MICROS)
+        val requestedAt = createdAt.plusSeconds(30)
+        val account = Account.register(
+            id = UUID.randomUUID(),
+            email = CanonicalEmail.reconstitute("deletion-repository@example.ru"),
+            passwordHash = "argon-hash",
+            now = createdAt,
+        ).account
+
+        transactions.executeWithoutResult { accountRepository.add(account) }
+        assertThat(requireNotNull(accountRepository.findById(account.id)).status)
+            .isEqualTo(AccountStatus.ACTIVE)
+
+        val requestStart = AccountDeletionRequest.start(
+            id = UUID.randomUUID(),
+            accountId = account.id,
+            idempotencyKey = UUID.randomUUID(),
+            now = requestedAt,
+        )
+        transactions.executeWithoutResult {
+            val locked = requireNotNull(accountRepository.findByIdForUpdate(account.id))
+            assertThat(locked.requestDeletion(requestedAt)).isTrue()
+            accountRepository.save(locked)
+            deletionRepository.add(requestStart.request)
+        }
+
+        val persistedAccount = requireNotNull(accountRepository.findById(account.id))
+        assertThat(persistedAccount.status).isEqualTo(AccountStatus.DELETION_PENDING)
+        assertThat(persistedAccount.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+        val persistedRequest = requireNotNull(deletionRepository.findByAccountId(account.id))
+        assertThat(persistedRequest.id).isEqualTo(requestStart.request.id)
+        assertThat(persistedRequest.accountId).isEqualTo(account.id)
+        assertThat(persistedRequest.idempotencyKey).isEqualTo(requestStart.request.idempotencyKey)
+        assertThat(persistedRequest.status).isEqualTo(requestStart.request.status)
+        assertThat(persistedRequest.requestedAt).isEqualTo(requestedAt)
+    }
+
+    @Test
+    fun `revoking an account closes only its active refresh families`() {
+        val repository = JdbcRefreshFamilyRepository(jdbc)
+        val createdAt = Instant.now().minusSeconds(120).truncatedTo(ChronoUnit.MICROS)
+        val deletionTime = createdAt.plusSeconds(30)
+        val accountId = insertAccount(createdAt)
+        val otherAccountId = insertAccount(createdAt)
+        val firstCredentialId = UUID.randomUUID()
+        val secondCredentialId = UUID.randomUUID()
+        val first = activeRefreshFamily(accountId, firstCredentialId, createdAt)
+        val later = activeRefreshFamily(accountId, secondCredentialId, createdAt.plusSeconds(60))
+        val alreadyRevoked = activeRefreshFamily(accountId, UUID.randomUUID(), createdAt).also {
+            it.revoke(RefreshFamilyRevokeReason.TOKEN_REUSE_DETECTED, createdAt.plusSeconds(10))
+        }
+        val otherAccountFamily = activeRefreshFamily(otherAccountId, UUID.randomUUID(), createdAt)
+
+        transactions.executeWithoutResult {
+            repository.add(first)
+            repository.add(later)
+            repository.add(alreadyRevoked)
+            repository.add(otherAccountFamily)
+        }
+        assertThat(requireNotNull(repository.findCredentialLookup(firstCredentialId)).accountId)
+            .isEqualTo(accountId)
+
+        transactions.executeWithoutResult { repository.revokeAllForAccount(accountId, deletionTime) }
+
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT count(*) FROM refresh_families
+                WHERE account_id = ? AND status = 'REVOKED'
+                """.trimIndent(),
+                Int::class.java,
+                accountId,
+            ),
+        ).isEqualTo(3)
+        assertThat(refreshFamilyState(first.id))
+            .containsExactly("REVOKED", deletionTime, "LOGOUT")
+        assertThat(refreshFamilyState(later.id))
+            .containsExactly("REVOKED", later.lastActivityAt, "LOGOUT")
+        assertThat(refreshFamilyState(alreadyRevoked.id))
+            .containsExactly(
+                "REVOKED",
+                alreadyRevoked.revokedAt,
+                RefreshFamilyRevokeReason.TOKEN_REUSE_DETECTED.name,
+            )
+        assertThat(refreshFamilyState(otherAccountFamily.id))
+            .containsExactly("ACTIVE", null, null)
+    }
+
+    @Test
+    fun `login and deletion serialize safely in either account lock order`() {
+        val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
+
+        val loginFirst = accountFixture("login-first", now)
+        val loginFirstFamilies = JdbcRefreshFamilyRepository(jdbc)
+        val loginFirstLock = heldLock()
+        val deletionWaiter = blockedWaiter()
+        val loginFirstResult = forceBlockedOrder(
+            holderLock = loginFirstLock,
+            waiter = deletionWaiter,
+            holder = {
+                loginHandler(
+                    accounts = hookedAccounts(
+                        afterEmailLock = loginFirstLock::hold,
+                    ),
+                    families = loginFirstFamilies,
+                    now = now,
+                ).execute(loginFirst.email.value, TEST_PASSWORD, null, TEST_IP)
+            },
+            contender = {
+                deletionHandler(
+                    accountId = loginFirst.accountId,
+                    accounts = hookedAccounts(
+                        beforeIdLock = deletionWaiter::captureBackend,
+                    ),
+                    families = loginFirstFamilies,
+                    now = now,
+                ).execute(deletionCommand())
+            },
+        )
+
+        assertThat(loginFirstResult.first.accountId).isEqualTo(loginFirst.accountId)
+        assertDeletionInvariant(loginFirst.accountId)
+        assertThat(refreshFamilyCounts(loginFirst.accountId)).containsExactly(1, 0)
+
+        val deletionFirst = accountFixture("deletion-first", now)
+        val deletionFirstFamilies = JdbcRefreshFamilyRepository(jdbc)
+        val deletionFirstLock = heldLock()
+        val loginWaiter = blockedWaiter()
+        val deletionFirstResult = forceBlockedOrder(
+            holderLock = deletionFirstLock,
+            waiter = loginWaiter,
+            holder = {
+                deletionHandler(
+                    accountId = deletionFirst.accountId,
+                    accounts = hookedAccounts(
+                        afterIdLock = deletionFirstLock::hold,
+                    ),
+                    families = deletionFirstFamilies,
+                    now = now,
+                ).execute(deletionCommand())
+            },
+            contender = {
+                try {
+                    loginHandler(
+                        accounts = hookedAccounts(
+                            beforeEmailLock = loginWaiter::captureBackend,
+                        ),
+                        families = deletionFirstFamilies,
+                        now = now,
+                    ).execute(deletionFirst.email.value, TEST_PASSWORD, null, TEST_IP)
+                    true
+                } catch (_: InvalidCredentialsException) {
+                    false
+                }
+            },
+        )
+
+        assertThat(deletionFirstResult.second).isFalse()
+        assertDeletionInvariant(deletionFirst.accountId)
+        assertThat(refreshFamilyCounts(deletionFirst.accountId)).containsExactly(0, 0)
+    }
+
+    @Test
+    fun `refresh and deletion serialize safely in either account lock order`() {
+        val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
+
+        val refreshFirst = accountFixture("refresh-first", now)
+        val refreshFirstFamilies = JdbcRefreshFamilyRepository(jdbc)
+        val refreshFirstTokens = TestRefreshTokens()
+        val refreshFirstCredential = seedRefreshFamily(
+            refreshFirst.accountId,
+            refreshFirstFamilies,
+            refreshFirstTokens,
+            now,
+        )
+        val refreshFirstLock = heldLock()
+        val deletionWaiter = blockedWaiter()
+        val refreshFirstResult = forceBlockedOrder(
+            holderLock = refreshFirstLock,
+            waiter = deletionWaiter,
+            holder = {
+                refreshHandler(
+                    accounts = hookedAccounts(
+                        afterIdLock = refreshFirstLock::hold,
+                    ),
+                    families = refreshFirstFamilies,
+                    tokens = refreshFirstTokens,
+                    now = now,
+                ).execute(refreshFirstCredential, UUID.randomUUID(), TEST_IP)
+            },
+            contender = {
+                deletionHandler(
+                    accountId = refreshFirst.accountId,
+                    accounts = hookedAccounts(
+                        beforeIdLock = deletionWaiter::captureBackend,
+                    ),
+                    families = refreshFirstFamilies,
+                    now = now,
+                ).execute(deletionCommand())
+            },
+        )
+
+        assertThat(refreshFirstResult.first.accountId).isEqualTo(refreshFirst.accountId)
+        assertDeletionInvariant(refreshFirst.accountId)
+        assertThat(refreshFamilyCounts(refreshFirst.accountId)).containsExactly(1, 0)
+        assertThat(refreshCredentialCount(refreshFirst.accountId)).isEqualTo(2)
+
+        val deletionFirst = accountFixture("refresh-after-deletion", now)
+        val deletionFirstFamilies = JdbcRefreshFamilyRepository(jdbc)
+        val deletionFirstTokens = TestRefreshTokens()
+        val deletionFirstCredential = seedRefreshFamily(
+            deletionFirst.accountId,
+            deletionFirstFamilies,
+            deletionFirstTokens,
+            now,
+        )
+        val deletionFirstLock = heldLock()
+        val refreshWaiter = blockedWaiter()
+        val deletionFirstResult = forceBlockedOrder(
+            holderLock = deletionFirstLock,
+            waiter = refreshWaiter,
+            holder = {
+                deletionHandler(
+                    accountId = deletionFirst.accountId,
+                    accounts = hookedAccounts(
+                        afterIdLock = deletionFirstLock::hold,
+                    ),
+                    families = deletionFirstFamilies,
+                    now = now,
+                ).execute(deletionCommand())
+            },
+            contender = {
+                try {
+                    refreshHandler(
+                        accounts = hookedAccounts(
+                            beforeIdLock = refreshWaiter::captureBackend,
+                        ),
+                        families = deletionFirstFamilies,
+                        tokens = deletionFirstTokens,
+                        now = now,
+                    ).execute(deletionFirstCredential, UUID.randomUUID(), TEST_IP)
+                    true
+                } catch (_: InvalidTokenException) {
+                    false
+                }
+            },
+        )
+
+        assertThat(deletionFirstResult.second).isFalse()
+        assertDeletionInvariant(deletionFirst.accountId)
+        assertThat(refreshFamilyCounts(deletionFirst.accountId)).containsExactly(1, 0)
+        assertThat(refreshCredentialCount(deletionFirst.accountId)).isEqualTo(1)
+    }
+
+    @Test
+    fun `V4 upgrades a V3 database and keeps old shaped account inserts active`() {
+        val schema = "identity_upgrade_${UUID.randomUUID().toString().replace("-", "")}"
+        jdbc.execute("CREATE SCHEMA $schema")
+        val flywayV3 = Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .target(MigrationVersion.fromVersion("3"))
+            .load()
+        flywayV3.migrate()
+
+        val accountBeforeUpgrade = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO $schema.accounts(id, created_at) VALUES (?, ?)",
+            accountBeforeUpgrade,
+            Instant.now().truncatedTo(ChronoUnit.MICROS).asJdbcTimestamp(),
+        )
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT count(*) FROM information_schema.columns
+                WHERE table_schema = ? AND table_name = 'accounts' AND column_name = 'status'
+                """.trimIndent(),
+                Int::class.java,
+                schema,
+            ),
+        ).isZero()
+
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .load()
+            .migrate()
+
+        val accountAfterUpgrade = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO $schema.accounts(id, created_at) VALUES (?, ?)",
+            accountAfterUpgrade,
+            Instant.now().truncatedTo(ChronoUnit.MICROS).asJdbcTimestamp(),
+        )
+        assertThat(
+            jdbc.queryForList(
+                "SELECT status FROM $schema.accounts ORDER BY id",
+                String::class.java,
+            ),
+        ).containsExactlyInAnyOrder("ACTIVE", "ACTIVE")
+        assertThat(
+            jdbc.queryForObject(
+                """
+                SELECT count(*) FROM information_schema.tables
+                WHERE table_schema = ? AND table_name = 'account_deletion_requests'
+                """.trimIndent(),
+                Int::class.java,
+                schema,
             ),
         ).isEqualTo(1)
     }
@@ -497,6 +942,218 @@ class JdbcConcurrencyIntegrationTest {
         }.isInstanceOf(DataIntegrityViolationException::class.java)
     }
 
+    private fun accountFixture(label: String, now: Instant): AccountFixture {
+        val email = CanonicalEmail.reconstitute(
+            "$label-${UUID.randomUUID().toString().take(8)}@example.ru",
+        )
+        val account = Account.register(
+            id = UUID.randomUUID(),
+            email = email,
+            passwordHash = TEST_PASSWORD_HASH,
+            now = now.minusSeconds(60),
+        ).account
+        transactions.executeWithoutResult { JdbcAccountRepository(jdbc).add(account) }
+        return AccountFixture(account.id, email)
+    }
+
+    private fun hookedAccounts(
+        beforeIdLock: () -> Unit = {},
+        afterIdLock: () -> Unit = {},
+        beforeEmailLock: () -> Unit = {},
+        afterEmailLock: () -> Unit = {},
+    ): AccountRepository = HookedAccountRepository(
+        delegate = JdbcAccountRepository(jdbc),
+        beforeIdLock = beforeIdLock,
+        afterIdLock = afterIdLock,
+        beforeEmailLock = beforeEmailLock,
+        afterEmailLock = afterEmailLock,
+    )
+
+    private fun loginHandler(
+        accounts: AccountRepository,
+        families: JdbcRefreshFamilyRepository,
+        now: Instant,
+    ): LoginWithEmailHandler {
+        val tokens = TestRefreshTokens()
+        return LoginWithEmailHandler(
+            accounts = accounts,
+            transactions = TemplateTransactionRunner(transactions),
+            passwordPolicy = PasswordPolicy(),
+            passwordHashing = TestPasswordHashing,
+            rateLimiter = testRateLimiter(),
+            sessionIssuer = sessionIssuer(families, tokens),
+            currentTime = CurrentTimeProvider { now },
+        )
+    }
+
+    private fun refreshHandler(
+        accounts: AccountRepository,
+        families: JdbcRefreshFamilyRepository,
+        tokens: TestRefreshTokens,
+        now: Instant,
+    ): RefreshSessionHandler = RefreshSessionHandler(
+        accounts = accounts,
+        families = families,
+        transactions = TemplateTransactionRunner(transactions),
+        refreshTokens = tokens,
+        rateLimiter = testRateLimiter(),
+        sessionIssuer = sessionIssuer(families, tokens),
+        currentTime = CurrentTimeProvider { now },
+    )
+
+    private fun deletionHandler(
+        accountId: UUID,
+        accounts: AccountRepository,
+        families: JdbcRefreshFamilyRepository,
+        now: Instant,
+    ): RequestAccountDeletionHandler = RequestAccountDeletionHandler(
+        accounts = accounts,
+        deletionRequests = JdbcAccountDeletionRequestRepository(jdbc),
+        families = families,
+        transactions = TemplateTransactionRunner(transactions),
+        accessTokens = AccessTokenVerifier { _, _ -> VerifiedAccessToken(accountId) },
+        passwordPolicy = PasswordPolicy(),
+        passwordHashing = TestPasswordHashing,
+        rateLimiter = testRateLimiter(),
+        ids = RandomIds,
+        events = NoOpIdentityEvents,
+        currentTime = CurrentTimeProvider { now },
+    )
+
+    private fun deletionCommand(): AccountDeletionCommand = AccountDeletionCommand(
+        accessToken = "test-access-token",
+        currentPassword = TEST_PASSWORD,
+        idempotencyKey = UUID.randomUUID(),
+        ip = TEST_IP,
+    )
+
+    private fun sessionIssuer(
+        families: JdbcRefreshFamilyRepository,
+        tokens: TestRefreshTokens,
+    ): SessionIssuer = SessionIssuer(
+        families = families,
+        tokens = tokens,
+        ids = RandomIds,
+        accessTokens = TestAccessTokens,
+        policy = IdentityPolicy(
+            refreshFamilyTtl = Duration.ofDays(30),
+            registrationAttemptTtl = Duration.ofHours(24),
+            verificationTokenTtl = Duration.ofMinutes(30),
+            verificationResendCooldown = Duration.ofMinutes(1),
+        ),
+    )
+
+    private fun seedRefreshFamily(
+        accountId: UUID,
+        families: JdbcRefreshFamilyRepository,
+        tokens: TestRefreshTokens,
+        now: Instant,
+    ): String {
+        val credentialId = UUID.randomUUID()
+        val credential = tokens.create(credentialId)
+        val family = RefreshFamily.start(
+            id = UUID.randomUUID(),
+            accountId = accountId,
+            firstCredentialId = credentialId,
+            firstVerifierHash = credential.verifierHash,
+            deviceId = null,
+            expiresAt = now.plus(30, ChronoUnit.DAYS),
+            now = now,
+        )
+        transactions.executeWithoutResult { families.add(family) }
+        return credential.value
+    }
+
+    private fun testRateLimiter(): IdentityRateLimiter = IdentityRateLimiter(
+        repository = object : RateLimitRepository {
+            override fun consume(scopeKey: String, window: Duration): RateLimitWindow =
+                RateLimitWindow(attemptCount = 1, retryAfterSeconds = window.seconds)
+        },
+        scopeHasher = RateLimitScopeHasher { namespace, value -> "$namespace:$value" },
+    )
+
+    private fun assertDeletionInvariant(accountId: UUID) {
+        assertThat(
+            jdbc.queryForObject("SELECT status FROM accounts WHERE id = ?", String::class.java, accountId),
+        ).isEqualTo(AccountStatus.DELETION_PENDING.name)
+        assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM account_deletion_requests WHERE account_id = ?",
+                Int::class.java,
+                accountId,
+            ),
+        ).isEqualTo(1)
+        assertThat(refreshFamilyCounts(accountId).last()).isZero()
+    }
+
+    private fun refreshFamilyCounts(accountId: UUID): List<Int> = jdbc.query(
+        """
+        SELECT count(*)::integer AS total,
+               count(*) FILTER (WHERE status = 'ACTIVE')::integer AS active
+        FROM refresh_families
+        WHERE account_id = ?
+        """.trimIndent(),
+        { result, _ -> listOf(result.getInt("total"), result.getInt("active")) },
+        accountId,
+    ).single()
+
+    private fun refreshCredentialCount(accountId: UUID): Int = requireNotNull(
+        jdbc.queryForObject(
+            """
+            SELECT count(*)
+            FROM refresh_credentials c
+            JOIN refresh_families f ON f.id = c.family_id
+            WHERE f.account_id = ?
+            """.trimIndent(),
+            Int::class.java,
+            accountId,
+        ),
+    )
+
+    private fun heldLock(): HeldLock = HeldLock()
+
+    private fun blockedWaiter(): BlockedWaiter = BlockedWaiter(jdbc)
+
+    private fun <H, C> forceBlockedOrder(
+        holderLock: HeldLock,
+        waiter: BlockedWaiter,
+        holder: () -> H,
+        contender: () -> C,
+    ): Pair<H, C> {
+        val executor = Executors.newFixedThreadPool(2)
+        val holderFuture = CompletableFuture.supplyAsync(holder, executor)
+        try {
+            check(holderLock.acquired.await(RACE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                "Timed out waiting for the first transaction to hold the account lock"
+            }
+            val contenderFuture = CompletableFuture.supplyAsync(contender, executor)
+            val contenderPid = waiter.backendPid.get(RACE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            awaitDatabaseBlock(contenderPid)
+            holderLock.release.countDown()
+            return holderFuture.get(RACE_TIMEOUT_SECONDS, TimeUnit.SECONDS) to
+                contenderFuture.get(RACE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } finally {
+            holderLock.release.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    private fun awaitDatabaseBlock(backendPid: Int) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(RACE_TIMEOUT_SECONDS)
+        while (System.nanoTime() < deadline) {
+            val blockerCount = requireNotNull(
+                jdbc.queryForObject(
+                    "SELECT cardinality(pg_blocking_pids(?))",
+                    Int::class.java,
+                    backendPid,
+                ),
+            )
+            if (blockerCount > 0) return
+            Thread.sleep(BLOCK_POLL_MILLISECONDS)
+        }
+        error("PostgreSQL backend $backendPid did not block on the held account lock")
+    }
+
     private fun insertOutbox(occurredAt: Instant, publishedAt: Instant?): UUID {
         val eventId = UUID.randomUUID()
         jdbc.update(
@@ -514,6 +1171,56 @@ class JdbcConcurrencyIntegrationTest {
         )
         return eventId
     }
+
+    private fun insertDeletionRequest(
+        accountId: UUID,
+        idempotencyKey: UUID,
+        requestedAt: Instant,
+        status: String = "DELETION_PENDING",
+    ): UUID = UUID.randomUUID().also { id ->
+        jdbc.update(
+            """
+            INSERT INTO account_deletion_requests(
+                id, account_id, idempotency_key, status, requested_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """.trimIndent(),
+            id,
+            accountId,
+            idempotencyKey,
+            status,
+            requestedAt.asJdbcTimestamp(),
+        )
+    }
+
+    private fun activeRefreshFamily(
+        accountId: UUID,
+        credentialId: UUID,
+        createdAt: Instant,
+    ): RefreshFamily = RefreshFamily.start(
+        id = UUID.randomUUID(),
+        accountId = accountId,
+        firstCredentialId = credentialId,
+        firstVerifierHash = uniqueVerifierHash(),
+        deviceId = null,
+        expiresAt = createdAt.plus(30, ChronoUnit.DAYS),
+        now = createdAt,
+    )
+
+    private fun refreshFamilyState(familyId: UUID): List<Any?> = jdbc.query(
+        """
+        SELECT status, revoked_at, revoke_reason
+        FROM refresh_families
+        WHERE id = ?
+        """.trimIndent(),
+        { result, _ ->
+            listOf(
+                result.getString("status"),
+                result.getTimestamp("revoked_at")?.toInstant(),
+                result.getString("revoke_reason"),
+            )
+        },
+        familyId,
+    ).single()
 
     private fun insertAccount(createdAt: Instant): UUID = UUID.randomUUID().also { id ->
         jdbc.update("INSERT INTO accounts(id, created_at) VALUES (?, ?)", id, createdAt.asJdbcTimestamp())
@@ -584,9 +1291,142 @@ class JdbcConcurrencyIntegrationTest {
         )
     }
 
+    private data class AccountFixture(
+        val accountId: UUID,
+        val email: CanonicalEmail,
+    )
+
+    private class HeldLock {
+        val acquired = CountDownLatch(1)
+        val release = CountDownLatch(1)
+
+        fun hold() {
+            acquired.countDown()
+            check(release.await(RACE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                "Timed out waiting to release the held account lock"
+            }
+        }
+    }
+
+    private class BlockedWaiter(
+        private val jdbc: JdbcTemplate,
+    ) {
+        val backendPid = CompletableFuture<Int>()
+
+        fun captureBackend() {
+            val pid = requireNotNull(
+                jdbc.queryForObject("SELECT pg_backend_pid()", Int::class.java),
+            )
+            check(backendPid.complete(pid)) { "Contender backend was captured more than once" }
+        }
+    }
+
+    private class HookedAccountRepository(
+        private val delegate: AccountRepository,
+        private val beforeIdLock: () -> Unit,
+        private val afterIdLock: () -> Unit,
+        private val beforeEmailLock: () -> Unit,
+        private val afterEmailLock: () -> Unit,
+    ) : AccountRepository {
+        override fun lockRegistration(email: CanonicalEmail) = delegate.lockRegistration(email)
+
+        override fun findByEmail(email: CanonicalEmail): Account? = delegate.findByEmail(email)
+
+        override fun findById(accountId: UUID): Account? = delegate.findById(accountId)
+
+        override fun findByEmailForUpdate(email: CanonicalEmail): Account? {
+            beforeEmailLock()
+            return delegate.findByEmailForUpdate(email).also { afterEmailLock() }
+        }
+
+        override fun findByIdForUpdate(accountId: UUID): Account? {
+            beforeIdLock()
+            return delegate.findByIdForUpdate(accountId).also { afterIdLock() }
+        }
+
+        override fun add(account: Account) = delegate.add(account)
+
+        override fun save(account: Account) = delegate.save(account)
+    }
+
+    private class TemplateTransactionRunner(
+        private val transactions: TransactionTemplate,
+    ) : TransactionRunner {
+        override fun <T : Any> required(block: () -> T): T = requireNotNull(
+            transactions.execute { block() },
+        )
+
+        override fun requiredUnit(block: () -> Unit) {
+            transactions.executeWithoutResult { block() }
+        }
+    }
+
+    private class TestRefreshTokens : RefreshTokenService {
+        private val parsedTokens = java.util.concurrent.ConcurrentHashMap<String, ParsedSecretToken>()
+
+        override fun create(id: UUID): GeneratedSecretToken {
+            val value = "test-refresh.$id.${UUID.randomUUID()}"
+            val parsed = ParsedSecretToken(id, uniqueVerifierHash())
+            parsedTokens[value] = parsed
+            return GeneratedSecretToken(id, value, parsed.verifierHash)
+        }
+
+        override fun createRefreshSuccessor(
+            predecessorRawToken: String,
+            replacementId: UUID,
+            idempotencyKey: UUID,
+        ): GeneratedSecretToken = create(replacementId)
+
+        override fun parse(value: String): ParsedSecretToken =
+            parsedTokens[value] ?: throw InvalidTokenException()
+
+        override fun verifierMatches(expected: VerifierHash, actual: VerifierHash): Boolean = expected == actual
+    }
+
+    private object RandomIds : IdGenerator {
+        override fun next(): UUID = UUID.randomUUID()
+    }
+
+    private object TestPasswordHashing : PasswordHashing {
+        override val dummyHash: String = "test-dummy-hash"
+
+        override fun encode(password: String): String = error("Password encoding is not used by these race tests")
+
+        override fun matches(password: String, encoded: String): Boolean =
+            password == TEST_PASSWORD && encoded == TEST_PASSWORD_HASH
+    }
+
+    private object TestAccessTokens : AccessTokenProvider {
+        override fun issue(accountId: UUID, sessionId: UUID, now: Instant): IssuedAccessToken =
+            IssuedAccessToken("test-access-token", 900)
+
+        override fun publicKeys(): List<PublicJwk> = emptyList()
+    }
+
+    private object NoOpIdentityEvents : IdentityEventRecorder {
+        override fun verificationRequested(
+            registrationAttemptId: UUID,
+            email: CanonicalEmail,
+            locale: LocaleTag?,
+            rawToken: String,
+            expiresAt: Instant,
+            now: Instant,
+        ) = error("Verification events are not used by these race tests")
+
+        override fun accountActivated(event: AccountActivated) =
+            error("Activation events are not used by these race tests")
+
+        override fun accountDeletionRequested(event: AccountDeletionRequested) = Unit
+    }
+
     companion object {
         private const val CONCURRENT_ATTEMPTS = 8
         private const val PUBLISHED_EVENTS = 20
+        private const val RACE_TIMEOUT_SECONDS = 15L
+        private const val BLOCK_POLL_MILLISECONDS = 10L
+        private const val TEST_PASSWORD = "CorrectPassword-123"
+        private const val TEST_PASSWORD_HASH = "encoded-test-password"
+        private const val TEST_IP = "192.0.2.44"
 
         @Container
         @JvmStatic

@@ -1,4 +1,9 @@
 spring:
+  config:
+    # Production mounts server-owned secret files using Spring Boot configtree
+    # names such as `spring.datasource.password`. The directory is optional for
+    # local development and tests.
+    import: optional:configtree:/run/secrets/
   application:
     name: identity
   datasource:
@@ -25,7 +30,7 @@ spring:
 
 server:
   port: ${PORT:8080}
-  # Forwarded headers are ignored until the deployment defines a trusted proxy boundary.
+  # ClientIpResolver applies the trusted proxy boundary; servlet forwarding stays disabled.
   forward-headers-strategy: none
 
 management:
@@ -43,8 +48,8 @@ cookie:
     registration-attempt-ttl: P1D
     verification-token-ttl: PT30M
     verification-resend-cooldown: PT1M
-    issuer: https://api.cookie.app
-    audience: cookie-api
+    issuer: ${COOKIE_IDENTITY_ISSUER:https://api.cookie.app}
+    audience: ${COOKIE_IDENTITY_AUDIENCE:cookie-api}
     jwt-private-key-path: ${COOKIE_IDENTITY_JWT_PRIVATE_KEY_PATH:}
     jwt-retiring-public-key-paths: ${COOKIE_IDENTITY_JWT_RETIRING_PUBLIC_KEY_PATHS:}
     notification-public-key-path: ${COOKIE_NOTIFICATION_PUBLIC_KEY_PATH:}

@@ -1,5 +1,6 @@
 package com.cookie.identity.application
 
+import com.cookie.identity.domain.AccountDeletionRequestStatus
 import com.cookie.identity.domain.VerifierHash
 import java.time.Duration
 import java.time.Instant
@@ -98,5 +99,27 @@ data class RateLimitWindow(val attemptCount: Int, val retryAfterSeconds: Long) {
 
 data class RefreshCredentialLookup(
     val familyId: UUID,
+    val accountId: UUID,
     val verifierHash: VerifierHash,
+)
+
+data class VerifiedAccessToken(
+    val accountId: UUID,
+)
+
+class AccountDeletionCommand(
+    val accessToken: String,
+    val currentPassword: String,
+    val idempotencyKey: UUID,
+    val ip: String,
+) {
+    override fun toString(): String =
+        "AccountDeletionCommand(accessToken=[redacted],currentPassword=[redacted]," +
+            "idempotencyKey=[redacted],ip=[redacted])"
+}
+
+data class AccountDeletionResult(
+    val deletionRequestId: UUID,
+    val status: AccountDeletionRequestStatus,
+    val requestedAt: Instant,
 )

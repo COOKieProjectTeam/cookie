@@ -8,8 +8,11 @@ import com.cookie.identity.application.ParsedSecretToken
 import com.cookie.identity.application.PublicJwk
 import com.cookie.identity.application.RateLimitWindow
 import com.cookie.identity.application.RefreshCredentialLookup
+import com.cookie.identity.application.VerifiedAccessToken
 import com.cookie.identity.domain.Account
 import com.cookie.identity.domain.AccountActivated
+import com.cookie.identity.domain.AccountDeletionRequest
+import com.cookie.identity.domain.AccountDeletionRequested
 import com.cookie.identity.domain.CanonicalEmail
 import com.cookie.identity.domain.LocaleTag
 import com.cookie.identity.domain.NormalizedPassword
@@ -24,6 +27,7 @@ import java.util.UUID
 interface AccountRepository {
     fun lockRegistration(email: CanonicalEmail)
     fun findByEmail(email: CanonicalEmail): Account?
+    fun findById(accountId: UUID): Account?
     fun findByEmailForUpdate(email: CanonicalEmail): Account?
     fun findByIdForUpdate(accountId: UUID): Account?
     fun add(account: Account)
@@ -45,8 +49,14 @@ interface RegistrationAttemptRepository {
 interface RefreshFamilyRepository {
     fun findCredentialLookup(id: UUID): RefreshCredentialLookup?
     fun findByCredentialIdForUpdate(credentialId: UUID): RefreshFamily?
+    fun revokeAllForAccount(accountId: UUID, now: Instant)
     fun add(family: RefreshFamily)
     fun save(family: RefreshFamily)
+}
+
+interface AccountDeletionRequestRepository {
+    fun findByAccountId(accountId: UUID): AccountDeletionRequest?
+    fun add(request: AccountDeletionRequest)
 }
 
 interface RateLimitRepository {
@@ -106,6 +116,10 @@ interface AccessTokenProvider {
     fun publicKeys(): List<PublicJwk>
 }
 
+fun interface AccessTokenVerifier {
+    fun verify(rawToken: String, now: Instant): VerifiedAccessToken
+}
+
 interface IdentityEventRecorder {
     fun verificationRequested(
         registrationAttemptId: UUID,
@@ -117,6 +131,8 @@ interface IdentityEventRecorder {
     )
 
     fun accountActivated(event: AccountActivated)
+
+    fun accountDeletionRequested(event: AccountDeletionRequested)
 }
 
 interface TransactionRunner {

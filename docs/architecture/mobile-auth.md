@@ -117,6 +117,47 @@ session record. Clearing local credentials without reaching the server is a
 local sign-out and must be described as such because an already issued access
 token remains valid until expiry.
 
+## Account deletion lifecycle
+
+Account deletion is an authenticated asynchronous command, not a local logout.
+Before `POST /v1/auth/account-deletion-requests`, the coordinator creates a
+cryptographically random RFC 4122 UUIDv4 `Idempotency-Key` and keeps it in
+protected, non-synchronizing storage while the result is unresolved. Network
+retry repeats the same key and the same current password. Plaintext password is
+never persisted: after process death the user must enter it again and the
+coordinator reuses the stored key only if it can still obtain a valid access
+JWT. The key, password and access JWT never enter logs, analytics, crash reports,
+clipboard, URLs or backup.
+
+The UI does not supply account id or device id. Identity derives account id only
+from the verified access-token `sub`, then applies `30/IP/hour` and
+`10/account/hour` limits before password hashing. After authentication,
+validation, rate-limit and availability gates, a successful or exact-retry
+response is `202` with the original `deletionRequestId`, `DELETION_PENDING` and
+`requestedAt`. A retry can still receive `429` or retryable `503`; it keeps the
+same key and respects `Retry-After`. A lost response is retried; it must not be
+replaced by an optimistic local success screen.
+
+There is an explicit v1 recovery limit: if a successful response is lost, the
+process then dies, the in-memory access JWT disappears and the committed command
+has already revoked refresh, the client has no authenticated status operation
+with which to resolve the result. It retains an unresolved local marker and must
+not claim either completion or failure. A later status/recovery contract is part
+of the distributed-completion stage.
+
+Only after a definite `202` does the coordinator delete the whole secure session
+and any in-memory access token, then present deletion as pending rather than
+completed. There is no cancellation or grace period in v1. Server-side refresh
+families are revoked, but an access JWT issued before acceptance remains
+cryptographically valid until `exp`. This residual window is up to the effective
+configured access-token TTL (15 minutes by default; configuration currently permits
+up to 24 hours) because no denylist or introspection exists. Clearing local
+state reduces accidental reuse but cannot shorten that window for a copied token.
+
+Downstream consumers and acknowledgements are not implemented in v1, so the
+client must not display a completed-deletion state. A later product flow may add
+status reporting only together with the distributed completion protocol.
+
 ## Required tests before UI integration
 
 - process death before register, after `202`, and around confirm `204`;
@@ -127,5 +168,7 @@ token remains valid until expiry.
 - `429`, retryable `503`, lost success response and stale exact retry;
 - secure-store write failure without partial token replacement;
 - logout racing with an in-flight refresh;
+- account deletion racing with refresh/login and process death around its `202`;
+- exact deletion retry, competing keys and secure removal only after definite acceptance;
 - assertions that logs and analytics never contain proof, verification token,
-  access token, refresh token or `Idempotency-Key`.
+  access token, refresh token, current password or `Idempotency-Key`.

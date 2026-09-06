@@ -54,3 +54,9 @@ lag, dead-letter messages, database saturation and Redis/NATS unavailability.
 Grafana is accepted. Metrics, logs and traces storage/export components are not
 yet selected; Prometheus, Loki, Tempo and OpenTelemetry must not be treated as
 accepted until a separate ADR chooses them.
+
+Первый single-VM production slice из ADR 0012 не делает эти target requirements
+выполненными автоматически. До хранения ценных production-данных обязательны
+как минимум внешняя проверка HTTPS endpoint, alerts по VM/disk, регулярные
+snapshots data disk и проверенный restore. Локальный container healthcheck не
+заменяет внешний мониторинг отказа VM или зоны.

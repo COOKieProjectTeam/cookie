@@ -18,4 +18,6 @@ local.properties
 *.tfvars
 *.tfstate
 *.tfstate.*
+*.tfplan
+backend.hcl
 **/.terraform

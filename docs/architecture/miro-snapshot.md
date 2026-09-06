@@ -51,6 +51,10 @@ These user decisions supersede missing or older board details:
 - ADR 0008 resolved the Identity pilot toolchain: JDK 25, Spring Boot MVC,
   Spring JDBC, PostgreSQL, NATS `jnats` and OpenAPI Generator. ADR 0009 resolved
   its email/password, token, key and encrypted-notification profile.
+- ADR 0011 added `account.deletion.requested` v1 and its target data-owner
+  consumers after this extraction. Their inbox handlers and acknowledgement
+  events are not implemented, and the board snapshot has not yet been updated;
+  the accepted ADR and Git architecture model are authoritative meanwhile.
 - The Identity publisher subject mapping, `COOKIE_EVENTS` stream and retry range
   are fixed in `messaging.md` and `model/events.yaml`. Process/container
   topology, consumer retry/dead-letter policy, retention/cleanup durations and

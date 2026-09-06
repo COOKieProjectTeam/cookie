@@ -4,6 +4,7 @@ import com.cookie.identity.application.ports.IdGenerator
 import com.cookie.identity.application.ports.IdentityEventRecorder
 import com.cookie.identity.domain.LocaleTag
 import com.cookie.identity.domain.AccountActivated
+import com.cookie.identity.domain.AccountDeletionRequested
 import com.cookie.identity.domain.CanonicalEmail
 import com.cookie.identity.persistence.JdbcOutboxRepository
 import com.cookie.identity.security.NotificationPayloadEncryptor
@@ -66,6 +67,25 @@ class OutboxIdentityEventRecorder(
             aggregateId = event.accountId.toString(),
             payloadJson = objectMapper.writeValueAsString(payload),
             occurredAt = event.activatedAt,
+            correlationId = correlationId(),
+            causationId = null,
+            traceId = traceId(),
+        )
+    }
+
+    override fun accountDeletionRequested(event: AccountDeletionRequested) {
+        val payload = objectMapper.createObjectNode()
+            .put("accountId", event.accountId.toString())
+            .put("deletionRequestId", event.deletionRequestId.toString())
+            .put("requestedAt", event.requestedAt.toString())
+        outbox.insert(
+            eventId = ids.next(),
+            eventType = "account.deletion.requested",
+            eventVersion = 1,
+            aggregateType = "account",
+            aggregateId = event.accountId.toString(),
+            payloadJson = objectMapper.writeValueAsString(payload),
+            occurredAt = event.requestedAt,
             correlationId = correlationId(),
             causationId = null,
             traceId = traceId(),

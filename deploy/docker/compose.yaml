@@ -10,7 +10,7 @@ services:
       - "127.0.0.1:8081:8080"
 
   postgres:
-    image: postgres:18.6-alpine
+    image: postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     environment:
       POSTGRES_DB: identity
       POSTGRES_USER: identity
@@ -26,7 +26,7 @@ services:
       - identity-postgres:/var/lib/postgresql
 
   nats:
-    image: nats:2.14.6-alpine
+    image: nats:2.14.6-alpine3.22@sha256:ad7a43eb7e3337c3c38ce5d784d1461791f95f730f252d2b25eee699752a0ca3
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "127.0.0.1:4222:4222"
@@ -35,7 +35,7 @@ services:
       - nats-data:/data
 
   mailpit:
-    image: axllent/mailpit:v1.31.0
+    image: axllent/mailpit:v1.31.0@sha256:c96991d9bef73594c246d89ca81411d4e916f03e76a7d2d72fa2ab5dd3c9ce24
     ports:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"

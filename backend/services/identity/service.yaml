@@ -10,6 +10,8 @@ messaging:
   publishes:
     - type: account.activated
       version: 1
+    - type: account.deletion.requested
+      version: 1
     - type: notification.email.requested
       version: 1
   consumes: []

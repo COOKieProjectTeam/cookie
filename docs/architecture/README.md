@@ -58,8 +58,9 @@ ADR 0003–0010, имеют приоритет над более старым с
 - Health Data Service владеет доменными данными здоровья, но никогда не владеет
   `/healthz` или `/readyz` других компонентов.
 - JDK/framework и Identity publisher profile зафиксированы ADR 0008 и
-  `messaging.md`. Неуказанные deployment topology, consumer retry/dead-letter
-  policy и telemetry backends нельзя выдумывать: они имеют значение `TBD`.
+  `messaging.md`. Начальный single-VM production topology зафиксирован ADR 0012;
+  целевая topology после bootstrap, consumer retry/dead-letter policy и
+  telemetry backends остаются `TBD` и не должны выдумываться.
 
 ## Updating the model
 

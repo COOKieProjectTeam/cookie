@@ -32,4 +32,3 @@ local.properties
 **/.terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl

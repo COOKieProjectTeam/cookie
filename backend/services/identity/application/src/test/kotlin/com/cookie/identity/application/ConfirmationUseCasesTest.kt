@@ -10,6 +10,7 @@ import com.cookie.identity.application.ports.RegistrationSecretService
 import com.cookie.identity.application.ports.TransactionRunner
 import com.cookie.identity.domain.Account
 import com.cookie.identity.domain.AccountActivated
+import com.cookie.identity.domain.AccountDeletionRequested
 import com.cookie.identity.domain.CanonicalEmail
 import com.cookie.identity.domain.LocaleTag
 import com.cookie.identity.domain.NormalizedPassword
@@ -275,6 +276,7 @@ class ConfirmationUseCasesTest {
         var addCount = 0
         override fun lockRegistration(email: CanonicalEmail) = Unit
         override fun findByEmail(email: CanonicalEmail) = account?.takeIf { it.email == email }
+        override fun findById(accountId: UUID) = account?.takeIf { it.id == accountId }
         override fun findByEmailForUpdate(email: CanonicalEmail) = findByEmail(email)
         override fun findByIdForUpdate(accountId: UUID) = account?.takeIf { it.id == accountId }
         override fun add(account: Account) { check(this.account == null); this.account = account; addCount++ }
@@ -296,6 +298,7 @@ class ConfirmationUseCasesTest {
             expiresAt: Instant, now: Instant,
         ) = error("Not used")
         override fun accountActivated(event: AccountActivated) { activations += event }
+        override fun accountDeletionRequested(event: AccountDeletionRequested) = error("Not used")
     }
 
     private class ImmediateTransactions : TransactionRunner {

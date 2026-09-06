@@ -15,6 +15,7 @@ import com.cookie.identity.application.ports.RegistrationAttemptRepository
 import com.cookie.identity.application.ports.RegistrationSecretService
 import com.cookie.identity.application.ports.TransactionRunner
 import com.cookie.identity.domain.Account
+import com.cookie.identity.domain.AccountStatus
 import com.cookie.identity.domain.CanonicalEmail
 import com.cookie.identity.domain.DeviceId
 import com.cookie.identity.domain.InvalidInputException
@@ -171,6 +172,7 @@ class LoginWithEmailHandler(
 }
 
 class RefreshSessionHandler(
+    private val accounts: AccountRepository,
     private val families: RefreshFamilyRepository,
     private val transactions: TransactionRunner,
     private val refreshTokens: RefreshTokenService,
@@ -187,7 +189,10 @@ class RefreshSessionHandler(
             throw InvalidTokenException()
         }
         return transactions.required {
+            val account = accounts.findByIdForUpdate(observed.accountId) ?: return@required RefreshOutcome.Invalid
+            if (account.status != AccountStatus.ACTIVE) return@required RefreshOutcome.Invalid
             val family = families.findByCredentialIdForUpdate(parsed.id) ?: return@required RefreshOutcome.Invalid
+            if (family.accountId != account.id) return@required RefreshOutcome.Invalid
             val expectedVerifier = family.verifierHashFor(parsed.id) ?: return@required RefreshOutcome.Invalid
             val matches = refreshTokens.verifierMatches(expectedVerifier, parsed.verifierHash)
             val now = currentTime.now()
