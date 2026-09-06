@@ -1,18 +1,22 @@
 schema_version: 1
 status: accepted
 source_contracts:
-  public: contracts/openapi/openapi.yaml
+  public_services: contracts/openapi/public/{service-id}.yaml
+  public_bundle: build/generated/openapi/bundled/public.yaml
+  public_roadmap: contracts/openapi/planned.yaml
   runtime: contracts/openapi/runtime.yaml
   internal_service_contracts: contracts/openapi/internal/{service-id}.yaml
 
 generator:
-  product: TBD
-  version: TBD
-  templates_version: TBD
-  selection_blocked_by: kotlin_backend_framework_decision
+  product: openapi-generator
+  version: 7.24.0
+  templates_version: upstream-7.24.0
 
 rules:
   contract_first: true
+  public_service_source_of_truth: true
+  public_bundle_generated: true
+  public_roadmap_generation: forbidden
   generated_sources_committed: false
   generated_output_pattern: "{module}/build/generated/openapi"
   manual_edits_to_generated_sources: forbidden
@@ -25,45 +29,56 @@ rules:
 
 targets:
   - id: kotlin_server_transport
-    status: planned
-    source: public
+    status: active
+    source: public_services
     language: kotlin
     runtime: jvm
     output: server_interfaces_routing_and_transport_models
-    partition: openapi_tag_owner
+    partition: service_contract
+    generator_name: kotlin-spring
+    options:
+      interfaceOnly: true
+      skipDefaultInterface: true
+      useTags: true
+      useSpringBoot4: true
+      useJackson3: true
+      useBeanValidation: false
 
   - id: kotlin_runtime_probes
-    status: planned
+    status: active
     source: runtime
     language: kotlin
     runtime: jvm
     output: shared_server_interfaces_and_transport_models
+    generator_name: kotlin-spring
 
   - id: kmp_public_client
-    status: planned
-    source: public
+    status: configured
+    source: public_bundle
     language: kotlin
     runtime: kotlin_multiplatform
     output: apps/mobile/shared/build/generated/openapi
+    generator_name: kotlin
+    library: multiplatform
 
   - id: kotlin_internal_clients
     status: blocked
     source: internal_service_contracts
     language: kotlin
     runtime: jvm
-    output: clients/{service-id}/build/generated/openapi
+    output: backend/clients/{service-id}/build/generated/openapi
     module_granularity: one_per_callee
     allowed_dependencies: docs/architecture/model/sync-calls.yaml
-    access_policy: services/{service-id}/service.yaml
-    blocked_by: kotlin_backend_framework_decision
+    access_policy: backend/services/{service-id}/service.yaml
 
 ci:
-  validate_openapi: required
+  validate_active_service_openapi: required
+  validate_generated_public_bundle: required
   validate_local_refs: required
   validate_unique_operation_ids: required
   validate_tag_ownership: required
   validate_internal_permissions: required_after_first_internal_contract
   validate_internal_callers: required_after_first_internal_contract
   validate_client_dependencies_against_sync_calls: required_after_gradle_bootstrap
-  compile_generated_sources: required_after_gradle_bootstrap
-  regeneration_diff_check: required_after_generator_selection
+  compile_generated_sources: required
+  regeneration_diff_check: required

@@ -1,0 +1,243 @@
+# Identity Service
+
+Identity v1 supports email/password registration, email confirmation, login,
+idempotent refresh rotation, idempotent logout, asynchronous account-deletion
+requests and ES256 JWKS. The public transport is generated from the service-owned
+`contracts/openapi/public/identity.yaml`; generated sources live under
+`build/generated` and are never committed.
+
+Email confirmation is an idempotent state transition and does not issue a
+session. After a successful `204`, the client uses the regular email/password
+login endpoint. Repeating the same successfully redeemed confirmation token is
+a no-op `204` while its audit record is retained for at least 30 days, so a lost
+response cannot strand an unrecoverable refresh secret. After that bounded
+retention window the token is invalid again.
+
+The canonical BCP 47 locale selected at registration is part of one pending
+`RegistrationAttempt`, so verification resends add child tokens without copying
+the password hash and keep the original language. The attempt lives for 24 hours;
+each email token lives for 30 minutes and expiry checks never depend on cleanup.
+On natural expiry, or when another attempt for the same email wins, the attempt
+becomes an abandoned tombstone: password hash and locale are scrubbed atomically,
+while id/proof fingerprint and token evidence remain for at least 30 days. Thus
+maintenance cannot turn an exact retry into a new email during that bounded window.
+
+Before the first register call, a client must atomically persist a cryptographically
+random `registrationAttemptId` together with its 32-byte `registrationProof` in
+Keychain/Keystore. Network retries repeat the identical id, proof, email, password
+and locale; changing payload under the same id/proof returns `409`. An email token
+has the form `v1e.<attempt-id>.<token-id>.<secret>`, so a deep link can select the
+matching stored proof without putting that proof into the link. After a definite
+or retried `204`, the client deletes the stored pair. Loss of the proof, use on a
+second device, or deliberate restart requires a new id/proof and a new verification email;
+the previous attempt remains unusable without its proof and is scrubbed when it expires
+or when another attempt for the same email wins.
+
+The in-service IP limiter runs at the application boundary, after JSON decoding.
+Production ingress must also limit malformed JSON, slow connections and connection-level
+abuse; the 16 KiB body cap bounds parsing cost but is not a complete DDoS perimeter.
+
+Every logical refresh attempt sends a new cryptographically random UUIDv4 in
+`Idempotency-Key`; a network retry repeats that UUID with the same refresh
+token. Identity returns the same successor refresh token while that immediate
+successor remains current and the family remains active and unexpired. This
+state-bounded recovery survives
+`Retry-After` and client process death without persisting a raw response. Once
+the successor rotates, the exact retry is stale and is rejected without
+revoking the session. Reuse of a redeemed credential with a different key
+atomically revokes the whole logical device session even when its business
+rate-limit bucket is saturated; only a new rotation spends that family bucket.
+
+Within the supported `.ru`/`.рф` provider set, email local parts are a
+case-insensitive product identifier and are stored in lower case. Providers
+that distinguish local-part case are outside this contract.
+
+## Account deletion
+
+`POST /v1/auth/account-deletion-requests` accepts an authenticated, irreversible
+request to start distributed deletion. It requires a valid access JWT, the
+current password and a cryptographically random RFC 4122 UUIDv4
+`Idempotency-Key`; account identity is taken only from the verified JWT `sub`.
+No registered-device check, grace period or cancellation exists in v1.
+
+The command is protected before Argon2 verification by PostgreSQL-backed limits
+of `30/IP/hour` and `10/account/hour`. Both dimensions use the existing
+domain-separated HMAC mechanism; account IDs use namespace `account`. Password,
+access JWT and `Idempotency-Key` must never enter logs or events.
+
+One local transaction locks the account root first, converges exact and
+concurrent requests on one `AccountDeletionRequest`, moves the account to
+`DELETION_PENDING`, revokes every refresh family and writes one
+`account.deletion.requested` v1 outbox event. The event envelope owns `event_id`
+and `occurred_at`; its PII-free business payload contains `accountId`,
+`deletionRequestId` and `requestedAt`. A retry with the same account/key returns
+the same accepted result after authentication, validation, rate-limit and
+availability gates; a different key after acceptance returns the same active
+request without a second event. A retry can still receive `429` or retryable
+`503`, retains its key and follows `Retry-After`. A wrong password creates no
+request row.
+
+Downstream inbox consumers and acknowledgements are not implemented yet, so the
+service does not publish `account.deleted` and cannot leave
+`DELETION_PENDING`. Canonical email and the Argon2id password hash remain stored,
+which also prevents registration with the same email, until a later confirmed
+finalization stage. Identity remains producer-only and does not add an inbox.
+
+Revoking refresh families does not invalidate an access JWT already issued to a
+client. It remains cryptographically valid until `exp`, for up to the effective
+configured TTL (15 minutes by default; configuration currently permits up to 24
+hours), because this version has no access-token denylist or introspection.
+Clients delete their local session after a confirmed `202`, but that action does
+not remove this server-side residual window.
+
+For mixed-version safety the additive schema gives `accounts.status` the default
+`ACTIVE`. Acceptance also writes a far-future credential `locked_until`, which
+makes an old binary deny login even though it does not understand the new account
+state. Refresh-family rows retain the existing stored reason `LOGOUT`; introducing
+a new enum value would break old readers. Public routing/mobile rollout must wait
+until all old Identity pods have left service because they return 404 for the new
+route.
+
+## Local run
+
+The complete development stack is started from the repository root:
+
+```bash
+make compose-up
+```
+
+- API: `http://localhost:8080/v1/auth/...`
+- liveness/readiness: `http://localhost:8080/healthz`, `/readyz`
+- Mailpit UI: `http://localhost:8025`
+- NATS monitoring: `http://localhost:8222`
+
+Local Compose binds every published development port to `127.0.0.1`; these
+URLs are reachable from the development host, not from other network clients.
+Direct `make identity-run` also binds Identity to loopback by default; set
+`COOKIE_IDENTITY_BIND_ADDRESS` only when a deliberate non-loopback development
+listener is required. Compose sets the in-container listener to `0.0.0.0` while
+the host mapping remains loopback-only.
+In a deployed environment Identity probes remain unauthenticated for the
+orchestrator, while the public gateway and network policy must not expose them.
+A gateway health probe is a separate check of the gateway itself, not a proxy
+to Identity readiness. Production enforcement remains a rollout requirement
+until Caddy/Kubernetes deployment manifests exist.
+
+Identity never sends email directly. It writes an encrypted
+`notification.email.requested` event to its transactional outbox; the local
+Notification sink decrypts the compact JWE and delivers it to Mailpit.
+The development message displays the raw verification token for manual testing;
+only the future production Notification template will render it as a verified
+HTTPS universal/app link.
+
+Retention runs every minute, drains all owned tables fairly in configurable
+batches, and has both batch-count and wall-time budgets. The scheduler has three
+workers so outbox publishing, metrics refresh and retention cannot starve one
+another.
+
+The code has explicit hexagonal boundaries: `domain` contains aggregates,
+value objects and business invariants; `application` contains use cases and
+input/output ports; the Spring service module contains HTTP, JDBC,
+cryptography and messaging adapters. Domain and application do not depend on
+Spring, JDBC, Jackson, Nimbus or NATS.
+
+## Key configuration
+
+Without the `dev` or `test` Spring profile, Identity requires deployment-owned
+key material and never generates or writes it:
+
+- `COOKIE_IDENTITY_ISSUER`: externally visible HTTPS origin used in issued and
+  verified access tokens (the temporary API Gateway URL until a custom domain);
+- `COOKIE_IDENTITY_AUDIENCE`: expected access-token audience, `cookie-api` by
+  default;
+- `COOKIE_IDENTITY_JWT_PRIVATE_KEY_PATH`: private P-256 JWK with `kid`,
+  `use=sig` and `alg=ES256`;
+- `COOKIE_IDENTITY_JWT_RETIRING_PUBLIC_KEY_PATHS`: comma-separated public P-256
+  JWK files with `use=sig` and `alg=ES256`, retained during verification-key
+  rotation;
+- `COOKIE_NOTIFICATION_PUBLIC_KEY_PATH`: public-only Notification Service RSA
+  JWK (at least 2048 bits) with `use=enc` and `alg=RSA-OAEP-256`;
+- `COOKIE_IDENTITY_RATE_LIMIT_HMAC_KEY`: canonical base64url encoding of a
+  dedicated 32-byte secret used to pseudonymise IP, email, token and session
+  rate-limit dimensions, including the account scope used by deletion;
+- `COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS`: optional comma-separated ingress CIDRs
+  whose `X-Forwarded-For` chain may be trusted. Leave empty for direct traffic.
+
+The rate-limit HMAC key must be identical on every Identity replica and remain
+stable across restarts. Rotating it changes every bucket identifier: old rows
+expire normally, but old/new replicas would temporarily enforce separate
+ceilings. Coordinate key rotation with a full rollout and treat the resulting
+counter reset as an explicit security operation. The key is never rendered by
+configuration or hasher `toString` methods. The fixed dev/test fallback is
+public, non-secret test material and must never be used in production.
+
+Mutation request bodies are capped at 16 KiB before JSON parsing; oversized
+requests receive `413 PAYLOAD_TOO_LARGE`.
+
+Readiness waits at most the configured Hikari acquisition/validation bounds
+(`COOKIE_IDENTITY_DATABASE_CONNECTION_TIMEOUT_MS`, default 2000, and
+`COOKIE_IDENTITY_DATABASE_VALIDATION_TIMEOUT_MS`, default 1000) before returning
+`503`, so a failed database cannot pin probe threads indefinitely.
+
+Mutating transactions have a five-second statement/transaction deadline and a
+two-second PostgreSQL lock deadline; JDBC socket reads are bounded to ten
+seconds. All background JDBC statements also inherit a five-second PostgreSQL
+statement deadline. Override transaction/lock bounds with
+`cookie.identity.database.*` deployment properties
+and `COOKIE_IDENTITY_DATABASE_SOCKET_TIMEOUT_SECONDS`, keeping the lock timeout
+shorter than the transaction timeout.
+
+Private signing/decryption material must not be committed. Ephemeral generation
+and `COOKIE_DEV_NOTIFICATION_PRIVATE_KEY_OUTPUT_PATH` are available only in the
+`dev` and `test` profiles; local compose enables `dev` explicitly.
+
+Production NATS is deployment-owned: Identity neither creates nor mutates the
+shared stream outside `dev`/`test`. Production startup requires a `tls://` URL,
+credentials, a dedicated JKS truststore and its password via `COOKIE_NATS_URL`,
+`COOKIE_NATS_CREDENTIALS_PATH`, `COOKIE_NATS_TRUSTSTORE_PATH` and
+`COOKIE_NATS_TRUSTSTORE_PASSWORD`. The credential may publish only the three
+subjects in `service.yaml`, including
+`cookie.events.account.deletion.requested.v1`, and subscribe only to
+`_INBOX.cookie.identity.>` for JetStream acknowledgements; it receives no event
+subscriptions or `$JS.API` stream-management permissions.
+
+Production Compose may mount scalar secret properties as files named
+`spring.datasource.password`, `cookie.identity.rate-limit-hmac-key` and
+`cookie.identity.nats-truststore-password` under `/run/secrets`; Spring imports
+that optional config tree without placing the values in container environment
+metadata. Local development continues to use the explicit non-secret defaults.
+
+An older development Notification JWK without the required `use`/`alg` metadata
+is rejected intentionally. Migrate that file while preserving the RSA key, or
+reset the dev key together with PostgreSQL and NATS volumes; deleting the key
+alone makes already encrypted verification messages undecryptable.
+
+This pre-release change rewrites the unpublished `V001`/`V002` baseline. An
+existing local Identity database must therefore be recreated rather than
+Flyway-repaired. Once the first environment is promoted, applied migrations are
+immutable and every schema change must use a new migration version.
+Account deletion therefore uses the forward-only `V004` migration and does not
+rewrite the existing baseline.
+
+`V004` adds the account-status check as `NOT VALID`. The new column's constant
+`NOT NULL DEFAULT 'ACTIVE'` makes all pre-existing rows valid, and PostgreSQL
+still enforces the check on every later insert/update. Deferring validation
+avoids holding the add-column `ACCESS EXCLUSIVE` lock through a table scan under
+the service's five-second statement timeout. A later controlled migration must
+validate `ck_accounts_status` with production-sized timeout and observability.
+
+The refresh retry transition intentionally keeps the existing `retry_until`
+column for mixed-version compatibility. New rotations store the family expiry
+there; rows created by an older binary retain their shorter deadline and remain
+conservative. Remove the compatibility column only in a later contract migration,
+after every old binary is gone and every family created under the old policy has
+expired.
+
+## Key rotation
+
+Publish the next ES256 public key to every replica before switching the active
+signer. Keep the previous public key until at least access-token TTL + JWKS
+cache TTL + rollout/clock-skew margin after the final token signed with it.
+Notification private keys must remain available while any outbox/JetStream
+message encrypted to their `kid` can still be delivered; rotation therefore
+requires a key ring or a drained queue, not overwriting the only private key.

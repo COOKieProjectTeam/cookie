@@ -1,0 +1,3 @@
+backend.hcl
+terraform.tfvars
+*.tfplan

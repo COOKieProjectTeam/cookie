@@ -7,6 +7,13 @@
 .env
 .env.*
 !.env.example
+*.creds
+*.jks
+*.jwk
+*.key
+*.p12
+*.pem
+*.pfx
 *.tfvars
 !*.tfvars.example
 
@@ -17,6 +24,7 @@ coverage.out
 
 # Gradle / Kotlin
 .gradle/
+.kotlin/
 **/build/
 local.properties
 
@@ -24,4 +32,3 @@ local.properties
 **/.terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl

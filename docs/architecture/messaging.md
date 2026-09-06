@@ -1,5 +1,12 @@
 # Event delivery protocol
 
+## Applicability
+
+Transactional outbox обязателен для сервиса, который публикует durable events.
+Idempotent inbox обязателен для сервиса, который потребляет events. Эти роли
+независимы: сервис может иметь обе, одну или ни одной. Identity v1 имеет
+`publishes`, но `consumes: []`, поэтому использует только outbox.
+
 ## Guarantee
 
 NATS JetStream delivery is **at least once**. Exactly-once business effects are
@@ -33,7 +40,7 @@ unknown additive fields. Breaking payload changes require a new
 
 1. Begin PostgreSQL transaction.
 2. Validate command and mutate service-owned domain state.
-3. Insert one immutable `outbox_messages` row for every emitted event.
+3. Insert one immutable `outbox_events` row for every emitted event.
 4. Commit once.
 5. Publisher worker claims pending rows safely across replicas.
 6. Publish to JetStream with `event_id` as the broker message/deduplication id.
@@ -45,7 +52,7 @@ A crash between steps 6 and 7 can publish a duplicate and is expected.
 
 1. Receive a JetStream message.
 2. Begin PostgreSQL transaction.
-3. Insert `(consumer_name, event_id)` into `inbox_messages` under a unique
+3. Insert `(consumer_name, event_id)` into `inbox_events` under a unique
    constraint.
 4. If it already exists, commit/no-op and acknowledge the message.
 5. Otherwise apply local state changes and write any resulting outbox events in
@@ -57,12 +64,72 @@ Failures before commit are retried. Poison messages eventually require an
 operator-visible dead-letter/advisory path; exact retry counts and backoff are
 TBD.
 
+## Identity v1 publisher profile
+
+The first implemented publisher claims at most 100 rows across replicas with
+`FOR UPDATE SKIP LOCKED`, a 30-second lease and a per-claim UUID fencing token.
+Acknowledgements wait at most 10 seconds; stale workers cannot mark or release
+a row claimed by a newer worker. Subjects are
+`cookie.events.<event_type>.v<event_version>` in stream `COOKIE_EVENTS`.
+`event_id` is sent as `Nats-Msg-Id`; the row is marked published only after the
+JetStream publish acknowledgement. Failed attempts are retried indefinitely
+with exponential delay from one second to five minutes plus jitter.
+
+NATS outage не делает Identity HTTP API unready. Команда продолжает атомарно
+фиксировать business state и outbox; publisher повторяет доставку после
+восстановления брокера. Outbox age, attempts/failures и NATS availability должны
+быть видимы в telemetry и alerts. Production stream topology provisioned by the
+deployment layer has explicit retention/replication quotas and a dedicated
+management credential; the Identity credential is publish-only. Identity may
+create a bounded single-replica stream only in explicit `dev`/`test` profiles.
+В терминах NATS ACL publisher также получает узкий subscribe grant на
+`_INBOX.cookie.identity.>`: это reply subject для JetStream acknowledgement, а
+не право потреблять domain events.
+
+Verification delivery is a special security boundary: outbox/JetStream contain
+only template, expiry and compact JWE (`RSA-OAEP-256` + `A256GCM`). Recipient,
+locale and raw one-time token exist only inside the encrypted payload.
+Notification consumers discard a delivery whose payload expiry is not in the
+future. They must also deduplicate `event_id`; broker acknowledgement alone does
+not make the SMTP side effect idempotent.
+The local Mailpit sink uses a bounded process-local deduplication cache; this is
+deliberately development-only. A production notification service needs a durable
+inbox/idempotency record coordinated with its delivery-provider policy.
+
+Account deletion uses `account.deletion.requested` version 1 and subject
+`cookie.events.account.deletion.requested.v1`. The common envelope carries
+`event_id` and `occurred_at`; the business payload contains only `accountId`,
+`deletionRequestId` and `requestedAt`, without email, password material, JWT,
+device identity or idempotency key. Identity inserts this outbox row in the same
+transaction that moves Account to `DELETION_PENDING` and revokes every refresh
+family. HTTP retries and competing keys for the same account return the existing
+request and do not create another logical event. Broker redelivery may still
+deliver that event more than once and is handled by future consumer inboxes.
+
+User, Food Catalog, Nutrition, Recipe, Shopping, Health, Progress, Notification,
+Media and Meal Planner are target consumers because they own user-linked data.
+None of those deletion consumers or their acknowledgement events is implemented
+in v1. Identity remains producer-only, does not add a placeholder inbox and does
+not publish `account.deleted`; the account honestly remains
+`DELETION_PENDING`. Before completion is introduced, the system also needs a
+reconciliation/replay path for pending requests whose original event is older
+than broker retention.
+
 ## Required operational fields
 
-Outbox records expose status, attempt count, next-attempt time, creation time,
-published time and last error. Inbox records expose consumer name, event id,
-event type and processed time. Retention and cleanup must preserve enough data
-to cover the maximum broker redelivery window; exact durations are TBD.
+Outbox records у publishers expose status, attempt count, next-attempt time,
+creation time, published time and last error. Inbox records у consumers expose
+consumer name, event id, event type and processed time. Retention and cleanup
+must preserve enough data to cover the maximum broker redelivery window.
+
+Identity v1 keeps published outbox rows for 7 days, completed and abandoned
+registration-attempt tombstones for at least 30 days, expired refresh families
+for a further 90 days and expired rate-limit buckets for a 1-day grace period.
+Expired active attempts are first marked abandoned and have password hash/locale
+scrubbed atomically; only aged tombstones are deleted. Cleanup polls every minute,
+rotates fairly across tables, and has configurable batch-count and time budgets.
+Consumer inbox retention is selected when a real consumer is built and
+must be no shorter than the matching stream/redelivery window.
 
 ## Forbidden patterns
 

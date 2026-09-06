@@ -14,19 +14,24 @@ repository. Disposable integrations belong in `cookie-labs`.
 - Read `docs/architecture/README.md` and its YAML model before changing service
   boundaries, events, synchronous dependencies or infrastructure usage.
 - Keep changes atomic across API implementation, OpenAPI contract and consumers.
-- OpenAPI is the source for generated Kotlin server transport interfaces/models
-  and HTTP clients. Never hand-edit generated sources or duplicate their DTOs.
-- Generate one internal Kotlin/JVM client module per callee. A caller may depend
-  on it only when the edge is declared in `docs/architecture/model/sync-calls.yaml`.
+- Every public service owns `contracts/openapi/public/<service-id>.yaml`, which
+  is the source for its generated Kotlin server transport interfaces/models.
+  The mobile/gateway public bundle is generated from active service contracts;
+  `planned.yaml` is roadmap only and must never feed code generation. Never
+  hand-edit generated sources or duplicate their DTOs.
+- Generate one internal Kotlin/JVM client module per callee under
+  `backend/clients/<callee>`. A caller may depend on it only when the edge is
+  declared in `docs/architecture/model/sync-calls.yaml`.
 - Internal operations require authenticated workload identity and a callee-owned
   operation allowlist; IP, DNS and caller-controlled headers never prove identity.
 - Keep business handlers handwritten behind generated transport interfaces.
 - Every deployable backend component owns its own liveness/readiness endpoints;
   the domain Health Data Service does not own operational probes.
-- New backend implementation is Kotlin/JVM. Do not extend the Go bootstrap with
-  product behavior; migrate or replace it.
-- Every stateful domain service uses PostgreSQL transactional outbox and
-  idempotent inbox around NATS JetStream delivery.
+- New backend implementation is Kotlin/JVM. Do not extend the legacy Go
+  bootstrap with product behavior; its removal requires a separate migration.
+- Every service that publishes durable events uses a PostgreSQL transactional
+  outbox. Every service that consumes events uses a PostgreSQL idempotent inbox;
+  producer-only services do not add an inbox pre-emptively.
 - Redis is not a system of record and may only be used for an explicitly
   documented ephemeral use case.
 - Do not add secrets, `.env` files, state files, signing material or production
@@ -47,8 +52,9 @@ terraform -chdir=infra/terraform/environments/dev validate
 docker-compose -f deploy/docker/compose.yaml config
 ```
 
-Backend and mobile Kotlin checks become mandatory after their Gradle bootstraps
-are committed. Go checks remain temporary while the bootstrap exists.
+Identity and platform Kotlin checks are mandatory. Go checks remain temporary
+while the legacy bootstrap exists. The KMP client generation smoke task is
+`./gradlew generateKmpPublicClient`.
 
 ## Repository hygiene
 

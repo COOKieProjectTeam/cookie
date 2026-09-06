@@ -5,9 +5,21 @@ All Kotlin services, workers, Caddy, PostgreSQL, Redis and NATS JetStream must b
 observable there.
 
 Каждый deployable component предоставляет собственные `/healthz` (liveness) и
-`/readyz` (readiness). Эти endpoints не проксируются в Health Data Service.
+`/readyz` (readiness). Они не требуют user/workload credential на уровне
+приложения, чтобы проверка живости не зависела от authentication stack. Target
+production deployment обязан разрешать доступ только orchestrator/operator
+network. Public Caddy не должен проксировать component probes или добавлять их
+в product OpenAPI.
+
+Caddy предоставляет собственные liveness/readiness probes на отдельном
+operator/runtime listener или route, выбранном deployment. Они показывают
+состояние самого gateway, не вызывают backend probes и не предназначены для
+mobile client. Эти endpoints также не проксируются в Health Data Service.
 
 ## Required signals
+
+Messaging signals применяются по роли: outbox metrics обязательны для event
+publishers, inbox/consumer metrics — только для event consumers.
 
 - HTTP request rate, latency and error rate by route and service.
 - Worker throughput, failures and execution latency.
@@ -20,9 +32,17 @@ observable there.
 
 ## Correlation
 
-HTTP and event processing propagate `trace_id`, `correlation_id` and
-`causation_id`. Logs are structured and include service, environment and
-operation, but never tokens, credentials, detailed health data or meal history.
+HTTP request IDs are persisted into emitted events as `correlation_id`.
+`trace_id` is populated only when a tracing bridge installs it in MDC;
+`causation_id` is populated by event consumers. Identity v1 has no tracing
+bridge or consumer yet, so both fields remain null rather than being fabricated.
+Logs must include service, environment and operation, but never tokens,
+credentials, detailed health data or meal history.
+
+Identity exports Micrometer counters for outbox publish attempts/successes/
+failures/stale completions and gauges for pending count and oldest pending age.
+The metrics backend, alert rules and distributed tracing remain production
+rollout requirements once the observability stack is selected.
 
 ## Alerts
 
@@ -34,3 +54,9 @@ lag, dead-letter messages, database saturation and Redis/NATS unavailability.
 Grafana is accepted. Metrics, logs and traces storage/export components are not
 yet selected; Prometheus, Loki, Tempo and OpenTelemetry must not be treated as
 accepted until a separate ADR chooses them.
+
+Первый single-VM production slice из ADR 0012 не делает эти target requirements
+выполненными автоматически. До хранения ценных production-данных обязательны
+как минимум внешняя проверка HTTPS endpoint, alerts по VM/disk, регулярные
+snapshots data disk и проверенный restore. Локальный container healthcheck не
+заменяет внешний мониторинг отказа VM или зоны.

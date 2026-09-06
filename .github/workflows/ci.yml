@@ -2,27 +2,452 @@ name: CI
 
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  go:
-    runs-on: ubuntu-latest
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    outputs:
+      go_api: ${{ steps.scope.outputs.go_api }}
+      platform: ${{ steps.scope.outputs.platform }}
+      platform_web: ${{ steps.scope.outputs.platform_web }}
+      platform_postgres: ${{ steps.scope.outputs.platform_postgres }}
+      platform_messaging: ${{ steps.scope.outputs.platform_messaging }}
+      platform_testing: ${{ steps.scope.outputs.platform_testing }}
+      identity: ${{ steps.scope.outputs.identity }}
+      notification_sink: ${{ steps.scope.outputs.notification_sink }}
+      service_contracts: ${{ steps.scope.outputs.service_contracts }}
+      planned_openapi: ${{ steps.scope.outputs.planned_openapi }}
+      public_client: ${{ steps.scope.outputs.public_client }}
+      mobile: ${{ steps.scope.outputs.mobile }}
+      compose: ${{ steps.scope.outputs.compose }}
+      terraform: ${{ steps.scope.outputs.terraform }}
+      identity_image: ${{ steps.scope.outputs.identity_image }}
+      identity_container: ${{ steps.scope.outputs.identity_container }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Check out source and history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test CI scope mapping
+        run: bash .github/scripts/test-detect-ci-scope.sh
+      - name: Select affected checks
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: bash .github/scripts/detect-ci-scope.sh "$BASE_SHA" "$HEAD_SHA" "$EVENT_NAME"
+
+  legacy_api:
+    name: Legacy Go API
+    if: needs.changes.outputs.go_api == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: apps/api/go.mod
-      - run: go test ./apps/api/...
+      - name: Test
+        run: go test ./apps/api/...
+      - name: Vet
+        run: go vet ./apps/api/...
+
+  backend_platform:
+    name: Backend platform
+    if: needs.changes.outputs.platform == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Test affected platform modules
+        env:
+          CHECK_WEB: ${{ needs.changes.outputs.platform_web }}
+          CHECK_POSTGRES: ${{ needs.changes.outputs.platform_postgres }}
+          CHECK_MESSAGING: ${{ needs.changes.outputs.platform_messaging }}
+          CHECK_TESTING: ${{ needs.changes.outputs.platform_testing }}
+        run: |
+          tasks=()
+          [[ "$CHECK_WEB" == "true" ]] && tasks+=(":backend:platform:starter-web:check")
+          [[ "$CHECK_POSTGRES" == "true" ]] && tasks+=(":backend:platform:starter-postgres:check")
+          [[ "$CHECK_MESSAGING" == "true" ]] && tasks+=(":backend:platform:starter-messaging:check")
+          [[ "$CHECK_TESTING" == "true" ]] && tasks+=(":backend:platform:starter-testing:check")
+          ./gradlew "${tasks[@]}"
+
+  identity:
+    name: Identity service
+    if: needs.changes.outputs.identity == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Require Docker for Testcontainers
+        run: docker info
+      - name: Run Identity unit and integration tests
+        run: >-
+          ./gradlew
+          :backend:services:identity:check
+          :backend:services:identity:integrationTest
+
+  notification_sink:
+    name: Notification sink
+    if: needs.changes.outputs.notification_sink == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Run Notification sink tests
+        run: ./gradlew :backend:tools:notification-sink:check
+
+  service_contracts:
+    name: Service contracts
+    if: needs.changes.outputs.service_contracts == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Validate service descriptors
+        run: ./gradlew validateServiceDescriptors
+
+  planned_openapi:
+    name: Planned OpenAPI
+    if: needs.changes.outputs.planned_openapi == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Validate planned OpenAPI
+        run: ./gradlew validatePlannedOpenApi
+
+  mobile:
+    name: Mobile shared client
+    if: needs.changes.outputs.mobile == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Check Mobile shared
+        run: ./gradlew :apps:mobile:shared:check
+
+  public_client:
+    name: Public client contract
+    if: needs.changes.outputs.public_client == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Generate and compile the public KMP client
+        run: ./gradlew compileKmpPublicClient
+
+  identity_container:
+    name: Identity image build
+    if: github.event_name == 'pull_request' && needs.changes.outputs.identity_container == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build the production image without publishing
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: deploy/docker/identity.Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: cookie/identity-ci:${{ github.sha }}
+          cache-from: type=gha,scope=identity-linux-amd64
+
+  compose:
+    name: Deployment bundle
+    if: needs.changes.outputs.compose == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Validate Dockerfiles
+        run: |
+          for dockerfile in deploy/docker/*.Dockerfile; do
+            docker buildx build --check --file "$dockerfile" .
+          done
+      - name: Validate local development Compose
+        run: docker compose -f deploy/docker/compose.yaml config
+      - name: Validate Make targets
+        run: >-
+          make --dry-run
+          dev-build-identity
+          dev-build-notification-sink
+          dev-up
+          dev-down
+      - name: Validate production deployment bundle
+        env:
+          IDENTITY_IMAGE: cr.yandex/crp00000000000000000/identity@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: |
+          set -Eeuo pipefail
+          docker compose \
+            --env-file deploy/production/.env.example \
+            --file deploy/production/compose.yaml \
+            config
+          for script in \
+            deploy/production/deploy.sh \
+            deploy/production/scripts/identity-healthcheck.sh \
+            deploy/docker/verify-pinned-images.sh; do
+            bash -n "$script"
+          done
+          for script in \
+            deploy/production/scripts/nats-init.sh \
+            deploy/production/scripts/postgres-init-identity.sh; do
+            sh -n "$script"
+          done
+          jq --exit-status . deploy/production/config/cookie-events.json >/dev/null
+      - name: Test production deployment lifecycle
+        run: python3 .github/scripts/test-production-deploy.py
+      - name: Verify immutable external image manifests
+        run: >-
+          deploy/docker/verify-pinned-images.sh
+          deploy/docker/compose.yaml
+          deploy/production/compose.yaml
+          deploy/docker/*.Dockerfile
 
   terraform:
-    runs-on: ubuntu-latest
+    name: Terraform
+    if: needs.changes.outputs.terraform == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.1"
+      - name: Test production cloud-init
+        run: python3 .github/scripts/test-cloud-init.py
       - run: terraform fmt -check -recursive infra/terraform
       - run: terraform -chdir=infra/terraform/environments/dev init -backend=false
       - run: terraform -chdir=infra/terraform/environments/dev validate
+      - run: terraform -chdir=infra/terraform/environments/production init -backend=false
+      - run: terraform -chdir=infra/terraform/environments/production validate
+
+  ci_required:
+    name: CI required
+    if: always()
+    needs:
+      - changes
+      - legacy_api
+      - backend_platform
+      - identity
+      - notification_sink
+      - service_contracts
+      - planned_openapi
+      - public_client
+      - mobile
+      - identity_container
+      - compose
+      - terraform
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every affected check to pass
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          LEGACY_API_EXPECTED: ${{ needs.changes.outputs.go_api }}
+          LEGACY_API_RESULT: ${{ needs.legacy_api.result }}
+          BACKEND_PLATFORM_EXPECTED: ${{ needs.changes.outputs.platform }}
+          BACKEND_PLATFORM_RESULT: ${{ needs.backend_platform.result }}
+          PLATFORM_WEB_SELECTED: ${{ needs.changes.outputs.platform_web }}
+          PLATFORM_POSTGRES_SELECTED: ${{ needs.changes.outputs.platform_postgres }}
+          PLATFORM_MESSAGING_SELECTED: ${{ needs.changes.outputs.platform_messaging }}
+          PLATFORM_TESTING_SELECTED: ${{ needs.changes.outputs.platform_testing }}
+          IDENTITY_EXPECTED: ${{ needs.changes.outputs.identity }}
+          IDENTITY_RESULT: ${{ needs.identity.result }}
+          NOTIFICATION_SINK_EXPECTED: ${{ needs.changes.outputs.notification_sink }}
+          NOTIFICATION_SINK_RESULT: ${{ needs.notification_sink.result }}
+          SERVICE_CONTRACTS_EXPECTED: ${{ needs.changes.outputs.service_contracts }}
+          SERVICE_CONTRACTS_RESULT: ${{ needs.service_contracts.result }}
+          PLANNED_OPENAPI_EXPECTED: ${{ needs.changes.outputs.planned_openapi }}
+          PLANNED_OPENAPI_RESULT: ${{ needs.planned_openapi.result }}
+          PUBLIC_CLIENT_EXPECTED: ${{ needs.changes.outputs.public_client }}
+          PUBLIC_CLIENT_RESULT: ${{ needs.public_client.result }}
+          MOBILE_EXPECTED: ${{ needs.changes.outputs.mobile }}
+          MOBILE_RESULT: ${{ needs.mobile.result }}
+          IDENTITY_CONTAINER_EXPECTED: ${{ github.event_name == 'pull_request' && needs.changes.outputs.identity_container == 'true' }}
+          IDENTITY_CONTAINER_RESULT: ${{ needs.identity_container.result }}
+          COMPOSE_EXPECTED: ${{ needs.changes.outputs.compose }}
+          COMPOSE_RESULT: ${{ needs.compose.result }}
+          TERRAFORM_EXPECTED: ${{ needs.changes.outputs.terraform }}
+          TERRAFORM_RESULT: ${{ needs.terraform.result }}
+          IDENTITY_IMAGE_SELECTED: ${{ needs.changes.outputs.identity_image }}
+          IDENTITY_CONTAINER_SELECTED: ${{ needs.changes.outputs.identity_container }}
+        run: |
+          failures=()
+
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            failures+=("changes:${CHANGES_RESULT}")
+          else
+            for selection in \
+              "go_api:${LEGACY_API_EXPECTED}" \
+              "platform:${BACKEND_PLATFORM_EXPECTED}" \
+              "platform_web:${PLATFORM_WEB_SELECTED}" \
+              "platform_postgres:${PLATFORM_POSTGRES_SELECTED}" \
+              "platform_messaging:${PLATFORM_MESSAGING_SELECTED}" \
+              "platform_testing:${PLATFORM_TESTING_SELECTED}" \
+              "identity:${IDENTITY_EXPECTED}" \
+              "notification_sink:${NOTIFICATION_SINK_EXPECTED}" \
+              "service_contracts:${SERVICE_CONTRACTS_EXPECTED}" \
+              "planned_openapi:${PLANNED_OPENAPI_EXPECTED}" \
+              "public_client:${PUBLIC_CLIENT_EXPECTED}" \
+              "mobile:${MOBILE_EXPECTED}" \
+              "compose:${COMPOSE_EXPECTED}" \
+              "terraform:${TERRAFORM_EXPECTED}" \
+              "identity_image:${IDENTITY_IMAGE_SELECTED}" \
+              "identity_container:${IDENTITY_CONTAINER_SELECTED}"; do
+              IFS=: read -r name selected <<< "$selection"
+              if [[ "$selected" != "true" && "$selected" != "false" ]]; then
+                failures+=("${name}:invalid-selector-output-${selected:-empty}")
+              fi
+            done
+
+            if [[ "$BACKEND_PLATFORM_EXPECTED" == "true" && \
+              "$PLATFORM_WEB_SELECTED" != "true" && \
+              "$PLATFORM_POSTGRES_SELECTED" != "true" && \
+              "$PLATFORM_MESSAGING_SELECTED" != "true" && \
+              "$PLATFORM_TESTING_SELECTED" != "true" ]]; then
+              failures+=("platform:no-module-selected")
+            fi
+            if [[ "$BACKEND_PLATFORM_EXPECTED" == "false" && ( \
+              "$PLATFORM_WEB_SELECTED" == "true" || \
+              "$PLATFORM_POSTGRES_SELECTED" == "true" || \
+              "$PLATFORM_MESSAGING_SELECTED" == "true" || \
+              "$PLATFORM_TESTING_SELECTED" == "true" ) ]]; then
+              failures+=("platform:module-selected-without-job")
+            fi
+            if [[ "$IDENTITY_IMAGE_SELECTED" == "true" && "$IDENTITY_CONTAINER_SELECTED" != "true" ]]; then
+              failures+=("identity_image:container-validation-not-selected")
+            fi
+          fi
+
+          for check in \
+            "legacy_api:${LEGACY_API_EXPECTED}:${LEGACY_API_RESULT}" \
+            "backend_platform:${BACKEND_PLATFORM_EXPECTED}:${BACKEND_PLATFORM_RESULT}" \
+            "identity:${IDENTITY_EXPECTED}:${IDENTITY_RESULT}" \
+            "notification_sink:${NOTIFICATION_SINK_EXPECTED}:${NOTIFICATION_SINK_RESULT}" \
+            "service_contracts:${SERVICE_CONTRACTS_EXPECTED}:${SERVICE_CONTRACTS_RESULT}" \
+            "planned_openapi:${PLANNED_OPENAPI_EXPECTED}:${PLANNED_OPENAPI_RESULT}" \
+            "public_client:${PUBLIC_CLIENT_EXPECTED}:${PUBLIC_CLIENT_RESULT}" \
+            "mobile:${MOBILE_EXPECTED}:${MOBILE_RESULT}" \
+            "identity_container:${IDENTITY_CONTAINER_EXPECTED}:${IDENTITY_CONTAINER_RESULT}" \
+            "compose:${COMPOSE_EXPECTED}:${COMPOSE_RESULT}" \
+            "terraform:${TERRAFORM_EXPECTED}:${TERRAFORM_RESULT}"; do
+            IFS=: read -r name expected result <<< "$check"
+            if [[ "$expected" == "true" && "$result" != "success" ]]; then
+              failures+=("${name}:expected-${expected}:got-${result}")
+            elif [[ "$expected" != "true" && "$result" != "success" && "$result" != "skipped" ]]; then
+              failures+=("${name}:expected-${expected:-false}:got-${result}")
+            fi
+          done
+
+          if (( ${#failures[@]} > 0 )); then
+            printf 'Required CI check failed: %s\n' "${failures[@]}" >&2
+            exit 1
+          fi
+
+          echo "Every affected check passed."
+
+  publish_identity:
+    name: Publish Identity image
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.identity_image == 'true' &&
+      needs.ci_required.result == 'success'
+    needs: [changes, ci_required]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-service-image.yml
+    with:
+      service_name: identity
+      image_repository: identity
+      context: .
+      dockerfile: deploy/docker/identity.Dockerfile

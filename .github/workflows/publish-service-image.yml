@@ -1,0 +1,98 @@
+name: Publish service image
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: Logical service name used in logs and cache scopes.
+        required: true
+        type: string
+      image_repository:
+        description: Repository name inside Yandex Container Registry.
+        required: true
+        type: string
+      context:
+        description: Docker build context.
+        required: true
+        type: string
+      dockerfile:
+        description: Dockerfile path relative to the repository root.
+        required: true
+        type: string
+    outputs:
+      digest:
+        description: Published OCI image digest.
+        value: ${{ jobs.publish.outputs.digest }}
+      image_reference:
+        description: Immutable image reference including the digest.
+        value: ${{ jobs.publish.outputs.image_reference }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: ${{ inputs.service_name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image_reference: ${{ steps.reference.outputs.image_reference }}
+    env:
+      IMAGE_NAME: cr.yandex/${{ vars.YC_REGISTRY_ID }}/${{ inputs.image_repository }}
+    steps:
+      - name: Validate publish configuration
+        env:
+          REGISTRY_ID: ${{ vars.YC_REGISTRY_ID }}
+          SERVICE_ACCOUNT_ID: ${{ vars.YC_CI_SERVICE_ACCOUNT_ID }}
+        run: |
+          if [[ -z "${REGISTRY_ID}" || -z "${SERVICE_ACCOUNT_ID}" ]]; then
+            echo "::error::Set YC_REGISTRY_ID and YC_CI_SERVICE_ACCOUNT_ID repository variables."
+            exit 1
+          fi
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to Yandex Container Registry through OIDC
+        uses: yc-actions/yc-cr-login@ee42362bcacb854964afa3a3180ca8ae6dd388f8 # v3.0.2
+        with:
+          yc-sa-id: ${{ vars.YC_CI_SERVICE_ACCOUNT_ID }}
+
+      - name: Build and publish
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=${{ inputs.service_name }}
+          cache-from: type=gha,scope=${{ inputs.service_name }}-linux-amd64
+          cache-to: type=gha,mode=max,scope=${{ inputs.service_name }}-linux-amd64
+
+      - name: Record immutable image reference
+        id: reference
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          image_reference="${IMAGE_NAME}@${IMAGE_DIGEST}"
+          echo "image_reference=${image_reference}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Published ${image_reference}"
+            echo
+            echo "- Commit tag: \`${IMAGE_NAME}:${GITHUB_SHA}\`"
+            echo "- Digest: \`${IMAGE_DIGEST}\`"
+            echo "- Production pull reference: \`${image_reference}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

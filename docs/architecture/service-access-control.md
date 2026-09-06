@@ -25,10 +25,12 @@ Caller не выдаёт разрешение сам себе подключен
 |---|---|
 | `model/sync-calls.yaml` | Почему `caller -> callee` разрешён архитектурно? |
 | `contracts/openapi/internal/<callee>.yaml` | Какие internal operations и transport models существуют? |
-| `services/<callee>/service.yaml` | Кто может вызвать operation и какой context обязателен? |
+| `backend/services/<callee>/service.yaml` | Кто может вызвать operation и какой context обязателен? |
 | deployment identity and network policy | Как runtime подтверждает и ограничивает caller? |
 
-Эти источники имеют разную гранулярность. CI проверяет их согласованность.
+Эти источники имеют разную гранулярность. Целевой policy validator проверяет их
+согласованность; в текущем bootstrap, пока нет первого internal contract, этот
+CI gate ещё не реализован.
 
 ## Callee-owned policy
 
@@ -117,7 +119,7 @@ components допустимы только при действительно о�
 Структура Gradle modules:
 
 ```text
-clients/
+backend/clients/
   recipe/
     build.gradle.kts
   media/
@@ -129,23 +131,23 @@ clients/
 Один client module соответствует одному callee и генерируется в:
 
 ```text
-clients/<callee>/build/generated/openapi
+backend/clients/<callee>/build/generated/openapi
 ```
 
 Например:
 
 ```kotlin
 dependencies {
-    implementation(project(":clients:recipe"))
+    implementation(project(":backend:clients:recipe"))
 }
 ```
 
-`clients/recipe` содержит generated API, transport DTO и standard client wiring.
+`backend/clients/recipe` содержит generated API, transport DTO и standard client wiring.
 Он не содержит Nutrition или Shopping business logic. Каждый caller создаёт
 локальный anti-corruption adapter:
 
 ```text
-services/nutrition/infrastructure/recipe/
+backend/services/nutrition/infrastructure/recipe/
   RecipeCatalogAdapter.kt
   RecipeClientMapper.kt
 ```
@@ -196,7 +198,7 @@ Recipe validates:
 ```
 
 Callee не принимает token с audience другого сервиса. Token rotation выполняет
-platform/runtime, а credentials не попадают в repository, application config,
+`backend/platform` runtime, а credentials не попадают в repository, application config,
 logs или error responses.
 
 ### SPIFFE/mTLS evolution
@@ -251,7 +253,11 @@ allowlist или детали credential validation.
 ## Network boundaries
 
 Public Caddy ingress маршрутизирует только public contract. Internal routes не
-получают external route или public DNS entry.
+получают external route или public DNS entry. Component `/healthz` и `/readyz`
+также не маршрутизируются через public ingress: они остаются unauthenticated на
+application layer, но доступны только orchestrator/operator network. Собственная
+probe Caddy живёт на отдельной operational boundary и не является proxy к probe
+backend-сервиса.
 
 Default-deny network policy генерируется из разрешённого graph и ограничивает:
 
@@ -267,18 +273,23 @@ authentication или operation authorization.
 Для NATS применяется независимый least-privilege allowlist:
 
 ```yaml
-access:
-  messaging:
-    publish:
-      - recipe.customization.updated
-      - recipe.customization.deleted
-    subscribe:
-      - account.deletion.requested
+messaging:
+  publishes:
+    - type: progress.day.updated
+      version: 1
+  consumes:
+    - type: nutrition.day.changed
+      version: 1
 ```
 
-Permissions генерируются из согласованных `model/events.yaml` и service
-descriptor. Service credential не получает publish/subscribe `>` и не может
-использовать event subjects, которых нет в architecture model.
+Эта декларация одновременно является transport contract и least-privilege
+allowlist; отдельный дублирующий `access.messaging` запрещён. Permissions
+генерируются из согласованных `model/events.yaml` и service descriptor. Service
+credential не получает publish/subscribe `>` и не может использовать subjects,
+которых нет в architecture model. Технические request/reply subjects не являются
+domain events: Identity publisher получает subscribe только на собственный
+`_INBOX.cookie.identity.>` для JetStream acknowledgements и не получает
+event-subscribe или `$JS.API` management permissions.
 
 ## CI gates
 
@@ -288,10 +299,10 @@ CI должен блокировать merge, если:
 2. Permission из OpenAPI отсутствует в callee descriptor.
 3. Caller в callee policy отсутствует в `model/services.yaml`.
 4. Для локального grant нет `caller -> callee` в `sync-calls.yaml`.
-5. Caller зависит от `clients/<callee>` без разрешённого sync edge.
+5. Caller зависит от `backend/clients/<callee>` без разрешённого sync edge.
 6. Sync edge не реализован ни одной operation policy.
 7. Client сгенерирован не из callee-owned contract.
-8. Internal route попал в public gateway configuration.
+8. Internal или component runtime route попал в public gateway configuration.
 9. NATS publish/subscribe permission отсутствует в event model.
 
 Минимальные integration tests policy:
@@ -311,8 +322,8 @@ unexpected user context for forbidden mode              -> 403
 
 1. Обосновать edge и degradation behavior в `sync-calls.yaml`.
 2. Добавить или изменить internal OpenAPI callee.
-3. Добавить permission и caller в `services/C/service.yaml`.
-4. Regenerate server transport и `clients/C`.
+3. Добавить permission и caller в `backend/services/C/service.yaml`.
+4. Regenerate server transport и `backend/clients/C`.
 5. Подключить client и local adapter в caller.
 6. Добавить timeout, authorization, degradation и contract tests.
 7. Regenerate network and identity policy после появления deploy generator.
