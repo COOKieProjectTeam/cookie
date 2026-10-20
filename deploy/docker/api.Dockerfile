@@ -7,7 +7,7 @@ COPY apps/api ./apps/api
 RUN --mount=type=cache,target=/root/.cache/go-build \
     cd apps/api && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cookie-api ./cmd/api
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:516757106de35205efb70b91ba03f6f1298424a0678c603255cf2852a7000087
 COPY --from=build /out/cookie-api /cookie-api
 EXPOSE 8080
 ENTRYPOINT ["/cookie-api"]
