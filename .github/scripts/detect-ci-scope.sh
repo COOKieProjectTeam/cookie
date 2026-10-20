@@ -46,6 +46,7 @@ platform_postgres=false
 platform_messaging=false
 platform_testing=false
 identity=false
+nutrition=false
 notification=false
 notification_image=false
 notification_container=false
@@ -68,6 +69,7 @@ enable_all_gradle_checks() {
   platform_messaging=true
   platform_testing=true
   identity=true
+  nutrition=true
   notification=true
   notification_sink=true
   service_contracts=true
@@ -187,6 +189,12 @@ while IFS= read -r -d '' path; do
   esac
 
   case "$path" in
+    backend/platform/*/src/main/* | backend/platform/*/build.gradle.kts | contracts/openapi/runtime.yaml | contracts/openapi/generation.yaml | contracts/openapi/public/nutrition.yaml | docs/architecture/model/events.yaml | docs/architecture/model/services.yaml | deploy/docker/nutrition.Dockerfile)
+      nutrition=true
+      ;;
+  esac
+
+  case "$path" in
     backend/platform/starter-web/*)
       case "$path" in
         */src/test/*)
@@ -294,6 +302,10 @@ while IFS= read -r -d '' path; do
   esac
 
   case "$path" in
+    backend/services/nutrition/*)
+      nutrition=true
+      service_contracts=true
+      ;;
     backend/services/identity/service.yaml)
       service_contracts=true
       ;;
@@ -476,6 +488,7 @@ emit_output platform_postgres "$platform_postgres"
 emit_output platform_messaging "$platform_messaging"
 emit_output platform_testing "$platform_testing"
 emit_output identity "$identity"
+emit_output nutrition "$nutrition"
 emit_output notification "$notification"
 emit_output notification_image "$notification_image"
 emit_output notification_container "$notification_container"

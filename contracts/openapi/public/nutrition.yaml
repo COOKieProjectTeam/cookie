@@ -1,0 +1,1560 @@
+openapi: 3.0.3
+info:
+  title: COOKie Nutrition Public API
+  version: 0.1.0
+  description: Autonomous diary, saved snapshots and hydration. Recipe import and
+    Media attachments remain planned.
+servers:
+- url: https://api.cookie.app/v1
+  description: Production
+- url: http://127.0.0.1:8080/v1
+  description: Local
+tags:
+- name: diary
+  description: Meals, editable food snapshots, saved dishes and water.
+security:
+- accessToken: []
+paths:
+  /diary/days/{date}:
+    get:
+      tags:
+      - diary
+      operationId: getDiaryDay
+      summary: Получить дневник за день
+      parameters:
+      - $ref: '#/components/parameters/DatePath'
+      responses:
+        '200':
+          description: Дневник дня
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiaryDay'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /diary/meals:
+    post:
+      tags:
+      - diary
+      operationId: createMeal
+      summary: Создать приём пищи целиком (meal + dishes + items)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MealInput'
+      responses:
+        '200':
+          description: Ранее созданный приём пищи возвращён по clientGeneratedId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MealCreatedResponse'
+        '201':
+          description: Приём пищи создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MealCreatedResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /diary/meals/{mealId}:
+    parameters:
+    - name: mealId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    patch:
+      tags:
+      - diary
+      operationId: updateMeal
+      summary: Изменить приём пищи (optimistic locking по version)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MealPatch'
+      responses:
+        '200':
+          description: Обновлённый приём пищи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+      - diary
+      operationId: deleteMeal
+      summary: Удалить приём пищи
+      parameters:
+      - $ref: '#/components/parameters/IfMatchVersion'
+      responses:
+        '204':
+          description: Приём пищи удалён
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /diary/meals/{mealId}/dishes:
+    parameters:
+    - name: mealId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - diary
+      operationId: addDishToMeal
+      summary: Добавить блюдо в приём пищи
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DishInput'
+      responses:
+        '201':
+          description: Блюдо создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dish'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /diary/dishes/{dishId}:
+    parameters:
+    - name: dishId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    patch:
+      tags:
+      - diary
+      operationId: updateDish
+      summary: Изменить блюдо
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DishPatch'
+      responses:
+        '200':
+          description: Обновлённое блюдо
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dish'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+      - diary
+      operationId: deleteDish
+      summary: Удалить блюдо
+      parameters:
+      - $ref: '#/components/parameters/IfMatchVersion'
+      responses:
+        '204':
+          description: Блюдо удалено
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /diary/dishes/{dishId}/items:
+    parameters:
+    - name: dishId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - diary
+      operationId: addFoodEntry
+      summary: Добавить редактируемый снапшот продукта в блюдо
+      description: Клиент передаёт данные продукта и КБЖУ на 100 г/мл целиком. Nutrition
+        сохраняет собственный снапшот и не обращается к Food Catalog при записи. Поле
+        source используется только как provenance и не считается доверенным источником
+        нутриентов.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FoodEntryInput'
+      responses:
+        '201':
+          description: Запись создана со снапшотом нутриентов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoodEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /diary/items/{itemId}:
+    parameters:
+    - name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    patch:
+      tags:
+      - diary
+      operationId: updateFoodEntry
+      summary: Изменить количество или снапшот записи о еде
+      description: Позволяет исправить название, бренд, размер порции и КБЖУ даже
+        после создания записи. Nutrition пересчитывает итоговые нутриенты из актуального
+        снапшота и количества; повторного resolve в Food Catalog нет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FoodEntryPatch'
+      responses:
+        '200':
+          description: Обновлённая запись
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoodEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+      - diary
+      operationId: deleteFoodEntry
+      summary: Удалить запись о еде
+      parameters:
+      - $ref: '#/components/parameters/IfMatchVersion'
+      responses:
+        '204':
+          description: Запись удалена
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /diary/recent-foods:
+    get:
+      tags:
+      - diary
+      operationId: getRecentFoods
+      summary: Недавно использованные продукты
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Список недавних продуктов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecentFoodsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /saved-dishes:
+    get:
+      tags:
+      - diary
+      operationId: listSavedDishes
+      summary: Список сохранённых блюд
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Список
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedDishPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+      - diary
+      operationId: createSavedDish
+      summary: Сохранить блюдо как шаблон
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedDishInput'
+      responses:
+        '201':
+          description: Сохранённое блюдо создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedDish'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /saved-dishes/{savedDishId}:
+    parameters:
+    - name: savedDishId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - diary
+      operationId: getSavedDish
+      summary: Получить сохранённое блюдо
+      responses:
+        '200':
+          description: Сохранённое блюдо
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedDish'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      tags:
+      - diary
+      operationId: updateSavedDish
+      summary: Изменить сохранённое блюдо
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedDishPatch'
+      responses:
+        '200':
+          description: Обновлённое сохранённое блюдо
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedDish'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+      - diary
+      operationId: deleteSavedDish
+      summary: Удалить сохранённое блюдо (soft delete)
+      parameters:
+      - $ref: '#/components/parameters/IfMatchVersion'
+      responses:
+        '204':
+          description: Удалено
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /saved-dishes/{savedDishId}/consume:
+    parameters:
+    - name: savedDishId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - diary
+      operationId: consumeSavedDish
+      summary: Добавить сохранённое блюдо в дневник (создаёт копию, не ссылку)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsumeSavedDishInput'
+      responses:
+        '201':
+          description: Новый приём пищи/блюдо создано как копия
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /water:
+    get:
+      tags:
+      - diary
+      operationId: listWaterEntries
+      summary: Получить записи о воде за день
+      parameters:
+      - $ref: '#/components/parameters/DateQuery'
+      responses:
+        '200':
+          description: Список записей о воде
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaterEntryList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+      - diary
+      operationId: addWaterEntry
+      summary: Добавить запись о выпитой воде
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WaterEntryInput'
+      responses:
+        '200':
+          description: Ранее созданная запись возвращена по clientGeneratedId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaterEntry'
+        '201':
+          description: Запись создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaterEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /water/{waterEntryId}:
+    parameters:
+    - name: waterEntryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    patch:
+      tags:
+      - diary
+      operationId: updateWaterEntry
+      summary: Изменить запись о воде
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WaterEntryPatch'
+      responses:
+        '200':
+          description: Обновлённая запись
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaterEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+      - diary
+      operationId: deleteWaterEntry
+      summary: Удалить запись о воде
+      responses:
+        '204':
+          description: Удалена
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '403':
+          description: Account deletion tombstone denies access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - $ref: '#/components/parameters/IfMatchVersion'
+components:
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    DatePath:
+      name: date
+      in: path
+      required: true
+      schema:
+        type: string
+        format: date
+    DateQuery:
+      name: date
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date
+    IfMatchVersion:
+      name: If-Match-Version
+      in: header
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+        format: int64
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    BadRequest:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Конфликт версий (optimistic locking) или бизнес-правило
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServiceUnavailable:
+      description: Сервис временно не готов обрабатывать запросы
+      headers:
+        Retry-After:
+          description: Рекомендуемая задержка перед повтором, в секундах
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Amount:
+      type: object
+      required:
+      - value
+      - unit
+      properties:
+        value:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000000
+        unit:
+          type: string
+          enum:
+          - G
+          - ML
+          - PIECE
+    ConsumeSavedDishInput:
+      type: object
+      required:
+      - clientGeneratedId
+      - localDate
+      - eatenAt
+      - timezone
+      properties:
+        clientGeneratedId:
+          type: string
+          format: uuid
+        localDate:
+          type: string
+          format: date
+        eatenAt:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+          description: IANA zone; localDate must match the timestamp in this zone.
+    DiaryDay:
+      type: object
+      required:
+      - date
+      - meals
+      - total
+      properties:
+        date:
+          type: string
+          format: date
+        meals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meal'
+        total:
+          $ref: '#/components/schemas/Nutrition'
+    Dish:
+      type: object
+      required:
+      - id
+      - mealId
+      - name
+      - photos
+      - items
+      - nutrition
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        mealId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          nullable: true
+        photos:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              url:
+                type: string
+                format: uri
+          description: Empty until real Media integration is available.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FoodEntry'
+        nutrition:
+          $ref: '#/components/schemas/Nutrition'
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    DishInput:
+      type: object
+      required:
+      - items
+      properties:
+        name:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/FoodEntryInput'
+          maxItems: 100
+    DishPatch:
+      type: object
+      required:
+      - version
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          format: int64
+        name:
+          type: string
+    Error:
+      type: object
+      description: Стабильная публичная ошибка. Для валидации используются коды INVALID_EMAIL_FORMAT,
+        EMAIL_TOO_LONG, EMAIL_LOCAL_PART_UNSUPPORTED, EMAIL_DOMAIN_NOT_SUPPORTED,
+        PASSWORD_TOO_SHORT, PASSWORD_TOO_LONG, PASSWORD_INVALID_CHARACTERS, INVALID_LOCALE,
+        INVALID_DEVICE_ID, INVALID_REQUEST, INVALID_CREDENTIALS, INVALID_REFRESH_TOKEN,
+        INVALID_VERIFICATION_TOKEN, INVALID_ACCESS_TOKEN, REGISTRATION_ATTEMPT_CONFLICT
+        и PAYLOAD_TOO_LARGE.
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+          example: INVALID_REQUEST
+        message:
+          type: string
+          example: Invalid request.
+        details:
+          type: object
+          additionalProperties: true
+        requestId:
+          type: string
+          format: uuid
+    FoodEntry:
+      type: object
+      description: Сохранённый снапшот. nutrition содержит итог для amount, а nutritionPer100
+        — редактируемую основу расчёта.
+      required:
+      - id
+      - source
+      - name
+      - baseUnit
+      - amount
+      - nutritionPer100
+      - nutrition
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          $ref: '#/components/schemas/FoodRef'
+        name:
+          type: string
+        brand:
+          type: string
+          nullable: true
+        baseUnit:
+          type: string
+          enum:
+          - G
+          - ML
+        serving:
+          $ref: '#/components/schemas/Serving'
+        amount:
+          $ref: '#/components/schemas/Amount'
+        nutritionPer100:
+          $ref: '#/components/schemas/Nutrition'
+        nutrition:
+          $ref: '#/components/schemas/Nutrition'
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    FoodEntryInput:
+      type: object
+      description: Полный редактируемый снапшот продукта. Его можно получить из Food
+        Catalog, ручного ввода или AI, затем скорректировать до отправки. Nutrition
+        валидирует значения, сохраняет снапшот и вычисляет nutrition для указанного
+        amount без синхронного вызова Food Catalog. Для unit=PIECE нужно передать
+        serving.
+      required:
+      - source
+      - name
+      - baseUnit
+      - amount
+      - nutritionPer100
+      properties:
+        source:
+          $ref: '#/components/schemas/FoodRef'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        brand:
+          type: string
+          nullable: true
+          maxLength: 200
+        baseUnit:
+          type: string
+          enum:
+          - G
+          - ML
+        serving:
+          $ref: '#/components/schemas/Serving'
+        amount:
+          $ref: '#/components/schemas/Amount'
+        nutritionPer100:
+          $ref: '#/components/schemas/NutritionInput'
+    FoodEntryPatch:
+      type: object
+      description: 'Частичное изменение сохранённого снапшота. source не меняется:
+        он хранит происхождение первоначальных данных, а не их текущую редакцию. При
+        изменении amount, serving или nutritionPer100 Nutrition заново вычисляет nutrition.'
+      required:
+      - version
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          format: int64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        brand:
+          type: string
+          nullable: true
+          maxLength: 200
+        baseUnit:
+          type: string
+          enum:
+          - G
+          - ML
+        serving:
+          $ref: '#/components/schemas/Serving'
+        amount:
+          $ref: '#/components/schemas/Amount'
+        nutritionPer100:
+          $ref: '#/components/schemas/NutritionInput'
+    FoodRef:
+      type: object
+      required:
+      - type
+      description: Provenance only. CUSTOM requires id; OPEN_FOOD_FACTS requires barcode.
+        Never resolved during writes.
+      properties:
+        type:
+          type: string
+          enum:
+          - CUSTOM
+          - OPEN_FOOD_FACTS
+          - MANUAL
+          - AI
+        id:
+          type: string
+          format: uuid
+        barcode:
+          type: string
+          minLength: 1
+          maxLength: 32
+        recognitionId:
+          type: string
+          format: uuid
+    Meal:
+      type: object
+      required:
+      - id
+      - localDate
+      - eatenAt
+      - timezone
+      - dishes
+      - nutrition
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        localDate:
+          type: string
+          format: date
+        eatenAt:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+        dishes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Dish'
+        nutrition:
+          $ref: '#/components/schemas/Nutrition'
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    MealCreatedResponse:
+      type: object
+      required:
+      - meal
+      - dayTotals
+      properties:
+        meal:
+          $ref: '#/components/schemas/Meal'
+        dayTotals:
+          $ref: '#/components/schemas/Nutrition'
+    MealInput:
+      type: object
+      required:
+      - clientGeneratedId
+      - localDate
+      - eatenAt
+      - dishes
+      - timezone
+      properties:
+        clientGeneratedId:
+          type: string
+          format: uuid
+        localDate:
+          type: string
+          format: date
+        eatenAt:
+          type: string
+          format: date-time
+        dishes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/DishInput'
+          maxItems: 50
+        timezone:
+          type: string
+          description: IANA zone; localDate must match the timestamp in this zone.
+      description: Exact retry by clientGeneratedId returns the current live record;
+        changed payload or a deleted key returns 409.
+    MealPatch:
+      type: object
+      required:
+      - version
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        eatenAt:
+          type: string
+          format: date-time
+        localDate:
+          type: string
+          format: date
+    Nutrition:
+      type: object
+      required:
+      - calories
+      - proteinG
+      - fatG
+      - carbsG
+      - fiberG
+      properties:
+        calories:
+          type: number
+          format: double
+        proteinG:
+          type: number
+          nullable: true
+          format: double
+        fatG:
+          type: number
+          nullable: true
+          format: double
+        carbsG:
+          type: number
+          nullable: true
+          format: double
+        fiberG:
+          type: number
+          nullable: true
+          format: double
+    NutritionInput:
+      type: object
+      required:
+      - calories
+      properties:
+        calories:
+          type: number
+          minimum: 0
+          maximum: 1000000
+        proteinG:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1000000
+        fatG:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1000000
+        carbsG:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1000000
+        fiberG:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1000000
+    RecentFoodsResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required:
+            - name
+            - lastUsedAt
+            - previousAmount
+            - source
+            properties:
+              name:
+                type: string
+              lastUsedAt:
+                type: string
+                format: date-time
+              previousAmount:
+                $ref: '#/components/schemas/Amount'
+              source:
+                $ref: '#/components/schemas/FoodRef'
+    SavedDish:
+      type: object
+      required:
+      - id
+      - name
+      - items
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FoodEntry'
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    SavedDishInput:
+      type: object
+      required:
+      - name
+      - items
+      properties:
+        name:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/FoodEntryInput'
+          maxItems: 100
+    SavedDishPage:
+      type: object
+      required:
+      - items
+      - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SavedDish'
+        nextCursor:
+          type: string
+          nullable: true
+    SavedDishPatch:
+      type: object
+      required:
+      - version
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          format: int64
+        name:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/FoodEntryInput'
+          maxItems: 100
+    Serving:
+      type: object
+      required:
+      - name
+      - baseAmount
+      properties:
+        name:
+          type: string
+          default: piece
+        baseAmount:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000000
+    WaterEntry:
+      type: object
+      required:
+      - id
+      - amountMl
+      - consumedAt
+      - localDate
+      - timezone
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        amountMl:
+          type: integer
+        consumedAt:
+          type: string
+          format: date-time
+        localDate:
+          type: string
+          format: date
+        timezone:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    WaterEntryInput:
+      type: object
+      required:
+      - clientGeneratedId
+      - amountMl
+      - consumedAt
+      - localDate
+      - timezone
+      properties:
+        amountMl:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        consumedAt:
+          type: string
+          format: date-time
+        localDate:
+          type: string
+          format: date
+        clientGeneratedId:
+          type: string
+          format: uuid
+        timezone:
+          type: string
+          description: IANA zone; localDate must match the timestamp in this zone.
+      description: Exact retry by clientGeneratedId returns the current live record;
+        changed payload or a deleted key returns 409.
+    WaterEntryList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WaterEntry'
+    WaterEntryPatch:
+      type: object
+      minProperties: 2
+      properties:
+        amountMl:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        consumedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        localDate:
+          type: string
+          format: date
+      required:
+      - version
+  securitySchemes:
+    accessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Identity access JWT: ES256, typ=at+jwt, expected issuer and audience,
+        and mandatory valid sub, sid, jti, iat and exp claims.'

@@ -322,3 +322,14 @@ expect_flag notification false
 classify contracts/openapi/public/identity.yaml
 expect_flag notification true
 expect_flag notification_image false
+
+classify backend/services/nutrition/src/main/kotlin/Example.kt
+expect_flag nutrition true
+expect_flag identity false
+classify contracts/openapi/public/nutrition.yaml
+expect_flag nutrition true
+expect_flag public_client true
+classify backend/platform/starter-messaging/src/main/kotlin/Example.kt
+expect_flag nutrition true
+classify .github/workflows/ci.yml
+expect_flag nutrition true

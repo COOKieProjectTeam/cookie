@@ -296,126 +296,75 @@ Table food_catalog_custom_food_serving as FCS {
 // NUTRITION SERVICE
 //////////////////////////////////////////////////////////////////////////
 
-Table nutrition_meals as NM {
-  id uuid [pk]
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  local_date date [not null]
-  eaten_at timestamptz [not null]
-  timezone varchar [not null]
-  client_generated_id uuid [null]
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-  version bigint [not null, default: 1]
+// Nutrition physical schema. One database, no cross-service foreign keys.
+// Documents contain owned dish/item snapshots; migrations are authoritative.
 
+Table meals {
+  id uuid [pk]
+  user_id uuid [not null]
+  client_generated_id uuid [not null]
+  request_hash varchar(64) [not null]
+  local_date date [not null]
+  version bigint [not null]
+  document jsonb [note: 'NULL is a retained idempotency tombstone; live owned snapshot otherwise']
   indexes {
     (user_id, client_generated_id) [unique]
-    (user_id, local_date) [name: 'idx_meals_user_date']
-    (user_id, eaten_at) [name: 'idx_meals_user_eaten_at']
+    (user_id, local_date)
   }
-
-  Note: 'Service: Nutrition'
 }
 
-Table nutrition_dishes as ND {
+Table water_entries {
   id uuid [pk]
-  meal_id uuid [not null, ref: > NM.id]
-  name varchar [null]
-  source_type varchar [not null, note: 'MANUAL | RECIPE | SAVED_DISH | AI']
-  source_id uuid [null, note: 'logical ref -> Recipe.recipes.id or Nutrition.saved_dishes.id, no FK']
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-  version bigint [not null, default: 1]
-
-  Note: 'Service: Nutrition'
-}
-
-Table nutrition_dish_media as NDM {
-  dish_id uuid [not null, ref: > ND.id]
-  media_id uuid [not null, note: 'logical ref -> Media.media_objects.id']
-  position integer [not null]
-
-  indexes {
-    (dish_id, media_id) [pk]
-  }
-
-  Note: 'Service: Nutrition'
-}
-
-Table nutrition_food_entries as NF {
-  id uuid [pk]
-  dish_id uuid [not null, ref: > ND.id]
-  source_type varchar [not null, note: 'OPEN_FOOD_FACTS | CUSTOM | MANUAL | AI; provenance only, never resolved during diary writes']
-  source_external_id varchar [null]
-  name_snapshot varchar [not null]
-  brand_snapshot varchar [null]
-  base_unit varchar [not null, note: 'G | ML']
-  amount_base decimal(12,3) [not null]
-  display_unit varchar [not null, note: 'G | ML | PIECE']
-  display_quantity decimal(12,3) [not null]
-  piece_base_amount_snapshot decimal(10,3) [null]
-  calories_per_100_snapshot decimal(10,3) [null]
-  protein_per_100_snapshot decimal(10,3) [null]
-  fat_per_100_snapshot decimal(10,3) [null]
-  carbs_per_100_snapshot decimal(10,3) [null]
-  fiber_per_100_snapshot decimal(10,3) [null]
-  calories_total decimal(10,3) [not null]
-  protein_total decimal(10,3) [null]
-  fat_total decimal(10,3) [null]
-  carbs_total decimal(10,3) [null]
-  fiber_total decimal(10,3) [null]
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-  version bigint [not null, default: 1]
-
-  Note: 'Service: Nutrition. Client-provided editable snapshot; Nutrition validates and calculates totals locally. Future OFF/CustomFood/AI updates never mutate the entry and diary writes do not call Food Catalog'
-}
-
-Table nutrition_saved_dishes as NSD {
-  id uuid [pk]
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  name varchar [not null]
-  media_id uuid [null, note: 'logical ref -> Media.media_objects.id']
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-  version bigint [not null, default: 1]
-
-  Note: 'Service: Nutrition'
-}
-
-Table nutrition_saved_dish_items as NSI {
-  id uuid [pk]
-  saved_dish_id uuid [not null, ref: > NSD.id]
-  name_snapshot varchar [not null]
-  source_type varchar [not null]
-  source_id uuid [null, note: 'logical ref -> Food Catalog/Recipe, no FK']
-  base_unit varchar [not null]
-  amount_base decimal(12,3) [not null]
-  calories_per_100_snapshot decimal(10,3) [null]
-  protein_per_100_snapshot decimal(10,3) [null]
-  fat_per_100_snapshot decimal(10,3) [null]
-  carbs_per_100_snapshot decimal(10,3) [null]
-  fiber_per_100_snapshot decimal(10,3) [null]
-  position integer [not null]
-
-  Note: 'Service: Nutrition. Snapshot fields make saved-dish previews stable and avoid cross-service reads'
-}
-
-Table nutrition_water_entries as NW {
-  id uuid [pk]
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  amount_ml integer [not null]
-  consumed_at timestamptz [not null]
+  user_id uuid [not null]
+  client_generated_id uuid [not null]
+  request_hash varchar(64) [not null]
   local_date date [not null]
-  client_generated_id uuid [null]
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-
+  version bigint [not null]
+  document jsonb [note: 'NULL is a retained idempotency tombstone; live owned snapshot otherwise']
   indexes {
-    (user_id, local_date) [name: 'idx_water_user_date']
-    (user_id, client_generated_id) [unique, note: 'Client-generated id is required by the API and makes POST idempotent']
+    (user_id, client_generated_id) [unique]
+    (user_id, local_date)
   }
+}
 
-  Note: 'Service: Nutrition'
+Table saved_dishes {
+  id uuid [pk]
+  user_id uuid [not null]
+  version bigint [not null]
+  document jsonb [not null, note: 'Owned template with complete editable item snapshots']
+}
+Table nutrition_day_versions {
+  user_id uuid [not null]
+  local_date date [not null]
+  kind varchar(16) [not null, note: 'day | water']
+  version bigint [not null]
+  indexes { (user_id, local_date, kind) [pk] }
+}
+Table nutrition_account_tombstones {
+  user_id uuid [pk]
+  deletion_request_id uuid [not null]
+  deleted_at timestamptz [not null]
+}
+Table nutrition_inbox_events {
+  event_id uuid [pk]
+  received_at timestamptz [not null]
+}
+Table nutrition_outbox_events {
+  event_id uuid [pk]
+  user_id uuid [not null]
+  envelope jsonb [not null]
+  subject varchar(200) [not null]
+  occurred_at timestamptz [not null]
+  available_at timestamptz [not null]
+  claim_id uuid
+  claimed_until timestamptz
+  published_at timestamptz
+  attempts integer [not null]
+}
+Table nutrition_rejected_events {
+  stream_sequence bigint [pk]
+  reason varchar(64) [not null]
+  rejected_at timestamptz [not null]
 }
 
 //////////////////////////////////////////////////////////////////////////

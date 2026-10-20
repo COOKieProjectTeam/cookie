@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: nutrition
+  datasource:
+    url: ${COOKIE_NUTRITION_DATABASE_URL}
+    username: ${COOKIE_NUTRITION_DATABASE_USER}
+    password: ${COOKIE_NUTRITION_DATABASE_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 2000
+      validation-timeout: 1000
+      data-source-properties:
+        options: '-c statement_timeout=5000 -c lock_timeout=2000'
+        socketTimeout: 10
+  flyway:
+    enabled: false
+  task:
+    scheduling:
+      pool:
+        size: 3
+server:
+  port: ${PORT:8082}
+  forward-headers-strategy: none
+management:
+  endpoints:
+    web:
+      exposure:
+        exclude: '*'
+cookie:
+  nutrition:
+    issuer: ${COOKIE_IDENTITY_ISSUER:https://api.cookie.app}
+    audience: ${COOKIE_IDENTITY_AUDIENCE:cookie-api}
+    jwks-path: ${COOKIE_IDENTITY_JWKS_PATH}
+    nats-url: ${COOKIE_NATS_URL}
+    nats-credentials-path: ${COOKIE_NATS_CREDENTIALS_PATH:}
+    nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
+    nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}

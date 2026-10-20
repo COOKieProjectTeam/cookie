@@ -86,3 +86,9 @@ generator/UI regressions, and rejects stale generated documentation.
 Regenerate with `make architecture-build`; verify with
 `make architecture-check`. Review the handwritten facts and flows when their
 referenced implementation changes.
+
+Nutrition has an independent mandatory job for unit/OpenAPI and real
+PostgreSQL/JetStream integration checks. Service files and its public contract
+select that job; shared Gradle/CI/platform runtime inputs select it as well.
+`CI required` incorporates its selected result. This registration does not
+modify GitHub branch-protection settings.
