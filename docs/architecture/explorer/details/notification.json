@@ -295,7 +295,7 @@
       "id": "notification-nats-connection",
       "label": "NATS transport",
       "value": "connect 2 s; reconnect 1 s; unlimited reconnect",
-      "description": "Production требует tls://, workload credentials и JKS truststore с hostname verification. COOKIE_NATS_URL/CREDENTIALS_PATH/TRUSTSTORE_PATH/TRUSTSTORE_PASSWORD; приложение bind-ится к заранее созданному consumer.",
+      "description": "Production требует tls://, workload credentials и JKS truststore с hostname verification. HappyEyeballs сохраняет исходное имя брокера для проверки DNS/IP SAN, включая reconnect. COOKIE_NATS_URL/CREDENTIALS_PATH/TRUSTSTORE_PATH/TRUSTSTORE_PASSWORD; приложение bind-ится к заранее созданному consumer.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
         "line": 66

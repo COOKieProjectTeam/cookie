@@ -64,6 +64,15 @@ Failures before commit are retried. Poison messages eventually require an
 operator-visible dead-letter/advisory path; Notification uses delayed NAK for transient failures and durable metadata-only
 quarantine for invalid events; see ADR 0013 and `notification.md`.
 
+## Production broker TLS
+
+Identity and Notification require TLS, workload credentials and a JKS truststore.
+Both clients preserve the configured broker hostname through JNATS
+`HappyEyeballs` resolution, then verify its DNS or IP SAN with HTTPS endpoint
+identification. Resolving the URI to an IP before the TLS handshake would lose
+the original DNS identity. This policy also applies to reconnects; tests cover
+matching DNS/IP certificates and rejection of mismatches for both services.
+
 ## Identity v1 publisher profile
 
 The first implemented publisher claims at most 100 rows across replicas with

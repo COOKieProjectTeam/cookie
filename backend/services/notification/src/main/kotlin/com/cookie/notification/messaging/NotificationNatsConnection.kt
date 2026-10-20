@@ -70,7 +70,13 @@ class NotificationNatsConnection(private val properties:NotificationMessagingPro
         .apply {
             val path=operatorCredentials?:properties.natsCredentialsPath
             if(path.isNotBlank()) credentialPath(path)
-            if(!development) { truststorePath(properties.natsTruststorePath); truststorePassword(properties.natsTruststorePassword.toCharArray()); dataPortType(HostnameVerifyingSocketDataPort::class.java.name) }
+            if(!development) {
+                truststorePath(properties.natsTruststorePath)
+                truststorePassword(properties.natsTruststorePassword.toCharArray())
+                // Resolve inside SocketDataPort so TLS verifies the broker URI's DNS name, not an IP.
+                hostnameResolveMode(Options.HostnameResolveMode.HappyEyeballs)
+                dataPortType(HostnameVerifyingSocketDataPort::class.java.name)
+            }
         }.build()
     @PreDestroy @Synchronized fun close() { connection?.runCatching { close() }; connection=null }
     companion object { const val STREAM="COOKIE_EVENTS" }

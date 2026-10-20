@@ -111,6 +111,8 @@ class NatsJetStreamConnection(
             if (!localProvisioning) {
                 truststorePath(properties.natsTruststorePath)
                 truststorePassword(properties.natsTruststorePassword.toCharArray())
+                // Resolve inside SocketDataPort so TLS verifies the broker URI's DNS name, not an IP.
+                hostnameResolveMode(Options.HostnameResolveMode.HappyEyeballs)
                 dataPortType(HostnameVerifyingSocketDataPort::class.java.name)
             }
         }

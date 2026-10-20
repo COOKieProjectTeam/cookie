@@ -255,7 +255,7 @@
       "id": "identity-nats",
       "label": "NATS connection",
       "value": "connect2 с · reconnect1 с · без лимита reconnect",
-      "description": "В production обязательны tls://, workload credentials, readable truststore и hostname verification. Dev/test могут provision stream; production делает отдельный init job.",
+      "description": "В production обязательны tls://, workload credentials, readable truststore и hostname verification. HappyEyeballs сохраняет исходное имя брокера для проверки DNS/IP SAN, включая reconnect. Dev/test могут provision stream; production делает отдельный init job.",
       "source": {
         "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/NatsJetStreamConnection.kt",
         "line": 100

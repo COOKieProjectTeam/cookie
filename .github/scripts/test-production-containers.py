@@ -74,7 +74,15 @@ def request(port, path, *, body=None, token=None, expected=200):
     except urllib.error.HTTPError as error:
         response = error
     content = response.read()
-    assert response.status == expected, f"{path}: expected {expected}, got {response.status}"
+    if response.status != expected:
+        # Only the bounded public error code is useful diagnostic data. Never
+        # include response/request bodies which can contain session secrets.
+        try:
+            code = json.loads(content).get("code", "")
+        except (ValueError, AttributeError):
+            code = ""
+        safe_code = code if isinstance(code, str) and re.fullmatch(r"[A-Z_]{1,80}", code) else "UNAVAILABLE"
+        raise AssertionError(f"{path}: expected {expected}, got {response.status} ({safe_code})")
     return json.loads(content) if content else None
 
 
@@ -332,7 +340,9 @@ else:
 
     def registration(self):
         registration = {
-            "registrationAttemptId": str(uuid.uuid4()), "email": f"fixture-{uuid.uuid4().hex}@cookie.invalid",
+            # Identity admits only .ru/.рф. SMTP always points to our local sink;
+            # no DNS/MX lookup or external delivery occurs for this address.
+            "registrationAttemptId": str(uuid.uuid4()), "email": f"fixture-{uuid.uuid4().hex}@example.ru",
             "password": "Synthetic-Password-438!", "registrationProof": fixture.b64(os.urandom(32)), "locale": "en",
         }
         request(8080, "/v1/auth/email/register", body=registration, expected=202)
@@ -457,6 +467,13 @@ else:
         # SMTP messages, JWTs, or the synthetic API request/response bodies.
         print(result.stdout, file=sys.stderr)
         print(result.stderr, file=sys.stderr)
+        try:
+            print("Delivery state counts (no payloads):", self.sql("notification",
+                "SELECT channel,status,last_code,count(*) FROM delivery_jobs "
+                "GROUP BY channel,status,last_code ORDER BY channel,status,last_code;"), file=sys.stderr)
+            print("Messages accepted by synthetic SMTP:", len(self.smtp.messages), file=sys.stderr)
+        except (RuntimeError, AttributeError):
+            pass  # A failed first installation may not have created this DB yet.
 
 
 def main():

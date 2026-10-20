@@ -106,6 +106,12 @@ def generate(root, repository):
           .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
           .not_valid_before(now - datetime.timedelta(minutes=5)).not_valid_after(now + datetime.timedelta(days=1))
           .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+          .add_extension(x509.KeyUsage(
+              digital_signature=True, content_commitment=False, key_encipherment=False,
+              data_encipherment=False, key_agreement=False, key_cert_sign=True,
+              crl_sign=True, encipher_only=False, decipher_only=False), critical=True)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+          .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
           .sign(ca_key, hashes.SHA256()))
     write(secret / "nats/ca.crt", ca.public_bytes(serialization.Encoding.PEM), mode=0o444)
     for name, uid, directory in (("nats", 1000, secret / "nats"), ("fixture.cookie.test", 0, root / "fixture")):
@@ -115,6 +121,7 @@ def generate(root, repository):
             .issuer_name(ca_name).public_key(key.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(minutes=5)).not_valid_after(now + datetime.timedelta(days=1))
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
             .sign(ca_key, hashes.SHA256()))
         write(directory / "server.crt", certificate.public_bytes(serialization.Encoding.PEM), mode=0o444)
         write(directory / "server.key", key.private_bytes(
