@@ -71,14 +71,16 @@ class AccountDeletionUseCaseTest {
     }
 
     @Test
-    fun `same and different idempotency keys return the original request without repeated password work`() {
+    fun `same and different idempotency keys return the original request after password verification`() {
         val account = activeAccount()
         val transactions = ImmediateTransactions()
         val accounts = InMemoryAccounts(account, transactions)
         val requests = InMemoryDeletionRequests(transactions)
         val families = RecordingFamilies(transactions)
         val events = RecordingEvents(transactions)
-        val hashing = RecordingPasswordHashing(transactions) { _, _ -> true }
+        val hashing = RecordingPasswordHashing(transactions) { password, encoded ->
+            password == PASSWORD && encoded == PASSWORD_HASH
+        }
         val handler = handler(
             accounts = accounts,
             deletionRequests = requests,
@@ -91,24 +93,67 @@ class AccountDeletionUseCaseTest {
         )
 
         val first = handler.execute(command(KEY_1))
-        val sameKeyRetry = handler.execute(command(KEY_1, password = "wrong-on-retry"))
-        val differentKeyRetry = handler.execute(command(KEY_2, password = "wrong-on-retry"))
+        val sameKeyRetry = handler.execute(command(KEY_1))
+        val differentKeyRetry = handler.execute(command(KEY_2))
 
         assertThat(sameKeyRetry).isEqualTo(first)
         assertThat(differentKeyRetry).isEqualTo(first)
-        assertThat(hashing.matchesCount).isEqualTo(1)
+        assertThat(hashing.matchesCount).isEqualTo(3)
         assertThat(accounts.saveCount).isEqualTo(1)
         assertThat(requests.addCount).isEqualTo(1)
         assertThat(families.revocations).hasSize(1)
         assertThat(events.deletions).hasSize(1)
+        assertThat(account.status).isEqualTo(AccountStatus.DELETION_PENDING)
+        assertThat(account.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+        assertThat(account.failedLoginCount).isZero()
+    }
+
+    @Test
+    fun `wrong password cannot replay an accepted request with either idempotency key`() {
+        val account = activeAccount()
+        val transactions = ImmediateTransactions()
+        val accounts = InMemoryAccounts(account, transactions)
+        val requests = InMemoryDeletionRequests(transactions)
+        val families = RecordingFamilies(transactions)
+        val events = RecordingEvents(transactions)
+        val hashing = RecordingPasswordHashing(transactions) { password, encoded ->
+            password == PASSWORD && encoded == PASSWORD_HASH
+        }
+        val handler = handler(
+            accounts = accounts,
+            deletionRequests = requests,
+            families = families,
+            transactions = transactions,
+            passwordHashing = hashing,
+            ids = FixedId(DELETION_REQUEST_ID),
+            events = events,
+            accountId = account.id,
+        )
+
+        val accepted = handler.execute(command(KEY_1))
+        listOf(KEY_1, KEY_2).forEach { key ->
+            assertThatThrownBy { handler.execute(command(key, password = "wrong-on-retry")) }
+                .isInstanceOf(InvalidCredentialsException::class.java)
+        }
+        assertThat(handler.execute(command(KEY_2))).isEqualTo(accepted)
+
+        assertThat(hashing.matchesCount).isEqualTo(4)
+        assertThat(accounts.saveCount).isEqualTo(1)
+        assertThat(requests.addCount).isEqualTo(1)
+        assertThat(families.revocations).hasSize(1)
+        assertThat(events.deletions).hasSize(1)
+        assertThat(account.status).isEqualTo(AccountStatus.DELETION_PENDING)
+        assertThat(account.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+        assertThat(account.failedLoginCount).isZero()
     }
 
     @Test
     fun `request that loses the account lock returns the request created by the winner`() {
         val account = activeAccount()
+        val pending = activeAccount().also { it.requestDeletion(NOW) }
         val existing = AccountDeletionRequest.start(DELETION_REQUEST_ID, account.id, KEY_2, NOW).request
         val transactions = ImmediateTransactions()
-        val accounts = InMemoryAccounts(account, transactions)
+        val accounts = ChangingAccounts(listOf(account), listOf(pending), transactions)
         val requests = DelayedVisibleDeletionRequest(existing, transactions)
         val families = RecordingFamilies(transactions)
         val events = RecordingEvents(transactions)
@@ -128,11 +173,74 @@ class AccountDeletionUseCaseTest {
         val result = handler.execute(command(KEY_1))
 
         assertThat(result.deletionRequestId).isEqualTo(existing.id)
-        assertThat(accounts.idForUpdateCount).isEqualTo(1)
+        assertThat(accounts.lockCount).isEqualTo(1)
         assertThat(accounts.saveCount).isZero()
         assertThat(ids.calls).isZero()
         assertThat(families.revocations).isEmpty()
         assertThat(events.deletions).isEmpty()
+    }
+
+    @Test
+    fun `wrong password cannot reuse the receipt created while waiting for the account lock`() {
+        val account = activeAccount()
+        val pending = activeAccount().also { it.requestDeletion(NOW) }
+        val existing = AccountDeletionRequest.start(DELETION_REQUEST_ID, account.id, KEY_2, NOW).request
+        val transactions = ImmediateTransactions()
+        val accounts = ChangingAccounts(listOf(account), listOf(pending), transactions)
+        val requests = DelayedVisibleDeletionRequest(existing, transactions)
+        val families = RecordingFamilies(transactions)
+        val events = RecordingEvents(transactions)
+        val hashing = RecordingPasswordHashing(transactions) { _, _ -> false }
+        val ids = CountingIds()
+        val handler = handler(
+            accounts = accounts,
+            deletionRequests = requests,
+            families = families,
+            transactions = transactions,
+            passwordHashing = hashing,
+            ids = ids,
+            events = events,
+            accountId = account.id,
+        )
+
+        assertThatThrownBy { handler.execute(command(KEY_1, password = "wrong-password")) }
+            .isInstanceOf(InvalidCredentialsException::class.java)
+
+        assertThat(hashing.matchesCount).isEqualTo(1)
+        assertThat(accounts.lockCount).isEqualTo(1)
+        assertThat(accounts.saveCount).isZero()
+        assertThat(ids.calls).isZero()
+        assertThat(families.revocations).isEmpty()
+        assertThat(events.deletions).isEmpty()
+        assertThat(pending.status).isEqualTo(AccountStatus.DELETION_PENDING)
+        assertThat(pending.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+    }
+
+    @Test
+    fun `receipt replay rechecks a changed credential instead of accepting the stale password result`() {
+        val old = activeAccount(hash = "old-hash").also { it.requestDeletion(NOW) }
+        val current = activeAccount(hash = "new-hash").also { it.requestDeletion(NOW) }
+        val existing = AccountDeletionRequest.start(DELETION_REQUEST_ID, current.id, KEY_1, NOW).request
+        val transactions = ImmediateTransactions()
+        val accounts = ChangingAccounts(listOf(old, current), listOf(current, current), transactions)
+        val hashing = RecordingPasswordHashing(transactions) { _, encoded -> encoded == "old-hash" }
+        val handler = handler(
+            accounts = accounts,
+            deletionRequests = DelayedVisibleDeletionRequest(existing, transactions),
+            families = RecordingFamilies(transactions),
+            transactions = transactions,
+            passwordHashing = hashing,
+            accountId = current.id,
+        )
+
+        assertThatThrownBy { handler.execute(command(KEY_1)) }
+            .isInstanceOf(InvalidCredentialsException::class.java)
+
+        assertThat(hashing.encodedValues).containsExactly("old-hash", "new-hash")
+        assertThat(accounts.lockCount).isEqualTo(2)
+        assertThat(accounts.saveCount).isZero()
+        assertThat(current.status).isEqualTo(AccountStatus.DELETION_PENDING)
+        assertThat(current.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
     }
 
     @Test
@@ -312,7 +420,7 @@ class AccountDeletionUseCaseTest {
 
         assertThatThrownBy { handler.execute(command(KEY_1)) }
             .isInstanceOf(RateLimitExceededException::class.java)
-        assertThat(hashing.matchesCount).isEqualTo(1)
+        assertThat(hashing.matchesCount).isEqualTo(10)
         assertThat(requests.addCount).isEqualTo(1)
         assertThat(events.deletions).hasSize(1)
     }
@@ -420,6 +528,8 @@ class AccountDeletionUseCaseTest {
         private val locked = locked.iterator()
         var lockCount = 0
             private set
+        var saveCount = 0
+            private set
 
         override fun lockRegistration(email: CanonicalEmail) = error("Not used")
         override fun findByEmail(email: CanonicalEmail): Account? = error("Not used")
@@ -433,6 +543,7 @@ class AccountDeletionUseCaseTest {
         override fun add(account: Account) = error("Not used")
         override fun save(account: Account) {
             check(transactions.inTransaction)
+            saveCount += 1
         }
     }
 
@@ -459,12 +570,8 @@ class AccountDeletionUseCaseTest {
         private val request: AccountDeletionRequest,
         private val transactions: ImmediateTransactions,
     ) : AccountDeletionRequestRepository {
-        private var reads = 0
-
-        override fun findByAccountId(accountId: UUID): AccountDeletionRequest? {
-            reads += 1
-            return request.takeIf { reads > 1 && it.accountId == accountId }
-        }
+        override fun findByAccountId(accountId: UUID): AccountDeletionRequest? =
+            request.takeIf { transactions.inTransaction && it.accountId == accountId }
 
         override fun add(request: AccountDeletionRequest) {
             check(transactions.inTransaction)

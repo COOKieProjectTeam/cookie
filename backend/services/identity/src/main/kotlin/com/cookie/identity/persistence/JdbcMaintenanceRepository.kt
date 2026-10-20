@@ -73,7 +73,7 @@ class JdbcMaintenanceRepository(
             WITH removable AS (
                 SELECT id
                 FROM registration_attempts
-                WHERE (abandoned_at IS NOT NULL AND abandoned_at < ?)
+                WHERE (abandoned_at IS NOT NULL AND abandoned_at < ? AND expires_at < ?)
                    OR (completed_at IS NOT NULL AND completed_at < ?)
                 ORDER BY COALESCE(completed_at, abandoned_at), id
                 FOR UPDATE SKIP LOCKED
@@ -83,6 +83,7 @@ class JdbcMaintenanceRepository(
             USING removable r
             WHERE a.id = r.id
             """.trimIndent(),
+            abandonedBefore.asJdbcTimestamp(),
             abandonedBefore.asJdbcTimestamp(),
             completedBefore.asJdbcTimestamp(),
             batchSize,

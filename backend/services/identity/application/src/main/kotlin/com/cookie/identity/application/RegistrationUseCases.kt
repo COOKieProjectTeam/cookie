@@ -85,7 +85,7 @@ class RegisterWithEmailHandler(
             if (attempts.findByProof(proofHash) != null) {
                 throw RegistrationAttemptConflictException()
             }
-            if (accounts.findByEmailForUpdate(email) != null) return@requiredUnit
+            val accountExists = accounts.findByEmailForUpdate(email) != null
             attemptIssuer.start(
                 attemptId = registrationAttemptId,
                 email = email,
@@ -94,6 +94,7 @@ class RegisterWithEmailHandler(
                 requestFingerprint = requestFingerprint,
                 locale = localeTag,
                 now = now,
+                suppressDelivery = accountExists,
             )
         }
     }
@@ -137,10 +138,11 @@ class ResendEmailVerificationHandler(
 
         transactions.requiredUnit {
             accounts.lockRegistration(email)
-            if (accounts.findByEmailForUpdate(email) != null) return@requiredUnit
+            val accountExists = accounts.findByEmailForUpdate(email) != null
             val attempt = attempts.findByIdForUpdate(registrationAttemptId) ?: return@requiredUnit
             if (attempt.email != email) return@requiredUnit
             if (!registrationSecrets.verifierMatches(attempt.registrationProofHash, proofHash)) return@requiredUnit
+            if (accountExists && !attempt.isAbandoned) return@requiredUnit
             val transactionNow = currentTime.now()
             if (!attempt.canIssueVerificationToken(transactionNow, policy.verificationResendCooldown)) {
                 return@requiredUnit

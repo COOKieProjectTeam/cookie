@@ -28,6 +28,7 @@ class RegistrationAttemptIssuer(
         requestFingerprint: VerifierHash,
         locale: LocaleTag?,
         now: Instant,
+        suppressDelivery: Boolean = false,
     ) {
         val tokenId = ids.next()
         val token = registrationSecrets.createEmailVerificationToken(attemptId, tokenId)
@@ -46,9 +47,11 @@ class RegistrationAttemptIssuer(
                 firstTokenVerifierHash = token.verifierHash,
                 firstTokenExpiresAt = tokenExpiresAt,
                 now = now,
-            ),
+            ).also { if (suppressDelivery) it.abandon(now) },
         )
-        recordVerificationRequest(attemptId, email, locale, token.value, tokenExpiresAt, now)
+        if (!suppressDelivery) {
+            recordVerificationRequest(attemptId, email, locale, token.value, tokenExpiresAt, now)
+        }
     }
 
     fun issueVerificationToken(attempt: RegistrationAttempt, now: Instant) {
@@ -63,7 +66,9 @@ class RegistrationAttemptIssuer(
             now = now,
         )
         attempts.save(attempt)
-        recordVerificationRequest(attempt.id, attempt.email, attempt.locale, token.value, tokenExpiresAt, now)
+        if (!attempt.isAbandoned) {
+            recordVerificationRequest(attempt.id, attempt.email, attempt.locale, token.value, tokenExpiresAt, now)
+        }
     }
 
     private fun recordVerificationRequest(

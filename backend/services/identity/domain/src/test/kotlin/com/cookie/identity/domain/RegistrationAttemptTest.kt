@@ -123,7 +123,7 @@ class RegistrationAttemptTest {
     @Test
     fun `abandonment is idempotent scrubs secrets and preserves retry evidence`() {
         val attempt = attempt()
-        val abandonedAt = createdAt.plusSeconds(60)
+        val abandonedAt = createdAt.plusSeconds(10)
 
         attempt.abandon(abandonedAt)
         attempt.abandon(abandonedAt.plusSeconds(1))
@@ -136,7 +136,17 @@ class RegistrationAttemptTest {
             .isEqualTo(RegistrationRequestDecision.ABANDONED)
         assertThat(decision(attempt, at = abandonedAt.plusSeconds(2)))
             .isEqualTo(RegistrationTokenDecision.INVALID)
-        assertThat(attempt.canIssueVerificationToken(abandonedAt.plusSeconds(2), Duration.ZERO)).isFalse()
+        assertThat(attempt.canIssueVerificationToken(abandonedAt.plusSeconds(2), Duration.ZERO)).isTrue()
+        val tokenId = UUID.randomUUID()
+        attempt.issueVerificationToken(
+            tokenId, hash('f'), attempt.expiresAt, Duration.ZERO, abandonedAt.plusSeconds(2),
+        )
+        assertThat(attempt.tokenDecision(tokenId, true, true, abandonedAt.plusSeconds(3)))
+            .isEqualTo(RegistrationTokenDecision.INVALID)
+        assertThatIllegalStateException().isThrownBy {
+            attempt.complete(tokenId, true, true, UUID.randomUUID(), abandonedAt.plusSeconds(3))
+        }
+        assertThat(attempt.canIssueVerificationToken(attempt.expiresAt, Duration.ZERO)).isFalse()
     }
 
     @Test

@@ -22,6 +22,14 @@ becomes an abandoned tombstone: password hash and locale are scrubbed atomically
 while id/proof fingerprint and token evidence remain for at least 30 days. Thus
 maintenance cannot turn an exact retry into a new email during that bounded window.
 
+Registration for an existing account persists the same id/proof fingerprint as
+an abandoned attempt, without retaining the supplied password hash or locale
+and without requesting email delivery. Until the ordinary attempt expiry,
+abandoned attempts retain unsent token verifiers to apply the same resend
+cooldown and email limits as pending attempts. These tokens cannot confirm an
+account. Abandoned evidence is retained for at least 30 days after both
+abandonment and the original attempt expiry.
+
 Before the first register call, a client must atomically persist a cryptographically
 random `registrationAttemptId` together with its 32-byte `registrationProof` in
 Keychain/Keystore. Network retries repeat the identical id, proof, email, password

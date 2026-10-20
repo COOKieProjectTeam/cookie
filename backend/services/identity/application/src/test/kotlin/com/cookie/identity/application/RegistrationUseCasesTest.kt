@@ -18,6 +18,7 @@ import com.cookie.identity.domain.NormalizedPassword
 import com.cookie.identity.domain.PasswordPolicy
 import com.cookie.identity.domain.RegistrationAttempt
 import com.cookie.identity.domain.RegistrationProof
+import com.cookie.identity.domain.RegistrationTokenDecision
 import com.cookie.identity.domain.RussianEmailAdmissionPolicy
 import com.cookie.identity.domain.VerifierHash
 import org.assertj.core.api.Assertions.assertThat
@@ -88,6 +89,64 @@ class RegistrationUseCasesTest {
         }.isInstanceOf(RegistrationAttemptConflictException::class.java)
 
         assertThat(fixture.attempts.addCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `existing account keeps exact retry and conflict evidence without credentials or email delivery`() {
+        val fixture = Fixture()
+        fixture.createExistingAccount()
+
+        fixture.register()
+        repeat(5) { fixture.register() }
+
+        val attempt = requireNotNull(fixture.attempts.findById(ATTEMPT_ID))
+        assertThat(attempt.isAbandoned).isTrue()
+        assertThat(attempt.pendingPasswordHash).isNull()
+        assertThat(attempt.locale).isNull()
+        assertThat(attempt.activatedAccountId).isNull()
+        assertThat(attempt.tokenDecision(TOKEN_1, true, true, now.plusSeconds(1)))
+            .isEqualTo(RegistrationTokenDecision.INVALID)
+        assertThat(fixture.rateLimits.scopes.count { it.startsWith("register:ip:") }).isEqualTo(6)
+        assertThat(fixture.rateLimits.scopes.count { it.startsWith("register:email:") }).isEqualTo(1)
+        assertThat(fixture.hashing.encodeCount).isEqualTo(1)
+        assertThat(fixture.attempts.addCount).isEqualTo(1)
+        assertThat(fixture.events.requests).isEmpty()
+
+        assertThatThrownBy { fixture.register(password = "AnotherPassword-123") }
+            .isInstanceOf(RegistrationAttemptConflictException::class.java)
+        assertThatThrownBy { fixture.register(locale = "en-US") }
+            .isInstanceOf(RegistrationAttemptConflictException::class.java)
+        assertThatThrownBy { fixture.register(attemptId = ATTEMPT_ID_2, email = "other@example.ru") }
+            .isInstanceOf(RegistrationAttemptConflictException::class.java)
+    }
+
+    @Test
+    fun `suppressed and losing attempts preserve the pending resend cooldown and rate consumption`() {
+        val pending = Fixture().apply { register() }
+        val suppressed = Fixture().apply { createExistingAccount(); register() }
+        val losing = Fixture().apply { register(); createExistingAccount(); abandonAttempt() }
+
+        listOf(pending, suppressed, losing).forEach { fixture ->
+            fixture.resend()
+            fixture.clock = now.plusSeconds(61)
+            fixture.resend()
+            fixture.resend()
+            val attempt = requireNotNull(fixture.attempts.findById(ATTEMPT_ID))
+            assertThat(attempt.verificationTokenSnapshots()).hasSize(2)
+            assertThat(fixture.attempts.saveCount).isEqualTo(1)
+        }
+        assertThat(suppressed.rateLimits.scopes).isEqualTo(pending.rateLimits.scopes)
+        assertThat(losing.rateLimits.scopes).isEqualTo(pending.rateLimits.scopes)
+        assertThat(pending.events.requests).hasSize(2)
+        assertThat(suppressed.events.requests).isEmpty()
+        assertThat(losing.events.requests).hasSize(1)
+        listOf(suppressed, losing).forEach { fixture ->
+            val attempt = requireNotNull(fixture.attempts.findById(ATTEMPT_ID))
+            assertThat(attempt.tokenDecision(TOKEN_2, true, true, fixture.clock))
+                .isEqualTo(RegistrationTokenDecision.INVALID)
+            assertThat(attempt.pendingPasswordHash).isNull()
+            assertThat(attempt.locale).isNull()
+        }
     }
 
     @Test
@@ -195,6 +254,10 @@ class RegistrationUseCasesTest {
         )
 
         fun resend() = resend.execute(ATTEMPT_ID, EMAIL, PROOF, IP)
+
+        fun createExistingAccount() {
+            accounts.account = Account.register(ACCOUNT_ID, CanonicalEmail.parse(EMAIL), "encoded-password", clock).account
+        }
 
         fun completeRegistration() {
             val account = Account.register(ACCOUNT_ID, CanonicalEmail.parse(EMAIL), "encoded-password", clock).account

@@ -10,16 +10,20 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = REPOSITORY_ROOT / "infra/terraform/environments/production/cloud-init.yaml.tftpl"
 
 
-def bootstrap_script():
+def cloud_init_file(path):
     content = TEMPLATE.read_text().split(
-        "  - path: /usr/local/sbin/cookie-bootstrap\n", 1
+        f"  - path: {path}\n", 1
     )[1].split("    content: |\n", 1)[1]
     lines = []
     for line in content.splitlines():
         if line and not line.startswith("      "):
             break
         lines.append(line)
-    return textwrap.dedent("\n".join(lines)).replace(
+    return textwrap.dedent("\n".join(lines))
+
+
+def bootstrap_script():
+    return cloud_init_file("/usr/local/sbin/cookie-bootstrap").replace(
         "${admin_username}", "cookieops"
     ).replace("$${VERSION_CODENAME}", "${VERSION_CODENAME}")
 
@@ -29,16 +33,19 @@ class BootstrapDiskTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="cookie-bootstrap-test-")
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
-        self.fstab = self.directory / "fstab"
+        self.etc = self.directory / "etc"
+        (self.etc / "apt/keyrings").mkdir(parents=True)
+        (self.etc / "apt/sources.list.d").mkdir()
+        (self.etc / "os-release").write_text("VERSION_CODENAME=test\n")
+        self.fstab = self.etc / "fstab"
         self.fstab.write_text("")
         self.calls = self.directory / "calls"
         self.calls.write_text("")
 
     def run_bootstrap(self, **overrides):
-        script = bootstrap_script().split("apt-get update", 1)[0]
-        script = script.replace("/etc/fstab", str(self.fstab)).replace(
+        script = bootstrap_script().replace("/etc/", f"{self.etc}/").replace(
             "/srv/cookie", str(self.directory / "data")
-        )
+        ).replace("/opt/cookie", str(self.directory / "opt"))
         mocks = r'''
 record() { printf '%s\n' "$*" >> "$MOCK_CALLS"; }
 function [() {
@@ -70,7 +77,18 @@ blkid() {
 }
 install() { record "install $*"; }
 mountpoint() { [[ "$MOCK_MOUNTED" == true ]]; }
-mount() { record "mount $*"; }
+mount() { record "mount $*"; return "$MOCK_MOUNT_STATUS"; }
+systemctl() {
+  record "systemctl $*"
+  if [[ "$1" == daemon-reload ]]; then
+    return "$MOCK_RELOAD_STATUS"
+  fi
+}
+apt-get() { record "apt-get $*"; }
+curl() { record "curl $*"; }
+chmod() { record "chmod $*"; }
+dpkg() { printf 'amd64\n'; }
+usermod() { record "usermod $*"; }
 mkfs.ext4() { record "FORMAT $*"; }
 mkfs() { record "FORMAT $*"; }
 wipefs() { record "WIPE $*"; }
@@ -84,6 +102,8 @@ wipefs() { record "WIPE $*"; }
             MOCK_UUID="e3774bcd-48d6-418e-af51-30c135a70d9b",
             MOCK_UUID_STATUS="0",
             MOCK_MOUNTED="false",
+            MOCK_MOUNT_STATUS="0",
+            MOCK_RELOAD_STATUS="0",
         )
         environment.update(overrides)
         result = subprocess.run(
@@ -98,6 +118,8 @@ wipefs() { record "WIPE $*"; }
         result = self.run_bootstrap(**overrides)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("mount ", self.calls.read_text())
+        self.assertNotIn("apt-get ", self.calls.read_text())
+        self.assertNotIn("systemctl ", self.calls.read_text())
         self.assertEqual(self.fstab.read_text(), "")
         return result
 
@@ -118,6 +140,43 @@ wipefs() { record "WIPE $*"; }
             "UUID=e3774bcd-48d6-418e-af51-30c135a70d9b "
             f"{self.directory}/data ext4 defaults,nofail 0 2\n",
         )
+
+    def test_docker_requires_persistent_mount(self):
+        unit = cloud_init_file(
+            "/etc/systemd/system/docker.service.d/10-cookie-data.conf"
+        )
+        self.assertEqual(
+            unit.strip().splitlines(),
+            ["[Unit]", "RequiresMountsFor=/srv/cookie"],
+        )
+
+    def test_mount_and_reload_precede_docker_installation(self):
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls.read_text().splitlines()
+        mounted = calls.index(f"mount {self.directory}/data")
+        reloaded = calls.index("systemctl daemon-reload")
+        installed = calls.index(
+            "apt-get install -y --no-install-recommends docker-ce docker-ce-cli "
+            "containerd.io docker-buildx-plugin docker-compose-plugin"
+        )
+        enabled = calls.index("systemctl enable --now docker")
+        self.assertLess(mounted, reloaded)
+        self.assertLess(reloaded, installed)
+        self.assertLess(installed, enabled)
+
+    def test_mount_failure_prevents_docker_installation(self):
+        result = self.run_bootstrap(MOCK_MOUNT_STATUS="32")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("systemctl ", self.calls.read_text())
+        self.assertNotIn("apt-get ", self.calls.read_text())
+
+    def test_reload_failure_prevents_docker_installation(self):
+        result = self.run_bootstrap(MOCK_RELOAD_STATUS="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("systemctl daemon-reload", self.calls.read_text())
+        self.assertNotIn("apt-get ", self.calls.read_text())
+        self.assertNotIn("systemctl enable", self.calls.read_text())
 
     def test_repeated_bootstrap_preserves_fstab_and_mount(self):
         result = self.run_bootstrap()

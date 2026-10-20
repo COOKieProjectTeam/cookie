@@ -76,7 +76,7 @@ class JdbcRegistrationAttemptRepository(
     override fun add(attempt: RegistrationAttempt) {
         requireActiveTransaction("Add registration attempt")
         val tokens = attempt.verificationTokenSnapshots()
-        check(!attempt.isCompleted && !attempt.isAbandoned && tokens.size == 1 && tokens.none { it.isRedeemed }) {
+        check(!attempt.isCompleted && tokens.size == 1 && tokens.none { it.isRedeemed }) {
             "A new registration attempt must contain exactly one unredeemed verification token"
         }
         requireSingleRow(
@@ -164,12 +164,12 @@ class JdbcRegistrationAttemptRepository(
         targetTokens: Map<UUID, RegistrationVerificationToken>,
     ) {
         check(!stored.isCompleted) { "Completed registration attempt cannot issue another token" }
-        check(!stored.isAbandoned) { "Abandoned registration attempt cannot issue another token" }
         check(
             stored.locale == target.locale &&
                 stored.pendingPasswordHash == target.pendingPasswordHash &&
                 target.completedAt == null &&
-                target.activatedAccountId == null,
+                target.activatedAccountId == null &&
+                stored.abandonedAt == target.abandonedAt,
         ) { "Issuing a verification token cannot change registration attempt state" }
         val addedTokens = targetTokens.keys - storedTokens.keys
         check(addedTokens.size == 1) {

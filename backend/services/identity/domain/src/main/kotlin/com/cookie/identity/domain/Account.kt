@@ -73,6 +73,11 @@ class Account private constructor(
         return PasswordAuthenticationResult.AUTHENTICATED
     }
 
+    fun authenticateDeletionReceipt(passwordMatches: Boolean, now: Instant): Boolean {
+        check(!now.isBefore(createdAt)) { "Receipt authentication cannot precede registration" }
+        return status == AccountStatus.DELETION_PENDING && passwordMatches
+    }
+
     /**
      * Irreversibly closes the account for authentication while distributed
      * data deletion is pending. The far-future lock is deliberately persisted

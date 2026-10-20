@@ -107,6 +107,30 @@ class AccountTest {
     }
 
     @Test
+    fun `pending deletion receipt requires the password without reopening account authentication`() {
+        val account = account(failedLoginCount = 3)
+        account.requestDeletion(now)
+
+        assertThat(account.authenticateDeletionReceipt(passwordMatches = false, now.plusSeconds(1))).isFalse()
+        assertThat(account.authenticateDeletionReceipt(passwordMatches = true, now.plusSeconds(2))).isTrue()
+        assertThat(account.authenticatePassword(passwordMatches = true, now.plusSeconds(3)))
+            .isEqualTo(PasswordAuthenticationResult.REJECTED)
+        assertThat(account.status).isEqualTo(AccountStatus.DELETION_PENDING)
+        assertThat(account.failedLoginCount).isEqualTo(3)
+        assertThat(account.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+    }
+
+    @Test
+    fun `active account cannot authenticate a deletion receipt`() {
+        val account = account(failedLoginCount = 2, lockedUntil = now.plusSeconds(30))
+
+        assertThat(account.authenticateDeletionReceipt(passwordMatches = true, now)).isFalse()
+        assertThat(account.status).isEqualTo(AccountStatus.ACTIVE)
+        assertThat(account.failedLoginCount).isEqualTo(2)
+        assertThat(account.lockedUntil).isEqualTo(now.plusSeconds(30))
+    }
+
+    @Test
     fun `legacy reconstitution defaults to active lifecycle state`() {
         val account = Account.reconstitute(
             id = UUID.randomUUID(),

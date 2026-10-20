@@ -506,6 +506,56 @@ class JdbcConcurrencyIntegrationTest {
     }
 
     @Test
+    fun `wrong password waiting behind successful deletion cannot replay the accepted receipt`() {
+        val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
+        val fixture = accountFixture("deletion-wrong-password", now)
+        val families = JdbcRefreshFamilyRepository(jdbc)
+        seedRefreshFamily(fixture.accountId, families, TestRefreshTokens(), now)
+        val deletionLock = heldLock()
+        val contenderWaiter = blockedWaiter()
+
+        val result = forceBlockedOrder(
+            holderLock = deletionLock,
+            waiter = contenderWaiter,
+            holder = {
+                deletionHandler(
+                    accountId = fixture.accountId,
+                    accounts = hookedAccounts(afterIdLock = deletionLock::hold),
+                    families = families,
+                    now = now,
+                ).execute(deletionCommand())
+            },
+            contender = {
+                try {
+                    deletionHandler(
+                        accountId = fixture.accountId,
+                        accounts = hookedAccounts(beforeIdLock = contenderWaiter::captureBackend),
+                        families = families,
+                        now = now,
+                    ).execute(deletionCommand(password = "wrong-password"))
+                    true
+                } catch (_: InvalidCredentialsException) {
+                    false
+                }
+            },
+        )
+
+        assertThat(result.second).isFalse()
+        assertDeletionInvariant(fixture.accountId)
+        assertThat(refreshFamilyCounts(fixture.accountId)).containsExactly(1, 0)
+        val account = requireNotNull(JdbcAccountRepository(jdbc).findById(fixture.accountId))
+        assertThat(account.lockedUntil).isEqualTo(Account.DELETION_LOCKED_UNTIL)
+        assertThat(account.failedLoginCount).isZero()
+        val validRetry = deletionHandler(
+            accountId = fixture.accountId,
+            accounts = JdbcAccountRepository(jdbc),
+            families = families,
+            now = now,
+        ).execute(deletionCommand())
+        assertThat(validRetry).isEqualTo(result.first)
+    }
+
+    @Test
     fun `V4 upgrades a V3 database and keeps old shaped account inserts active`() {
         val schema = "identity_upgrade_${UUID.randomUUID().toString().replace("-", "")}"
         jdbc.execute("CREATE SCHEMA $schema")
@@ -647,6 +697,11 @@ class JdbcConcurrencyIntegrationTest {
             expiresAt = now.minus(2, ChronoUnit.DAYS).plus(30, ChronoUnit.MINUTES),
             abandonedAt = now.minus(2, ChronoUnit.DAYS).plus(31, ChronoUnit.MINUTES),
         )
+        val suppressedId = insertRegistrationAttempt(
+            createdAt = now.minus(30, ChronoUnit.DAYS).minus(1, ChronoUnit.HOURS),
+            expiresAt = now.minus(29, ChronoUnit.DAYS).minus(1, ChronoUnit.HOURS),
+            abandonedAt = now.minus(30, ChronoUnit.DAYS).minus(1, ChronoUnit.HOURS),
+        )
         val oldCompletedId = insertRegistrationAttempt(
             createdAt = now.minus(40, ChronoUnit.DAYS),
             expiresAt = now.minus(40, ChronoUnit.DAYS).plus(30, ChronoUnit.MINUTES),
@@ -662,7 +717,7 @@ class JdbcConcurrencyIntegrationTest {
 
         assertThat(
             jdbc.queryForObject("SELECT count(*) FROM registration_verification_tokens", Int::class.java),
-        ).isEqualTo(6)
+        ).isEqualTo(7)
         assertThat(jdbc.update("DELETE FROM accounts WHERE id = ?", recentAccountId)).isEqualTo(1)
         assertThat(
             jdbc.queryForObject(
@@ -701,6 +756,7 @@ class JdbcConcurrencyIntegrationTest {
             livePendingId,
             recentAbandonedId,
             recentCompletedId,
+            suppressedId,
         )
         assertThat(remaining).doesNotContain(oldAbandonedId, oldCompletedId)
         val remainingTokenParents = jdbc.queryForList(
@@ -712,7 +768,16 @@ class JdbcConcurrencyIntegrationTest {
             livePendingId,
             recentAbandonedId,
             recentCompletedId,
+            suppressedId,
         )
+        assertThat(repository.deleteRegistrationAttemptTombstones(
+            abandonedBefore = now.minus(29, ChronoUnit.DAYS),
+            completedBefore = now.minus(30, ChronoUnit.DAYS),
+            batchSize = 100,
+        )).isEqualTo(1)
+        assertThat(jdbc.queryForObject(
+            "SELECT count(*) FROM registration_attempts WHERE id = ?", Int::class.java, suppressedId,
+        )).isZero()
     }
 
     @Test
@@ -1020,9 +1085,9 @@ class JdbcConcurrencyIntegrationTest {
         currentTime = CurrentTimeProvider { now },
     )
 
-    private fun deletionCommand(): AccountDeletionCommand = AccountDeletionCommand(
+    private fun deletionCommand(password: String = TEST_PASSWORD): AccountDeletionCommand = AccountDeletionCommand(
         accessToken = "test-access-token",
-        currentPassword = TEST_PASSWORD,
+        currentPassword = password,
         idempotencyKey = UUID.randomUUID(),
         ip = TEST_IP,
     )

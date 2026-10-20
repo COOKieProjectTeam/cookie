@@ -428,6 +428,130 @@ class IdentityFlowIntegrationTest {
     }
 
     @Test
+    fun `registration retry responses and limits do not reveal an existing account`() {
+        listOf(false, true).forEach { accountExists ->
+            val unique = UUID.randomUUID().toString().take(8)
+            val email = "private-retry-$unique@example.ru"
+            val password = "ValidPassword-$unique"
+            if (accountExists) registerAndConfirm(email, password)
+            jdbc.update("TRUNCATE TABLE rate_limit_buckets")
+            val attemptId = UUID.randomUUID()
+            val proof = registrationProof()
+            val request = EmailRegistrationRequest(attemptId, email, password, proof, "ru-RU")
+
+            repeat(6) {
+                assertThat(post("/v1/auth/email/register", request).statusCode()).isEqualTo(202)
+            }
+            assertThat(jdbc.queryForObject(
+                "SELECT attempt_count FROM rate_limit_buckets WHERE scope_key LIKE 'register:email:%'",
+                Int::class.java,
+            )).isEqualTo(1)
+            assertThat(jdbc.queryForObject(
+                "SELECT attempt_count FROM rate_limit_buckets WHERE scope_key LIKE 'register:ip:%'",
+                Int::class.java,
+            )).isEqualTo(6)
+            listOf(
+                EmailRegistrationRequest(attemptId, email, "$password-changed", proof, "ru-RU"),
+                EmailRegistrationRequest(attemptId, email, password, proof, "en-US"),
+                EmailRegistrationRequest(UUID.randomUUID(), "other-$email", password, proof, "ru-RU"),
+            ).forEach { changed ->
+                val response = post("/v1/auth/email/register", changed)
+                assertThat(response.statusCode()).isEqualTo(409)
+                assertThat(objectMapper.readTree(response.body()).path("code").stringValue())
+                    .isEqualTo("REGISTRATION_ATTEMPT_CONFLICT")
+            }
+            assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM registration_attempts WHERE id = ?", Int::class.java, attemptId,
+            )).isEqualTo(1)
+            assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE aggregate_id = ? AND event_type = 'notification.email.requested'",
+                Int::class.java, attemptId.toString(),
+            )).isEqualTo(if (accountExists) 0 else 1)
+            if (accountExists) {
+                assertThat(jdbc.queryForObject(
+                    """SELECT abandoned_at IS NOT NULL AND pending_password_hash IS NULL AND locale IS NULL
+                        AND completed_at IS NULL AND activated_account_id IS NULL
+                        FROM registration_attempts WHERE id = ?""",
+                    Boolean::class.java, attemptId,
+                )).isTrue()
+            }
+        }
+    }
+
+    @Test
+    fun `resend cooldown and throttling do not distinguish pending suppressed or losing attempts`() {
+        listOf("pending", "suppressed", "losing").forEach { state ->
+            val unique = UUID.randomUUID().toString().take(8)
+            val email = "private-resend-$unique@example.ru"
+            val password = "ValidPassword-$unique"
+            if (state == "suppressed") registerAndConfirm(email, password)
+            val attemptId = UUID.randomUUID()
+            val proof = registrationProof()
+            assertThat(post(
+                "/v1/auth/email/register",
+                EmailRegistrationRequest(attemptId, email, password, proof, "ru-RU"),
+            ).statusCode()).isEqualTo(202)
+            val losingToken = if (state == "losing") latestVerificationToken(attemptId) else null
+            if (state == "losing") registerAndConfirm(email, password)
+            jdbc.update("TRUNCATE TABLE rate_limit_buckets")
+            val request = mapOf(
+                "registrationAttemptId" to attemptId.toString(), "email" to email, "registrationProof" to proof,
+            )
+
+            assertThat(post("/v1/auth/email/verification/resend", request).statusCode()).isEqualTo(202)
+            assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM rate_limit_buckets WHERE scope_key LIKE 'resend:email-%'", Int::class.java,
+            )).isZero()
+            jdbc.update(
+                "UPDATE registration_attempts SET created_at = created_at - interval '2 minutes' WHERE id = ?",
+                attemptId,
+            )
+            jdbc.update(
+                "UPDATE registration_verification_tokens SET issued_at = issued_at - interval '2 minutes' WHERE attempt_id = ?",
+                attemptId,
+            )
+            repeat(2) {
+                assertThat(post("/v1/auth/email/verification/resend", request).statusCode()).isEqualTo(202)
+            }
+            assertThat(jdbc.queryForObject(
+                "SELECT attempt_count FROM rate_limit_buckets WHERE scope_key LIKE 'resend:email-minute:%'",
+                Int::class.java,
+            )).isEqualTo(1)
+            assertThat(jdbc.queryForObject(
+                "SELECT attempt_count FROM rate_limit_buckets WHERE scope_key LIKE 'resend:email-hour:%'",
+                Int::class.java,
+            )).isEqualTo(1)
+            assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM registration_verification_tokens WHERE attempt_id = ?", Int::class.java, attemptId,
+            )).isEqualTo(2)
+            jdbc.update(
+                "UPDATE registration_attempts SET created_at = created_at - interval '2 minutes' WHERE id = ?",
+                attemptId,
+            )
+            jdbc.update(
+                "UPDATE registration_verification_tokens SET issued_at = issued_at - interval '2 minutes' WHERE attempt_id = ?",
+                attemptId,
+            )
+            assertThat(post("/v1/auth/email/verification/resend", request).statusCode()).isEqualTo(429)
+            assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE aggregate_id = ? AND event_type = 'notification.email.requested'",
+                Int::class.java, attemptId.toString(),
+            )).isEqualTo(when (state) { "pending" -> 2; "losing" -> 1; else -> 0 })
+            if (losingToken != null) {
+                assertThat(post(
+                    "/v1/auth/email/verification/confirm", EmailVerificationConfirmRequest(losingToken, proof),
+                ).statusCode()).isEqualTo(400)
+            }
+            if (state != "pending") {
+                assertThat(jdbc.queryForObject(
+                    "SELECT abandoned_at IS NOT NULL AND pending_password_hash IS NULL AND locale IS NULL FROM registration_attempts WHERE id = ?",
+                    Boolean::class.java, attemptId,
+                )).isTrue()
+            }
+        }
+    }
+
+    @Test
     fun `simultaneously started competing confirmations produce one winner and one scrubbed tombstone`() {
         val unique = UUID.randomUUID().toString().take(8)
         val email = "winner-$unique@example.ru"
@@ -1248,6 +1372,16 @@ class IdentityFlowIntegrationTest {
         assertThat(differentKeyRetry.statusCode()).isEqualTo(HttpStatus.ACCEPTED.value())
         assertThat(exactRetry.body()).isEqualTo(accepted.body())
         assertThat(differentKeyRetry.body()).isEqualTo(accepted.body())
+        listOf(firstKey, UUID.randomUUID().toString()).forEach { retryKey ->
+            val wrongPasswordRetry = post(
+                "/v1/auth/account-deletion-requests",
+                AccountDeletionRequest("WrongPassword-$unique"),
+                mapOf("Authorization" to "Bearer $accessToken", "Idempotency-Key" to retryKey),
+            )
+            assertThat(wrongPasswordRetry.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value())
+            assertThat(objectMapper.readTree(wrongPasswordRetry.body()).path("code").stringValue())
+                .isEqualTo("INVALID_CREDENTIALS")
+        }
         assertThat(
             jdbc.queryForObject(
                 "SELECT count(*) FROM account_deletion_requests WHERE account_id = ?",

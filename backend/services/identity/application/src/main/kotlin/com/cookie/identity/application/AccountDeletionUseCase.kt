@@ -37,8 +37,6 @@ class RequestAccountDeletionHandler(
         val authenticated = accessTokens.verify(command.accessToken, currentTime.now())
         rateLimiter.accountDeletionAccount(authenticated.accountId.toString())
 
-        deletionRequests.findByAccountId(authenticated.accountId)?.let { return it.toResult() }
-
         val password = passwordPolicy.prepareForAuthentication(command.currentPassword)
         var observed = accounts.findById(authenticated.accountId)
         repeat(MAX_SNAPSHOT_ATTEMPTS) {
@@ -48,13 +46,17 @@ class RequestAccountDeletionHandler(
             )
             when (val outcome = transactions.required {
                 val current = accounts.findByIdForUpdate(authenticated.accountId)
-                deletionRequests.findByAccountId(authenticated.accountId)?.let {
-                    return@required DeletionOutcome.Success(it)
-                }
                 if (!sameCredential(observed, current)) return@required DeletionOutcome.Retry
                 if (current == null) return@required DeletionOutcome.Invalid
 
                 val now = currentTime.now()
+                deletionRequests.findByAccountId(authenticated.accountId)?.let {
+                    return@required if (current.authenticateDeletionReceipt(passwordMatches, now)) {
+                        DeletionOutcome.Success(it)
+                    } else {
+                        DeletionOutcome.Invalid
+                    }
+                }
                 when (current.authenticatePassword(passwordMatches, now)) {
                     PasswordAuthenticationResult.AUTHENTICATED -> {
                         val started = AccountDeletionRequest.start(

@@ -44,12 +44,18 @@ Identity v1 реализует только email/password. Контракт д�
 ### Tokens
 
 - Регистрация моделируется aggregate root `RegistrationAttempt`; `Account` до
-  подтверждения владения email не существует. Root живёт 24 часа, один раз
+  подтверждения владения email не создаётся. Root живёт 24 часа, один раз
   хранит Argon2id hash предложенного пароля, proof verifier, request fingerprint
   и locale; каждое письмо представлено дочерним `RegistrationVerificationToken`.
   Fingerprint — domain-separated HMAC-SHA-256 полного канонического запроса с
   `registrationProof` как ключом: он выявляет изменение password/locale при
   retry, но не превращает утечку БД в быстрый offline password verifier.
+  Для уже существующего Account сохраняется abandoned root с теми же id/proof
+  и fingerprint, но без password hash/locale и без отправки email. Exact retry,
+  конфликт изменённого payload и уникальность proof не раскрывают наличие Account.
+  До исходного expiry abandoned roots сохраняют verifier-ы неотправленных child
+  tokens, чтобы cooldown и расход resend email buckets совпадали с pending roots;
+  confirm для них всегда отклоняется.
   Email token имеет вид
   `v1e.<client registrationAttemptId>.<UUIDv7 token id>.<256-bit random secret>`.
   Attempt id публичен и позволяет deep-link выбрать правильный proof из
@@ -66,7 +72,8 @@ Identity v1 реализует только email/password. Контракт д�
   доменом и не зависит от расписания retention. Maintenance атомарно переводит
   истёкший незавершённый root в `abandoned` и стирает password hash/locale вместо
   немедленного удаления. Completed и abandoned tombstones хранятся не менее 30
-  дней, поэтому cleanup не превращает exact register retry в новую отправку.
+  дней; для abandoned срок начинается после abandonment и исходного expiry,
+  поэтому cleanup не превращает exact register retry в новую отправку.
   `activatedAccountId` в completed tombstone — логическая audit-ссылка без SQL
   FK: будущее privacy deletion Account не блокируется и не сокращает этот срок.
   Точный retry погашенной пары token+proof является no-op success не менее 30

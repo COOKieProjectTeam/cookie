@@ -20,8 +20,7 @@ enum class RegistrationTokenDecision {
 
 /**
  * One logical registration attempt, proven by a client-held proof and one of
- * its email-verification tokens. An Account does not exist until this
- * aggregate completes.
+ * its email-verification tokens.
  *
  * Resends add child tokens to this root instead of copying pending credentials
  * into independent records. Completing through one child invalidates every
@@ -153,7 +152,7 @@ class RegistrationAttempt private constructor(
 
     fun canIssueVerificationToken(now: Instant, cooldown: Duration): Boolean {
         require(!cooldown.isNegative) { "Verification resend cooldown must not be negative" }
-        if (isCompleted || isAbandoned || now.isBefore(createdAt) || !expiresAt.isAfter(now)) return false
+        if (isCompleted || now.isBefore(createdAt) || !expiresAt.isAfter(now)) return false
         return !now.isBefore(latestVerificationTokenIssuedAt.plus(cooldown))
     }
 
@@ -198,7 +197,7 @@ class RegistrationAttempt private constructor(
         locale = null
     }
 
-    /** Terminates a losing or expired attempt and scrubs its retained secrets. */
+    /** Terminates an attempt and scrubs its retained secrets. */
     fun abandon(now: Instant) {
         if (isAbandoned) return
         check(!isCompleted) { "Completed registration attempt cannot be abandoned" }
