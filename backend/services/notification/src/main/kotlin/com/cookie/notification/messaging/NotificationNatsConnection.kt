@@ -17,6 +17,7 @@ import java.time.Duration
 class NotificationMessagingProperties {
     var natsUrl="nats://localhost:4222"
     var natsCredentialsPath=""
+    var operatorNatsCredentialsPath=""
     var natsTruststorePath=""
     var natsTruststorePassword=""
     var consumerEnabled=true
@@ -25,11 +26,15 @@ class NotificationMessagingProperties {
 @Component
 class NotificationNatsConnection(private val properties:NotificationMessagingProperties,environment:Environment) {
     val development=environment.acceptsProfiles(Profiles.of("dev","test"))
+    private val replay=environment.acceptsProfiles(Profiles.of("notification-replay"))
     @Volatile private var connection:Connection?=null
     init {
         if(!development) {
             require(properties.natsUrl.startsWith("tls://")) { "Production NATS requires TLS" }
-            require(properties.natsCredentialsPath.isNotBlank() && Files.isRegularFile(Path.of(properties.natsCredentialsPath)) && Files.isReadable(Path.of(properties.natsCredentialsPath))) { "NATS workload credentials are required" }
+            val credential = if(replay) properties.operatorNatsCredentialsPath else properties.natsCredentialsPath
+            require(credential.isNotBlank() && Files.isRegularFile(Path.of(credential)) && Files.isReadable(Path.of(credential))) {
+                if(replay) "Separate operator NATS credentials are required" else "NATS workload credentials are required"
+            }
             require(properties.natsTruststorePath.isNotBlank() && Files.isRegularFile(Path.of(properties.natsTruststorePath)) && Files.isReadable(Path.of(properties.natsTruststorePath))) { "NATS truststore is required" }
             require(properties.natsTruststorePassword.isNotBlank()) { "NATS truststore password is required" }
             val store=KeyStore.getInstance("JKS")

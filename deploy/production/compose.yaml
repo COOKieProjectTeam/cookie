@@ -296,8 +296,7 @@ services:
       COOKIE_NOTIFICATION_DATABASE_URL: jdbc:postgresql://postgres:5432/notification
       COOKIE_NOTIFICATION_DATABASE_USER: notification_app
       COOKIE_NOTIFICATION_DATABASE_POOL_SIZE: "12"
-      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/notification
-      SPRING_FLYWAY_USER: notification_migrator
+      SPRING_FLYWAY_ENABLED: "false"
       COOKIE_NATS_URL: tls://nats:4222
       COOKIE_NATS_CREDENTIALS_PATH: /run/secrets/nats-notification.creds
       COOKIE_NATS_TRUSTSTORE_PATH: /run/secrets/nats-truststore.jks
@@ -322,8 +321,6 @@ services:
     secrets:
       - source: notification_database_password
         target: spring.datasource.password
-      - source: notification_flyway_password
-        target: spring.flyway.password
       - source: notification_nats_truststore_password
         target: cookie.notification.nats-truststore-password
       - source: notification_redis_password
@@ -367,6 +364,69 @@ services:
     security_opt: [no-new-privileges:true]
     logging: *default-logging
     networks: [backend, edge]
+
+  # Explicit operator/deploy tools share the exact release image but no runtime
+  # provider/JWE credentials. They are never started by a normal compose up.
+  notification-migrate:
+    profiles: [tools]
+    image: ${NOTIFICATION_IMAGE:?NOTIFICATION_IMAGE must be an immutable cr.yandex digest reference}
+    pull_policy: never
+    restart: "no"
+    command: ["--cookie.notification.mode=migrate"]
+    environment:
+      COOKIE_NOTIFICATION_MODE: migrate
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/notification
+      SPRING_FLYWAY_USER: notification_migrator
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp
+    secrets:
+      - source: notification_flyway_password
+        target: spring.flyway.password
+    read_only: true
+    tmpfs: [/tmp:rw,noexec,nosuid,size=32m]
+    mem_limit: "512m"
+    cpus: "0.5"
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [backend]
+
+  notification-replay:
+    profiles: [tools]
+    image: ${NOTIFICATION_IMAGE:?NOTIFICATION_IMAGE must be an immutable cr.yandex digest reference}
+    pull_policy: never
+    restart: "no"
+    command: ["--cookie.notification.mode=replay"]
+    environment:
+      COOKIE_NOTIFICATION_MODE: replay
+      COOKIE_NOTIFICATION_DATABASE_URL: jdbc:postgresql://postgres:5432/notification
+      COOKIE_NOTIFICATION_DATABASE_USER: notification_operator
+      SPRING_FLYWAY_ENABLED: "false"
+      COOKIE_NATS_URL: tls://nats:4222
+      COOKIE_NATS_TRUSTSTORE_PATH: /run/secrets/nats-truststore.jks
+      COOKIE_NOTIFICATION_OPERATOR_NATS_CREDENTIALS_PATH: /run/secrets/operator.creds
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp
+        -Dorg.bouncycastle.native.cpu_variant=java
+    secrets:
+      - source: notification_operator_database_password
+        target: spring.datasource.password
+      - source: notification_operator_nats_credentials
+        target: operator.creds
+      - source: notification_nats_truststore_password
+        target: cookie.notification.nats-truststore-password
+      - source: notification_nats_truststore
+        target: nats-truststore.jks
+    read_only: true
+    tmpfs: [/tmp:rw,noexec,nosuid,size=32m]
+    mem_limit: "512m"
+    cpus: "0.5"
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [backend]
 
 networks:
   # Application ports are published for API Gateway; Notification also needs
@@ -415,6 +475,10 @@ secrets:
     file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/postgres/notification-migration-password
   notification_database_password:
     file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/spring.datasource.password
+  notification_operator_database_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/operators/notification-db-password
+  notification_operator_nats_credentials:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/operators/notification-replay.creds
   notification_flyway_password:
     file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/spring.flyway.password
   notification_nats_truststore_password:

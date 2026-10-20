@@ -155,7 +155,7 @@
       "id": "notification-database-production",
       "label": "Production pool",
       "value": "12 connections",
-      "description": "Compose задаёт COOKIE_NOTIFICATION_DATABASE_POOL_SIZE=12, отдельные notification_app / notification_migrator и Flyway connection. Значение совпадает с application default 12.",
+      "description": "Compose задаёт pool12 и notification_app только для runtime. Flyway запускается отдельным notification-migrate с notification_migrator; runtime и replay не получают его пароль.",
       "source": {
         "path": "deploy/production/compose.yaml",
         "line": 298
@@ -298,7 +298,7 @@
       "description": "Production требует tls://, workload credentials и JKS truststore с hostname verification. HappyEyeballs сохраняет исходное имя брокера для проверки DNS/IP SAN, включая reconnect. COOKIE_NATS_URL/CREDENTIALS_PATH/TRUSTSTORE_PATH/TRUSTSTORE_PASSWORD; приложение bind-ится к заранее созданному consumer.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
-        "line": 66
+        "line": 71
       }
     },
     {
@@ -318,7 +318,7 @@
       "description": "Локальный bootstrap создаёт/обновляет stream и consumer. Эти значения отличаются от production provisioning.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
-        "line": 47
+        "line": 52
       }
     },
     {
@@ -368,7 +368,7 @@
       "description": "Будущие profile/meal/water/weight/progress события покрыты synthetic contract fixtures. Их production producers и замены producers сейчас не развёрнуты.",
       "source": {
         "path": "backend/services/notification/README.md",
-        "line": 44
+        "line": 53
       }
     },
     {
@@ -524,11 +524,11 @@
     {
       "id": "notification-replay",
       "label": "Operator replay",
-      "value": "profile notification-replay + --notification-replay-id",
-      "description": "Отдельные cookie.notification.operator-nats-credentials-path и PostgreSQL LOGIN с ролью notification_replay; runtime ACL запрещает stream message GET. Replay проверяет subject/hash оригинала, вызывает тот же handler без republish. Нет HTTP endpoint и нет reset UNKNOWN; отсутствие original — явная ошибка. Ошибки JDBC/broker выводятся безопасным сообщением без исходных данных; контекст CLI закрывается при любом исходе. Lookup использует только STREAM.MSG.GET с timeout2 s, без STREAM.INFO discovery.",
+      "value": "notification-replay service + --notification-replay-id",
+      "description": "Отдельный короткоживущий процесс получает только PostgreSQL operator LOGIN с notification_replay, operator NATS credential и TLS truststore/password. Flyway, web, workers и provider/JWE credentials отсутствуют. Replay проверяет subject/hash оригинала и вызывает тот же handler без republish/reset UNKNOWN; STREAM.MSG.GET имеет timeout2 s. Контекст закрывается при любом исходе.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/OperatorQuarantineReplay.kt",
-        "line": 21
+        "path": "deploy/production/compose.yaml",
+        "line": 395
       }
     },
     {
@@ -615,10 +615,10 @@
       "id": "notification-runtime-grants",
       "label": "Runtime PostgreSQL privileges",
       "value": "explicit tables; append-only tombstones; separate replay role",
-      "description": "V008 снимает blanket/default grants, закрывает Flyway history и будущие таблицы. Runtime не меняет tombstones или quarantine evidence; RLS разрешает retention только старше30 days. notification_replay обновляет только replay bookkeeping. Повторный provisioning применяет ту же политику.",
+      "description": "V008 закрывает Flyway history, будущие таблицы и изменение tombstones; RLS ограничивает retention quarantine сроком30 days. notification_replay меняет только bookkeeping. Пароль владельца схемы монтируется только в отдельный notification-migrate после остановки старых workers; runtime/replay не могут использовать его для обхода grants.",
       "source": {
-        "path": "backend/services/notification/src/main/resources/db/migration/V008__runtime_privileges.sql",
-        "line": 14
+        "path": "deploy/production/compose.yaml",
+        "line": 370
       }
     }
   ],
@@ -1281,10 +1281,10 @@
         {
           "node": "notification",
           "label": "Одноразовый operator process",
-          "detail": "Profile notification-replay отключает web/consumer/scheduler/delivery. --notification-replay-id выбирает запись; отдельные operator NATS credentials и PostgreSQL LOGIN с notification_replay обязательны.",
+          "detail": "Отдельный notification-replay service запускает минимальный контекст без Flyway/web/consumer/scheduler/delivery. --notification-replay-id выбирает запись; mounts содержат только operator PostgreSQL/NATS credentials и TLS truststore/password, без migrator/runtime/provider/JWE secrets.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/OperatorQuarantineReplay.kt",
-            "line": 31
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/bootstrap/NotificationBatchApplications.kt",
+            "line": 24
           }
         },
         {

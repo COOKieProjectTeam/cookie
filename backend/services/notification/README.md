@@ -26,6 +26,15 @@ APNs bindings until the client re-registers. Local email uses Mailpit.
 V007 enforces one active FCM-token owner across platforms. V008 grants runtime
 only named application tables, append-only account tombstones and age-bounded
 quarantine retention; privileged replay uses a separate database role.
+Production runtime and replay never receive the migrator password. A one-shot
+`--cookie.notification.mode=migrate` process applies Flyway using only migration
+credentials, after old workers stop and before the new runtime starts. It loads
+`notification-migrate.yaml` and exits nonzero on failure; it creates no web server,
+consumer, scheduler or delivery provider. Production runtime disables Flyway.
+`--cookie.notification.mode=replay` loads `notification-replay.yaml` and only the
+JDBC/event-handler/operator-NATS beans: it needs no SMTP, FCM, JWE or workload NATS
+credentials and never applies migrations. The local `dev` profile keeps startup
+migrations for `make dev-up`.
 
 Review regressions cover cross-platform ownership and concurrent transfer,
 key-specific email failure isolation, timezone changes for queued/expired daily

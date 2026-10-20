@@ -206,6 +206,19 @@ class IdentityToNotificationIntegrationTest {
                 "COOKIE_IDENTITY_DATABASE_PASSWORD" to postgres.password,
                 "COOKIE_DEV_NOTIFICATION_PRIVATE_KEY_OUTPUT_PATH" to key.toString()))
             awaitService(identityPort)
+            val migrationLog = temporary.resolve("notification-migration.log")
+            val migration = ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-Xmx256m", "-jar", requireNotNull(System.getProperty("cookie.test.notification-jar")),
+                "--cookie.notification.mode=migrate").apply {
+                environment().putAll(mapOf(
+                    "SPRING_FLYWAY_URL" to postgres.jdbcUrl.replace("/identity", "/notification"),
+                    "SPRING_FLYWAY_USER" to postgres.username, "SPRING_FLYWAY_PASSWORD" to postgres.password))
+                redirectErrorStream(true)
+                redirectOutput(migrationLog.toFile())
+            }.start()
+            processes += migration
+            assertThat(migration.waitFor(60, TimeUnit.SECONDS)).withFailMessage("Migration did not terminate").isTrue()
+            assertThat(migration.exitValue()).withFailMessage("%s", Files.readString(migrationLog)).isZero()
             notificationPort = freePort()
             start("notification", common + mapOf("PORT" to notificationPort.toString(),
                 "COOKIE_NOTIFICATION_DATABASE_URL" to postgres.jdbcUrl.replace("/identity", "/notification"),

@@ -10,6 +10,7 @@ readonly RELEASE_ENV="${RELEASE_DIR}/current.env"
 readonly LOCK_FILE="/run/lock/cookie-production-deploy.lock"
 readonly HEALTH_TIMEOUT_SECONDS="${COOKIE_DEPLOY_HEALTH_TIMEOUT_SECONDS:-180}"
 readonly PUBLISHED_HEALTH_TIMEOUT_SECONDS=30
+readonly NOTIFICATION_MIGRATION_CONTAINER=cookie-production-notification-migrate
 
 die() {
   printf 'deploy: %s\n' "$*" >&2
@@ -234,13 +235,38 @@ compose() {
   [[ "${COOKIE_FCM_ENABLED:-false}" != true ]] || files+=(--file "${BUNDLE_DIR}/compose.fcm.yaml")
   docker compose --project-directory "$BUNDLE_DIR" --env-file "$CONFIG_ENV" "${files[@]}" "$@"
 }
+stop_notification_migration() {
+  # A killed deploy process can leave its one-off container alive. Fence it
+  # before rollback/recovery starts workers on the previous release image.
+  local container_id
+  container_id="$(docker ps --all --filter "name=^/${NOTIFICATION_MIGRATION_CONTAINER}$" --format '{{.ID}}')" || return 1
+  if [[ -n "$container_id" ]]; then
+    if ! docker stop --time 60 "$container_id" || ! docker rm --force "$container_id" 2>/dev/null; then
+      # --rm may already have removed the container when stop completed.
+      # A Docker error alone is not evidence that the migrator has stopped.
+      container_id="$(docker ps --all --filter "name=^/${NOTIFICATION_MIGRATION_CONTAINER}$" --format '{{.ID}}')" || return 1
+      [[ -z "$container_id" ]] || return 1
+    fi
+  fi
+}
 recreate_service() {
   local service="$1"
-  # Flyway runs in the new JVM. Stop old push workers before a token migration.
   if [[ "$service" == notification ]]; then
     compose stop "$service" || return 1
   fi
+  # Runtime always has Flyway disabled, including a rollback to an older image.
   compose up --detach --no-deps --force-recreate --pull never "$service"
+}
+upgrade_service() {
+  local service="$1"
+  if [[ "$service" == notification ]]; then
+    compose stop "$service" || return 1
+    stop_notification_migration || return 1
+    compose run --rm --no-deps --name "$NOTIFICATION_MIGRATION_CONTAINER" notification-migrate || return 1
+    compose up --detach --no-deps --force-recreate --pull never "$service"
+  else
+    recreate_service "$service"
+  fi
 }
 wait_for_healthy() {
   local service="$1" deadline=$((SECONDS + $2)) status='' container_id
@@ -271,6 +297,7 @@ recover_pending() {
   local service previous failed=false
   [[ -e "$PENDING_ENV" ]] || return 0
   read_pending
+  stop_notification_migration || return 1
   read_release
   if [[ "$CURRENT_IDENTITY" == "$PENDING_NEW_IDENTITY" && "$CURRENT_NOTIFICATION" == "$PENDING_NEW_NOTIFICATION" ]]; then
     rm -- "$PENDING_ENV" # Commit succeeded before interruption during journal cleanup.
@@ -399,7 +426,7 @@ main() {
     if [[ "$service" == notification && "$notification_changed" == false ]]; then continue; fi
     PENDING_ATTEMPTED="${PENDING_ATTEMPTED:+${PENDING_ATTEMPTED},}${service}"
     write_pending
-    recreate_service "$service" || die "$service failed to start"
+    upgrade_service "$service" || die "$service migration or startup failed"
     wait_for_healthy "$service" "$HEALTH_TIMEOUT_SECONDS" || die "$service failed readiness"
     wait_for_published "$service" || die "$service published port failed readiness"
   done

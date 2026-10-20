@@ -12,6 +12,7 @@ import base64
 from email import policy
 from email.parser import BytesParser
 import http.server
+import hashlib
 import importlib.util
 import json
 import os
@@ -199,9 +200,18 @@ class Rehearsal:
         self.images = {}
         self.identity = self.image_reference("identity", args.identity_image)
         self.notification = self.image_reference("notification", args.notification_image)
+        # The broken runtime must still execute the actual migration command;
+        # otherwise the rehearsal would hang before reaching runtime rollback.
+        (work / "broken.sh").write_text(
+            '#!/bin/sh\ncase "$*" in *--cookie.notification.mode=migrate*) '
+            'exec java -jar /app/notification.jar "$@";; esac\nexec sleep 600\n')
+        (work / "broken-migration.sh").write_text(
+            '#!/bin/sh\ncase "$*" in *--cookie.notification.mode=migrate*) exit 42;; '
+            'esac\necho "forbidden runtime started" >&2\nexit 43\n')
         for name, instruction in (
             ("next", 'LABEL cookie.rehearsal="next"\n'),
-            ("broken", 'ENTRYPOINT ["/bin/sh", "-c", "sleep 600"]\n'),
+            ("broken", 'COPY --chmod=0555 broken.sh /app/rehearsal.sh\nENTRYPOINT ["/app/rehearsal.sh"]\n'),
+            ("broken_migration", 'COPY --chmod=0555 broken-migration.sh /app/rehearsal.sh\nENTRYPOINT ["/app/rehearsal.sh"]\n'),
         ):
             dockerfile = work / f"{name}.Dockerfile"
             dockerfile.write_text(f"FROM {args.notification_image}\n{instruction}")
@@ -285,8 +295,59 @@ else:
                    "--tuples-only", "--no-align", "--set=ON_ERROR_STOP=1",
                    input=statement).stdout.strip()
 
+    def role_sql(self, user, statement, *, check=True):
+        # Password travels only in stdin, never command arguments or diagnostics.
+        # libpq PGPASSWORD selects a real TCP password login.
+        password = self.passwords["notification" if user == "notification_app" else "notification-operator"]
+        return run(self.docker, "exec", "--interactive", self.container("postgres"),
+            "/bin/sh", "-c", 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec psql '
+            '--no-psqlrc --host=127.0.0.1 --username="$1" --dbname=notification '
+            '--tuples-only --no-align --set=ON_ERROR_STOP=1', "fixture", user,
+            input=password + "\n" + statement, check=check)
+
+    def credential_boundary_and_replay(self):
+        print("Rehearsal: runtime/operator SQL isolation and actual retained-event replay", flush=True)
+        runtime = json.loads(run(self.docker, "inspect", self.container("notification")).stdout)[0]
+        assert not any("notification_migrator" in item or item.startswith("SPRING_FLYWAY_PASSWORD=")
+                       for item in runtime["Config"]["Env"])
+        assert not any("spring.flyway.password" in item["Destination"] for item in runtime["Mounts"])
+        assert not run(self.docker, "ps", "--quiet", "--filter",
+                       "label=com.docker.compose.service=notification-migrate").stdout.strip()
+        # Real credentials are generated only in the disposable test-owned tree.
+        password = self.passwords["notification-operator"]
+        self.sql("notification", "CREATE ROLE notification_operator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS "
+            f"PASSWORD '{password}'; GRANT notification_replay TO notification_operator;")
+        for role in ("notification_app", "notification_operator"):
+            for statement in ("DELETE FROM account_tombstones", "UPDATE account_tombstones SET deleted_at=now()",
+                              "DELETE FROM flyway_schema_history", "SELECT notification_apply_runtime_grants()",
+                              "SET ROLE notification_migrator"):
+                assert self.role_sql(role, statement, check=False).returncode != 0, (role, statement)
+        assert self.role_sql("notification_app", "UPDATE message_quarantine SET replayed_at=now()", check=False).returncode != 0
+        # First retained event is the real registration request produced by
+        # Identity. Replaying an already processed event proves inbox dedup too.
+        response = self.compose("run", "--rm", "--no-deps", "--user", "10001:10001",
+            "--volume", str(DATA / "secrets/operators/notification-replay.creds") + ":/run/operator.creds:ro",
+            "--entrypoint", "nats", "nats-init", "--server=tls://nats:4222",
+            "--creds=/run/operator.creds", "--tlsca=/run/secrets/nats-ca.crt",
+            "--inbox-prefix=_INBOX.cookie.notification_operator", "--timeout=5s",
+            "request", "--raw", "$JS.API.STREAM.MSG.GET.COOKIE_EVENTS", '{"seq":1}')
+        original = json.loads(response.stdout)["message"]
+        payload = base64.b64decode(original["data"])
+        event = json.loads(payload)
+        quarantine = str(uuid.uuid4())
+        self.role_sql("notification_app", "INSERT INTO message_quarantine(id,message_hash,event_id,subject,reason,stream_sequence) VALUES "
+            f"('{quarantine}','{hashlib.sha256(payload).hexdigest()}','{event['event_id']}',"
+            f"'{original['subject']}','rehearsal',1)")
+        before = self.sql("notification", "SELECT count(*) FROM delivery_jobs")
+        self.compose("run", "--rm", "--no-deps", "notification-replay",
+            "--cookie.notification.mode=replay", "--notification-replay-id=" + quarantine)
+        assert self.role_sql("notification_operator",
+            f"SELECT replayed_at IS NOT NULL AND replay_attempts=1 FROM message_quarantine WHERE id='{quarantine}'").stdout.strip() == "t"
+        assert self.sql("notification", "SELECT count(*) FROM delivery_jobs") == before
+
     def setup(self):
         passwords = fixture.generate(DATA, ROOT)
+        self.passwords = passwords
         self.envfile.write_text("\n".join([
             "YC_REGISTRY_ID=fixture001", "COOKIE_DATA_ROOT=/srv/cookie",
             "COOKIE_SECRET_ROOT=/srv/cookie/secrets",
@@ -394,6 +455,7 @@ else:
         self.deploy("--identity", self.identity, "--notification", self.notification)
         self.assert_release(self.identity, self.notification)
         self.finish_registration(self.registration())
+        self.credential_boundary_and_replay()
         request(8082, "/v1/notifications/settings", expected=401)
         for service in ("postgres", "redis", "nats"):
             ports = json.loads(run(self.docker, "inspect", "--format", "{{json .HostConfig.PortBindings}}",
@@ -425,6 +487,21 @@ else:
         self.deploy("--notification", self.next)
         assert self.container("identity") == identity_container
         self.assert_release(self.identity, self.next)
+
+        print("Rehearsal: failed migration never starts candidate runtime and restores previous workers", flush=True)
+        since = str(int(time.time()))
+        failed = self.deploy("--notification", self.broken_migration, check=False)
+        assert failed.returncode != 0, "Intentionally failed migration was accepted"
+        self.assert_release(self.identity, self.next)
+        assert self.container("identity") == identity_container
+        # Container lifecycle events distinguish a failed migration from a
+        # candidate runtime that was briefly started and then rolled back.
+        events = run(self.docker, "events", "--since", since, "--until", str(int(time.time()) + 1),
+                     "--filter", "type=container", "--format", "{{json .}}").stdout
+        for line in events.splitlines():
+            attributes = json.loads(line).get("Actor", {}).get("Attributes", {})
+            if attributes.get("com.docker.compose.service") == "notification":
+                assert attributes.get("image") != self.images[self.broken_migration], "Candidate runtime started after failed migration"
 
         print("Rehearsal: failed real-container update rolls back only Notification", flush=True)
         failed = self.deploy("--notification", self.broken, check=False)

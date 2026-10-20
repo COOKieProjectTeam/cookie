@@ -16,7 +16,7 @@ spring:
         socketTimeout: 10
         tcpKeepAlive: true
   flyway:
-    enabled: true
+    enabled: false
   data:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}

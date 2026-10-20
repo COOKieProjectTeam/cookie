@@ -95,6 +95,13 @@ V008 narrows runtime grants to known application tables, makes account tombstone
 append-only, protects Flyway history, and separates quarantine replay bookkeeping
 from runtime ingestion/retention. Repeat provisioning reapplies that policy;
 new tables require an explicit grant migration.
+The production runtime and operator replay never receive schema-owner credentials.
+A separate one-shot process from the candidate Notification image runs Flyway
+after the old workers stop and before the new runtime starts. Migration failure
+blocks startup; interrupted recovery terminates the migration process before
+restoring the previous runtime without rerunning its migrations. Replay uses
+only operator database/broker credentials and TLS trust material, with no delivery
+keys or provider credentials.
 
 Provider credentials and a trusted verification HTTPS URL are deployment inputs.
 The email contains only the verification token in the URL fragment, never the

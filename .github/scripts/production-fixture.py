@@ -66,6 +66,7 @@ def generate(root, repository):
         (secret / "identity/retiring", 10001, 0o700),
         (secret / "notification", 10001, 0o700),
         (secret / "notification/retiring", 10001, 0o700),
+        (secret / "operators", 10001, 0o700),
         (secret / "nats", 1000, 0o700), (secret / "redis", 999, 0o700),
         (root / "fixture", 0, 0o755),
     ]:
@@ -73,13 +74,14 @@ def generate(root, repository):
         os.chown(path, uid, uid)
         path.chmod(mode)
     passwords = {name: b64(os.urandom(32)) for name in (
-        "admin", "identity", "identity-migration", "notification", "notification-migration", "redis", "smtp")}
+        "admin", "identity", "identity-migration", "notification", "notification-migration", "notification-operator", "redis", "smtp")}
     for name in ("admin", "identity", "identity-migration", "notification", "notification-migration"):
         write(secret / f"postgres/{name}-password", passwords[name], 70)
     for service in ("identity", "notification"):
         write(secret / service / "spring.datasource.password", passwords[service], 10001)
         write(secret / service / "spring.flyway.password", passwords[service + "-migration"], 10001)
         write(secret / service / f"cookie.{service}.nats-truststore-password", "fixture-truststore", 10001)
+    write(secret / "operators/notification-db-password", passwords["notification-operator"], 10001)
     write(secret / "identity/cookie.identity.rate-limit-hmac-key", b64(os.urandom(32)), 10001)
     write(secret / "redis/password", passwords["redis"], 999)
     write(secret / "notification/spring.data.redis.password", passwords["redis"], 10001)
@@ -155,6 +157,9 @@ def generate(root, repository):
                 "notification.email.requested", "account.activated", "account.deletion.requested")]},
             "sub": {"allow": ["_INBOX.cookie.identity.>"]}},
         "notification": {"pub": notification["publish"], "sub": notification["subscribe"]},
+        "notification-operator": {
+            "pub": {"allow": ["$JS.API.STREAM.MSG.GET.COOKIE_EVENTS"]},
+            "sub": {"allow": ["_INBOX.cookie.notification_operator.>"]}},
         "stream-admin": {
             "pub": {"allow": [
                 "$JS.API.STREAM.INFO.COOKIE_EVENTS", "$JS.API.STREAM.CREATE.COOKIE_EVENTS",
@@ -173,5 +178,7 @@ def generate(root, repository):
                  f"-----BEGIN USER NKEY SEED-----\n{user.seed}\n------END USER NKEY SEED------\n")
         directory, uid = ("nats", 1000) if name == "stream-admin" else (name, 10001)
         filename = "stream-admin.creds" if name == "stream-admin" else f"nats-{name}.creds"
+        if name == "notification-operator":
+            directory, filename = "operators", "notification-replay.creds"
         write(secret / directory / filename, creds, uid)
     return passwords

@@ -147,7 +147,8 @@ are documented in the production runbook. JWKS retrieval uses a configured origi
 no redirects/token-controlled key URLs, a five-minute cache and bounded refresh.
 Missing usable keys gives `503`; invalid credentials give `401`.
 
-Readiness requires PostgreSQL, completed migrations, validated configuration,
+Deployment completes migrations in a separate one-shot process before starting
+the production runtime. Readiness requires PostgreSQL, validated configuration,
 usable Identity signing keys and the mounted Notification decryption key ring.
 Redis, NATS and provider outages leave readiness available while their durable
 backlogs and error metrics expose the degradation.
@@ -172,3 +173,9 @@ Quarantine payload metadata is immutable to runtime: it can insert the allowlist
 columns and delete only records older than 30 days, enforced by row-level security.
 The separately authorized `notification_replay` role may update only replay
 bookkeeping columns. Provisioning reapplies the V008 permission policy.
+
+Production runtime and operator replay have Flyway disabled and receive no
+schema-owner credential. The candidate image runs an isolated migration process
+only after old Notification workers stop. Failure blocks new runtime startup;
+recovery terminates an interrupted migration before restoring the previous runtime.
+Replay mounts only its operator DB/broker credentials and TLS trust material.

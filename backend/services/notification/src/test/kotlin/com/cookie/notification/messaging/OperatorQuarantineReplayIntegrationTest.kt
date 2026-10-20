@@ -55,8 +55,15 @@ class OperatorQuarantineReplayIntegrationTest {
     @BeforeAll
     fun migrateAndCreateStream() {
         val source = DriverManagerDataSource(postgres.jdbcUrl, postgres.username, postgres.password)
-        Flyway.configure().dataSource(source).load().migrate()
         jdbc = JdbcTemplate(source)
+        jdbc.execute("CREATE ROLE notification_migrator NOLOGIN")
+        jdbc.execute("CREATE ROLE notification_app NOLOGIN")
+        jdbc.execute("CREATE ROLE notification_replay NOLOGIN")
+        jdbc.execute("CREATE ROLE notification_operator LOGIN PASSWORD 'synthetic-replay-password'")
+        jdbc.execute("GRANT notification_app TO notification_replay")
+        jdbc.execute("GRANT notification_replay TO notification_operator")
+        jdbc.execute("GRANT USAGE ON SCHEMA public TO notification_app")
+        Flyway.configure().dataSource(source).load().migrate()
         quarantine = NotificationQuarantine(jdbc, mapper)
         deliveries = JdbcDeliveryRepository(jdbc, DataSourceTransactionManager(source))
         admin = Nats.connect(options(credentials.admin, "_INBOX.fixture.admin"))
@@ -282,16 +289,20 @@ class OperatorQuarantineReplayIntegrationTest {
         val process = ProcessBuilder(
             Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-Xmx256m",
             "-jar", requireNotNull(System.getProperty("cookie.test.notification-jar")),
-            "--spring.profiles.active=test,notification-replay",
+            "--spring.profiles.active=test",
+            "--cookie.notification.mode=replay",
             "--cookie.notification.operator-nats-credentials-path=$operatorPath",
             "--notification-replay-id=$id",
         ).apply {
             environment().putAll(mapOf(
                 "COOKIE_NOTIFICATION_DATABASE_URL" to postgres.jdbcUrl,
-                "COOKIE_NOTIFICATION_DATABASE_USER" to postgres.username,
-                "COOKIE_NOTIFICATION_DATABASE_PASSWORD" to postgres.password,
+                "COOKIE_NOTIFICATION_DATABASE_USER" to "notification_operator",
+                "COOKIE_NOTIFICATION_DATABASE_PASSWORD" to "synthetic-replay-password",
                 "COOKIE_NATS_URL" to "nats://${nats.host}:${nats.getMappedPort(4222)}",
-                "COOKIE_NATS_CREDENTIALS_PATH" to credentials.runtime.toString(),
+                "COOKIE_NATS_CREDENTIALS_PATH" to "/not-mounted/runtime.creds",
+                "COOKIE_NOTIFICATION_PRIVATE_KEY_PATH" to "/not-mounted/private.jwk",
+                "SPRING_FLYWAY_URL" to "jdbc:postgresql://127.0.0.1:1/forbidden",
+                "SPRING_FLYWAY_ENABLED" to "true",
                 "COOKIE_IDENTITY_JWKS_URL" to "http://127.0.0.1:1/v1/auth/jwks",
                 "COOKIE_FCM_ENABLED" to "false",
             ))

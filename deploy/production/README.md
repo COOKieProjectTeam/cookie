@@ -91,7 +91,8 @@ path in the table is relative to `/srv/cookie/secrets`.
 | `identity/notification-public.jwk` | `10001:10001` | Public half of Notification's active RSA-OAEP-256 key |
 | `identity/retiring/*.jwk` | `10001:10001` | Retiring public signing JWKs |
 | `identity/nats-identity.creds`, `identity/nats-truststore.jks`, `identity/cookie.identity.nats-truststore-password` | `10001:10001` | Identity NATS identity and trusted CA |
-| `notification/spring.datasource.password`, `notification/spring.flyway.password` | `10001:10001` | Exact copies of Notification PostgreSQL credentials |
+| `notification/spring.datasource.password` | `10001:10001` | Notification runtime PostgreSQL credential |
+| `notification/spring.flyway.password` | `10001:10001` | Migrator credential; mounted only in the one-shot migration container |
 | `notification/notification-private.jwk`, `notification/retiring/*.jwk` | `10001:10001` | Active/retiring private JWE decryption JWKs |
 | `notification/nats-notification.creds`, `notification/nats-truststore.jks`, `notification/cookie.notification.nats-truststore-password` | `10001:10001` | Restricted consumer credential and trusted CA |
 | `redis/password` | `999:999` | Random Redis ACL password |
@@ -159,7 +160,8 @@ secret, creates the missing database and roles and converges grants on each run.
 It preserves existing Identity/Notification rows and fails if an existing
 Notification database has an unexpected owner.
 
-`notification_migrator` owns Notification's database/schema and runs Flyway;
+`notification_migrator` owns Notification's database/schema. Only the one-shot
+`notification-migrate` container receives its password and runs Flyway;
 `notification_app` has CONNECT/USAGE and explicit grants on application tables.
 V008 removes historical blanket/default grants. It allows only SELECT/INSERT on
 account tombstones, no access to Flyway history or future tables, and immutable
@@ -167,7 +169,9 @@ quarantine evidence with RLS-limited deletion after 30 days. Replay bookkeeping
 updates belong to the separate NOLOGIN `notification_replay` role, which inherits
 normal application permissions. Repeated provisioning calls the owner-only
 `notification_apply_runtime_grants()` function after that migration exists.
-Neither runtime nor replay credentials can invoke that function. Neither login role
+Neither runtime nor replay credentials can invoke that function. Their containers
+receive no migrator/admin secret, and Flyway is disabled in both runtime modes.
+Neither login role
 is superuser, can create databases/roles, bypass RLS, or read Identity tables.
 The administrative credential is mounted only into PostgreSQL and its provisioning
 job. This job runs before Notification starts, including upgrades over a
@@ -249,24 +253,15 @@ sudo docker compose \
   --env-file /etc/cookie/production.env \
   --env-file /srv/cookie/releases/current.env \
   --file /opt/cookie/production/compose.yaml \
-  run --rm --no-deps \
-  --volume /srv/cookie/secrets/operators/notification-replay.creds:/run/secrets/operator.creds:ro \
-  --volume /srv/cookie/secrets/operators/notification-db-password:/run/operator-db/spring.datasource.password:ro \
-  notification \
-  --spring.profiles.active=notification-replay \
-  --spring.config.import=optional:configtree:/run/secrets/,configtree:/run/operator-db/ \
-  --spring.datasource.username=notification_operator \
-  --spring.main.web-application-type=none \
-  --cookie.notification.consumer-enabled=false \
-  --cookie.notification.scheduler-enabled=false \
-  --cookie.notification.delivery.enabled=false \
-  --cookie.notification.delivery.fcm.enabled=false \
-  --cookie.notification.operator-nats-credentials-path=/run/secrets/operator.creds \
+  run --rm --no-deps notification-replay \
+  --cookie.notification.mode=replay \
   --notification-replay-id='<quarantine-UUID>'
 ```
 
-The short-lived process inherits Notification database/truststore/key mounts,
-uses a separate broker connection for the privileged lookup, verifies the stored
+The dedicated short-lived process mounts only its operator PostgreSQL password,
+operator broker credential and NATS truststore/password. It has no runtime,
+migrator, SMTP, FCM or JWE private-key credentials, runs no migrations or background
+workers, and uses a separate broker connection for the privileged lookup. It verifies the stored
 message hash/subject, preserves the original event ID and closes after replay.
 It does not run background consumption, scheduling or provider delivery. A
 message removed by broker retention causes an explicit failure. Do not bypass
@@ -293,12 +288,15 @@ recorded.
 Deployment serializes with `/run/lock/cookie-production-deploy.lock`, gets a
 short-lived registry token, validates/pulls immutable artifacts, starts shared
 infrastructure, provisions Notification's DB and durable consumer, then starts
-only requested services. Notification is explicitly stopped before its replacement
-starts, including recovery and rollback; Flyway then runs inside the new process.
-This coordinated restart prevents old APNs workers from overlapping migration
-V006 or new FCM token registration. Do not run extra old Notification replicas
-or a separate migrator alongside this rollout. Container and published-port
-readiness must pass.
+only requested services. For Notification the order is: stop the old runtime,
+run `notification-migrate` from the candidate image to completion, then start the
+new runtime with Flyway disabled and no migrator secret. A migration failure
+prevents the new runtime from starting. The migration process has only its
+database credential, no HTTP server, broker connection, workers or providers.
+Recovery terminates any interrupted migration container before restoring the old
+runtime; rollback never runs migrations from the old image. Do not run extra
+Notification replicas or independent migrators alongside this single-VM rollout.
+Container and published-port readiness must pass.
 Redis failure permits PostgreSQL scheduling fallback. No deploy step sends a
 real email or push as a health check.
 
@@ -314,7 +312,11 @@ It never sources release/journal text as shell code.
 An image rollback does **not** roll back Flyway, provider requests, Redis state,
 NATS stream configuration, secrets, or deployment-bundle changes. Keep migrations
 forward-compatible with the previous image and review bundle/secret compatibility
-before rollout. Rolling back the image after V006 does not reactivate old iOS
+before rollout. Explicit `--notification` targets must support the isolated
+`migrate` entrypoint introduced with this bundle; do not target a pre-isolation
+image with that command. Automatic journal recovery can restore the previous
+runtime without this entrypoint because it disables Flyway and skips migration.
+Rolling back the image after V006 does not reactivate old iOS
 tokens or restore the old token format. Recover with an FCM-capable image; if an
 older image is temporarily required for incident recovery, keep push disabled
 until the FCM-capable service is restored. Never send newly registered FCM tokens

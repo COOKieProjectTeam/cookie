@@ -4,6 +4,7 @@ spring:
     username: ${COOKIE_NOTIFICATION_DATABASE_USER:notification_app}
     password: ${COOKIE_NOTIFICATION_DATABASE_PASSWORD:notification}
   flyway:
+    enabled: true
     url: ${SPRING_FLYWAY_URL:jdbc:postgresql://localhost:5432/notification}
     user: ${SPRING_FLYWAY_USER:notification_migrator}
     password: ${SPRING_FLYWAY_PASSWORD:notification_migrator}

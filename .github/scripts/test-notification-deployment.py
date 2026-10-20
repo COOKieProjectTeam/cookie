@@ -23,6 +23,59 @@ def docker(*args, input=None, check=True):
 
 
 class DeploymentContractTest(unittest.TestCase):
+    def test_effective_compose_isolates_migration_and_operator_credentials(self):
+        # Compose interpolation/profile/merge semantics are part of the boundary;
+        # parsing raw YAML or checking Flyway's enabled flag cannot prove it.
+        compose = [os.environ["COOKIE_DEPLOY_COMPOSE_BINARY"]] if os.environ.get("COOKIE_DEPLOY_COMPOSE_BINARY") else ["docker", "compose"]
+        environment = {**os.environ, **{
+            "IDENTITY_IMAGE": "cr.yandex/fixture/identity@sha256:" + "a" * 64,
+            "NOTIFICATION_IMAGE": "cr.yandex/fixture/notification@sha256:" + "b" * 64,
+            "COOKIE_IDENTITY_ISSUER": "https://fixture.cookie.test",
+            "COOKIE_IDENTITY_JWKS_URL": "https://fixture.cookie.test/v1/auth/jwks",
+            "COOKIE_SMTP_HOST": "fixture.cookie.test", "COOKIE_SMTP_USERNAME": "fixture",
+            "COOKIE_SMTP_FROM": "fixture@cookie.test", "COOKIE_SMTP_MESSAGE_ID_DOMAIN": "cookie.test",
+            "COOKIE_NOTIFICATION_VERIFICATION_LINK_BASE_URL": "https://fixture.cookie.test/verify",
+        }}
+        result = subprocess.run([*compose, "--file", str(ROOT / "deploy/production/compose.yaml"),
+            "--profile", "tools", "config", "--format", "json"], env=environment,
+            capture_output=True, text=True, check=True, timeout=30)
+        model = json.loads(result.stdout)
+        services = model["services"]
+        for name in ("notification", "notification-replay"):
+            with self.subTest(service=name):
+                service = services[name]
+                sources = {secret["source"] for secret in service.get("secrets", [])}
+                self.assertNotIn("notification_flyway_password", sources)
+                self.assertNotIn("postgres_notification_migration_password", sources)
+                self.assertNotIn("SPRING_FLYWAY_USER", service["environment"])
+                self.assertNotIn("SPRING_FLYWAY_PASSWORD", service["environment"])
+                # A broad bind could reintroduce the same credential despite
+                # removing the explicit secret; neither process may mount it.
+                protected = {model["secrets"][source]["file"] for source in (
+                    "notification_flyway_password", "postgres_notification_migration_password")}
+                for source in sources:
+                    self.assertNotIn(model["secrets"][source]["file"], protected)
+                for mount in service.get("volumes", []):
+                    source = Path(mount["source"])
+                    self.assertFalse(any(source == Path(secret) or source in Path(secret).parents for secret in protected))
+        self.assertEqual(services["notification"]["environment"]["COOKIE_NOTIFICATION_DATABASE_USER"], "notification_app")
+        migration = services["notification-migrate"]
+        self.assertEqual(migration["image"], services["notification"]["image"])
+        self.assertEqual(migration["command"], ["--cookie.notification.mode=migrate"])
+        self.assertEqual(migration["restart"], "no")
+        self.assertIn("tools", migration["profiles"])
+        self.assertEqual(set(migration["networks"]), {"backend"})
+        self.assertEqual({secret["source"] for secret in migration["secrets"]}, {"notification_flyway_password"})
+        self.assertEqual(migration["environment"]["SPRING_FLYWAY_USER"], "notification_migrator")
+        replay = services["notification-replay"]
+        self.assertEqual(replay["command"], ["--cookie.notification.mode=replay"])
+        self.assertEqual(replay["environment"]["COOKIE_NOTIFICATION_DATABASE_USER"], "notification_operator")
+        self.assertEqual({secret["source"] for secret in replay["secrets"]}, {
+            "notification_operator_database_password", "notification_operator_nats_credentials",
+            "notification_nats_truststore", "notification_nats_truststore_password"})
+        self.assertEqual(set(replay["networks"]), {"backend"})
+        self.assertFalse(replay.get("ports"))
+
     def test_consumer_filters_match_service_descriptor(self):
         descriptor = (ROOT / "backend/services/notification/service.yaml").read_text().split("  consumes:", 1)[1].split("synchronous_dependencies:", 1)[0]
         events = re.findall(r"type: ([a-z.]+)\s+version: (\d+)", descriptor)
@@ -164,6 +217,20 @@ class ContainerBoundaryTest(unittest.TestCase):
             app(f"INSERT INTO settings(user_id) VALUES ('{uuid.uuid4()}')")
             docker("exec", self.postgres, "/bin/sh", "/tmp/provision.sh")
         self.assertIn(user, app("SELECT user_id FROM account_tombstones").stdout)
+        self.sql("CREATE ROLE notification_operator LOGIN PASSWORD 'synthetic-operator-password' "
+            "NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; GRANT notification_replay TO notification_operator;")
+        def operator(statement, check=True):
+            return self.sql(statement, database="notification", user="notification_operator",
+                password="synthetic-operator-password", check=check)
+        self.assertEqual(operator("SELECT current_user").stdout.strip(), "notification_operator")
+        for statement in ("DELETE FROM account_tombstones", "UPDATE message_quarantine SET reason='changed'",
+                          "SET ROLE notification_migrator", "SELECT notification_apply_runtime_grants()"):
+            self.assertNotEqual(operator(statement, check=False).returncode, 0)
+        quarantine = str(uuid.uuid4())
+        app("INSERT INTO message_quarantine(id,message_hash,subject,reason,stream_sequence) VALUES "
+            f"('{quarantine}','{'a' * 64}','cookie.events.account.activated.v1','synthetic',1)")
+        operator(f"UPDATE message_quarantine SET replay_requested_at=now(),replayed_at=now(),replay_attempts=1 WHERE id='{quarantine}'")
+        self.assertEqual(operator(f"SELECT replay_attempts FROM message_quarantine WHERE id='{quarantine}'").stdout.strip(), "1")
 
     def test_application_cannot_create_tables_or_access_identity_data(self):
         ddl = self.sql("CREATE TABLE forbidden (id integer)", database="notification", user="notification_app", password="synthetic-app-password", check=False)
