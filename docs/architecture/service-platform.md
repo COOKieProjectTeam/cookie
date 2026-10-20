@@ -175,6 +175,13 @@ implementation остаются rollout requirements:
 9. Проверка workload identity, caller permissions и отсутствия internal/runtime
    routes в public gateway.
 
+Для нового сервиса и изменения поведенческих гарантий применяется
+[service-review](../../.agents/skills/service-review/SKILL.md): инварианты
+фиксируются до реализации, проверяются по полному затронутому сценарию и
+связываются с конкретными тестами. В PR указываются проверенная ревизия,
+результаты и непроверенные области. Сам checklist не добавляет тесты, CI jobs
+или обязательные проверки в GitHub ruleset.
+
 ## Rollout
 
 1. Принять отдельный ADR по framework и build stack (ADR 0008).

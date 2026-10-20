@@ -16,6 +16,13 @@ repository. Disposable integrations belong in `cookie-labs`.
 - Use the repository [architecture-map skill](.agents/skills/architecture-map/SKILL.md)
   when changing the architecture atlas or services, contracts, events,
   dependencies and timeouts represented in it; regenerate and verify the atlas.
+- Use the repository [service-review skill](.agents/skills/service-review/SKILL.md)
+  when implementing a new service, changing its behavioral guarantees or
+  reviewing a service PR. Record important invariants before implementation,
+  and revisit them when architecture, providers or ownership boundaries change.
+  Review the complete affected flow, including unchanged contracts, database
+  constraints, locks, retry scopes and permissions. Report evidence and
+  unverified areas for the reviewed revision; passing CI alone is not a review.
 - Keep changes atomic across API implementation, OpenAPI contract and consumers.
 - Every public service owns `contracts/openapi/public/<service-id>.yaml`, which
   is the source for its generated Kotlin server transport interfaces/models.
@@ -58,6 +65,14 @@ docker-compose -f deploy/docker/compose.yaml config
 Identity and platform Kotlin checks are mandatory. Go checks remain temporary
 while the legacy bootstrap exists. The KMP client generation smoke task is
 `./gradlew generateKmpPublicClient`.
+
+For service changes, link applicable invariants to behavioral tests and include
+the evidence required by the service-review skill in the PR. Every confirmed
+behavioral defect fixed after review needs a regression that fails before the
+fix and passes after it; explicitly report any inability to demonstrate that.
+After further changes, repeat the affected checks and review before claiming
+the latest revision is ready. Repository instructions do not configure GitHub
+branch protection: verify the required status checks separately.
 
 ## Repository hygiene
 

@@ -38,12 +38,21 @@ fun main(args: Array<String>) {{
 
 Generated with backend/tools/service-template/create-service.py.
 
+Before implementation, record the service's important invariants and planned
+verification evidence in this README or a linked maintained document. Re-evaluate
+them when the architecture or providers change.
+
 Before registering the three modules in settings.gradle.kts:
 - implement handwritten handlers and the owned contracts/openapi/public/{service}.yaml;
 - create service.yaml from the canonical service/event model, with only implemented roles;
 - implement generated runtime probes and fail-closed configuration validation;
 - add owned Flyway migrations, domain/application tests, integration tests and CI mapping;
 - use Notification for consumer/delivery examples, Identity for publisher/auth examples.
+
+Before opening a PR, apply `.agents/skills/service-review/SKILL.md` (path from the
+repository root). Review the entire affected flow, including unchanged schemas,
+locks, permissions and contracts. Report what was tested and not tested on the
+reviewed commit.
 
 This scaffold intentionally contains no fake business handlers, credentials or identity models.
 '''
