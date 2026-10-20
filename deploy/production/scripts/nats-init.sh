@@ -27,3 +27,14 @@ fi
 # Confirm authenticated access to the stream before Identity is restarted.
 nats_cli stream info "${STREAM_NAME}" >/dev/null
 echo "${STREAM_NAME} is ready"
+
+CONSUMER_NAME="notification-v1"
+CONSUMER_CONFIG="/config/notification-consumer.json"
+if nats_cli consumer info "${STREAM_NAME}" "${CONSUMER_NAME}" >/dev/null 2>&1; then
+  echo "Converging existing ${CONSUMER_NAME} consumer without resetting its cursor"
+  nats_cli consumer edit "${STREAM_NAME}" "${CONSUMER_NAME}" --config="${CONSUMER_CONFIG}" --force
+else
+  echo "Creating ${CONSUMER_NAME} consumer"
+  nats_cli consumer add "${STREAM_NAME}" --config="${CONSUMER_CONFIG}"
+fi
+nats_cli consumer info "${STREAM_NAME}" "${CONSUMER_NAME}" >/dev/null

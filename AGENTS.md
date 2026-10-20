@@ -13,6 +13,9 @@ repository. Disposable integrations belong in `cookie-labs`.
 - Read the nearest nested `AGENTS.md` before changing a scoped directory.
 - Read `docs/architecture/README.md` and its YAML model before changing service
   boundaries, events, synchronous dependencies or infrastructure usage.
+- Use the repository [architecture-map skill](.agents/skills/architecture-map/SKILL.md)
+  when changing the architecture atlas or services, contracts, events,
+  dependencies and timeouts represented in it; regenerate and verify the atlas.
 - Keep changes atomic across API implementation, OpenAPI contract and consumers.
 - Every public service owns `contracts/openapi/public/<service-id>.yaml`, which
   is the source for its generated Kotlin server transport interfaces/models.

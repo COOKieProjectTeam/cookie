@@ -1,0 +1,9 @@
+# Added automatically by deploy.sh only when this provider is enabled.
+services:
+  notification:
+    secrets:
+      - source: notification_apns_key
+        target: apns-key.p8
+secrets:
+  notification_apns_key:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/apns-key.p8

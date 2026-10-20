@@ -9,8 +9,10 @@
 | `apps/api` | временный legacy Go health-check без продуктовой логики |
 | `apps/mobile` | общий iOS/Android-клиент на Kotlin Multiplatform |
 | `backend/services/identity` | Kotlin/JVM Identity Service v1 (email/password) |
+| `backend/services/notification` | Notification: SMTP/APNs/FCM, inbox, Redis reminders, devices/settings |
+| `backend/tools/service-template` | воспроизводимый Kotlin service scaffold |
 | `backend/platform` | тонкие Kotlin runtime/test starters |
-| `backend/tools/notification-sink` | локальная расшифровка email-событий и доставка в Mailpit |
+| `backend/tools/notification-sink` | отдельный legacy development sink, не используется по умолчанию |
 | `contracts/openapi/public` | активные публичные контракты по одному на сервис |
 | `infra/terraform` | инфраструктура и окружения |
 | `deploy/docker` | локальная development-сборка контейнеров |
@@ -40,51 +42,56 @@ vertical slice является Identity Service из ADR 0008 и ADR 0009. Lega
 Визуальная схема и исходная декомпозиция сервисов находятся на
 [архитектурной доске COOKie в Miro](https://miro.com/app/board/uXjVGuhJKXc=/).
 
+Актуальную реализацию можно изучать в
+[интерактивном HTML-атласе](docs/architecture/explorer/index.html): сервисы,
+все параметры HTTP-операций, subjects, сценарии, таймауты и ссылки на код.
+Файл работает без сети. Для пересборки — `make architecture-build`;
+[добавление новых сервисов](docs/architecture/explorer/README.md).
+
 Продуктовые исследования и требования находятся в отдельном приватном
 репозитории `cookie-product`. Одноразовые проверки внешних API — в
 `cookie-labs`.
 
-## Локальный Identity stack
+## Локальный стек
 
 ```bash
 make dev-up
 curl http://localhost:8080/healthz
+curl http://localhost:8082/readyz
 open http://localhost:8025
 ```
 
-Compose запускает PostgreSQL 18, NATS JetStream, Identity, локальный
-Notification sink и Mailpit. Identity публикует только compact JWE; sink
-расшифровывает его ephemeral ключом из локального volume и отправляет письмо в
-Mailpit. Все опубликованные Compose-порты привязаны к `127.0.0.1` и доступны
-только с development host. Для запуска без контейнеров: `make identity-run`.
-`make dev-build-identity` и `make dev-build-notification-sink` собирают сервисы
-независимо; старые `make compose-up`/`compose-down` сохранены как aliases.
+Compose запускает PostgreSQL с изолированными БД, NATS JetStream, Redis,
+Identity, Notification и Mailpit. Identity публикует compact JWE; Notification
+атомарно сохраняет inbox/delivery intent, расшифровывает payload в памяти и
+доставляет письмо в Mailpit. Порты привязаны к `127.0.0.1`.
+
+Notification предоставляет `/v1/notifications/devices` и
+`/v1/notifications/settings`. JWT подписывает Identity; первым PATCH настроек
+клиент явно указывает IANA timezone. Redis хранит только восстанавливаемый индекс;
+его потеря не теряет расписание. Правила напоминаний, ограничения будущих producer
+интеграций и SMTP UNKNOWN описаны в [Notification architecture](docs/architecture/notification.md).
 
 ## Production в Yandex Cloud
 
-Постоянного test stand пока нет. Pull request проходит только проверки затронутых
-сервисов и их реальных shared-зависимостей с disposable dependencies. Для
-блокировки merge ruleset ветки `main` должен требовать один стабильный check
-`CI required`: он падает, если change detection или любая выбранная проверка
-завершилась неуспешно. Настройка ruleset и точная матрица путей описаны в
-[`.github/README.md`](.github/README.md).
+Production-конфигурация поддерживает Identity и Notification на одной non-HA VM
+с PostgreSQL, NATS и Redis. Для каждого сервиса есть независимые tests/image jobs;
+образы публикуются через GitHub OIDC и разворачиваются по immutable digest.
+Стабильный `CI required` должен быть обязательным check в ruleset `main`.
+Постоянного test stand нет: CI использует disposable dependencies.
 
-`push` в `main` после зелёного CI публикует только изменившийся deployable
-Identity image в Yandex Container Registry. Каждый будущий сервис добавляется
-отдельным test и publish job; `latest` при deployment не используется.
+Gateway публикует только `/v1/auth/*` и `/v1/notifications/*`. Probes и хранилища
+остаются закрытыми. Двухсервисный release manifest позволяет обновлять Notification
+без замены работающего Identity и восстанавливать прерванные deployments.
+Обновление БД не откатывается вместе с образом.
 
-CI входит в Yandex Cloud через GitHub OIDC, без service-account key. Для него
-нужны repository variables `YC_REGISTRY_ID` и `YC_CI_SERVICE_ACCOUNT_ID`.
-Production VM получает отдельное pull-only identity и скачивает образ по digest;
-исходники и build toolchain на сервер не копируются.
-
-Начальный контур — одна небольшая non-HA VM с Identity, PostgreSQL и NATS.
-Пока собственного домена нет, публичный `/v1/auth/*` доступен через default HTTPS
-domain Yandex API Gateway; probes, PostgreSQL, NATS и SSH остаются закрытыми.
-Provisioning и deployment выполняются раздельно по инструкциям в
-[`infra/terraform/environments/production`](infra/terraform/environments/production/README.md)
-и [`deploy/production`](deploy/production/README.md). Решение и его ограничения
-зафиксированы в [ADR 0012](docs/adr/0012-yandex-single-environment-deployment.md).
+Provisioning и deployment выполняются раздельно по
+[production runbook](deploy/production/README.md) и
+[Terraform README](infra/terraform/environments/production/README.md).
+Начальный бюджет 4 vCPU / 8 GiB требует проверки нагрузкой. Реальный запуск также
+требует backups/restore, monitoring, provider credentials и управления ключами.
+Регистрация остаётся закрытой до настройки подтверждённого домена и мобильного
+обработчика HTTPS-ссылки. Изменения конфигурации сами по себе не разворачивают облако.
 
 ## Принципы границ
 

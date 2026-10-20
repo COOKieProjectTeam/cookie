@@ -2,6 +2,11 @@
 
 Каноническое, версионируемое и пригодное для LLM описание целевой архитектуры.
 
+[Интерактивный атлас](explorer/index.html) показывает реализованные сервисы,
+все активные HTTP-операции, события, пути запросов и таймауты со ссылками на
+код. HTML открывается локально без backend. Обновление и добавление сервисов:
+[руководство атласа](explorer/README.md), `make architecture-build`.
+
 ## Authority
 
 1. Accepted ADR определяют долгоживущие технические решения.
@@ -13,7 +18,7 @@
 
 Если Miro и Git расходятся, нельзя молча выбирать одну версию: создаётся ADR или
 атомарное изменение модели и доски. Пользовательские решения, зафиксированные в
-ADR 0003–0010, имеют приоритет над более старым содержимым доски.
+ADR 0003–0013, имеют приоритет над более старым содержимым доски.
 
 ## Reading order for an LLM
 
@@ -26,9 +31,10 @@ ADR 0003–0010, имеют приоритет над более старым с
 7. `service-access-control.md` — clients, workload identity и caller policies.
 8. `messaging.md` — точная семантика outbox/inbox.
 9. `observability.md` — правила наблюдаемости.
-10. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
-11. `miro-snapshot.md` — происхождение модели и найденные расхождения.
-12. `../adr/` — причины принятых решений.
+10. `notification.md` — reminder rules, contracts and delivery guarantees.
+11. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
+12. `miro-snapshot.md` — происхождение модели и найденные расхождения.
+13. `../adr/` — причины принятых решений.
 
 ## Non-negotiable invariants
 
@@ -59,8 +65,8 @@ ADR 0003–0010, имеют приоритет над более старым с
   `/healthz` или `/readyz` других компонентов.
 - JDK/framework и Identity publisher profile зафиксированы ADR 0008 и
   `messaging.md`. Начальный single-VM production topology зафиксирован ADR 0012;
-  целевая topology после bootstrap, consumer retry/dead-letter policy и
-  telemetry backends остаются `TBD` и не должны выдумываться.
+  Notification consumer/delivery policy and production expansion are fixed in
+  ADR 0013. Target HA topology and telemetry backends remain `TBD`.
 
 ## Updating the model
 

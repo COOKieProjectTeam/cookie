@@ -19,12 +19,12 @@ output "identity_container_repository_name" {
 }
 
 output "ci_registry_pusher_service_account_id" {
-  description = "Service account assumed by GitHub Actions through OIDC; its image-management role is scoped to the Identity repository."
+  description = "Service account assumed by GitHub Actions through OIDC; its image-management role is scoped to the Identity and Notification repositories."
   value       = yandex_iam_service_account.ci_registry_pusher.id
 }
 
 output "vm_registry_puller_service_account_id" {
-  description = "Service account attached to the VM; it can pull only from the Identity repository."
+  description = "Service account attached to the VM; it can pull only from the Identity and Notification repositories."
   value       = yandex_iam_service_account.vm_registry_puller.id
 }
 
@@ -69,7 +69,7 @@ output "identity_api_gateway_id" {
 }
 
 output "identity_api_gateway_url" {
-  description = "HTTPS base URL of the temporary Yandex-provided domain; only /v1/auth/* is routed."
+  description = "HTTPS base URL of the temporary Yandex-provided domain; only /v1/auth/* and /v1/notifications/* are routed."
   value       = "https://${yandex_api_gateway.identity.domain}"
 }
 
@@ -86,4 +86,19 @@ output "identity_auth_base_url" {
 output "ssh_tunnel_command" {
   description = "Emergency operator tunnel to Identity; direct public TCP/8080 ingress remains blocked."
   value       = "ssh -L 8080:127.0.0.1:8080 ${var.admin_username}@${yandex_vpc_address.production_vm.external_ipv4_address[0].address}"
+}
+
+output "notification_container_repository_id" {
+  description = "Repository ID whose IAM policy is scoped to the Notification image."
+  value       = yandex_container_repository.notification.id
+}
+
+output "notification_container_repository_name" {
+  description = "Repository name used to publish the Notification image."
+  value       = yandex_container_repository.notification.name
+}
+
+output "notification_base_url" {
+  description = "Public Notification contract origin behind the existing HTTPS gateway."
+  value       = "https://${yandex_api_gateway.identity.domain}/v1/notifications"
 }

@@ -1,0 +1,87 @@
+spring:
+  config:
+    import: optional:configtree:/run/secrets/
+  application:
+    name: notification
+  datasource:
+    url: ${COOKIE_NOTIFICATION_DATABASE_URL}
+    username: ${COOKIE_NOTIFICATION_DATABASE_USER}
+    password: ${COOKIE_NOTIFICATION_DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${COOKIE_NOTIFICATION_DATABASE_POOL_SIZE:12}
+      connection-timeout: 2000
+      validation-timeout: 1000
+      data-source-properties:
+        options: "-c statement_timeout=5000 -c lock_timeout=2000"
+        socketTimeout: 10
+        tcpKeepAlive: true
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      username: ${SPRING_DATA_REDIS_USERNAME:}
+      password: ${SPRING_DATA_REDIS_PASSWORD:}
+      connect-timeout: 1s
+      timeout: 1s
+  jackson:
+    default-property-inclusion: non_null
+  task:
+    scheduling:
+      pool:
+        size: 6
+      thread-name-prefix: notification-scheduler-
+
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: none
+
+management:
+  endpoints:
+    web:
+      exposure:
+        exclude: "*"
+
+cookie:
+  notification:
+    nats-url: ${COOKIE_NATS_URL:nats://localhost:4222}
+    nats-credentials-path: ${COOKIE_NATS_CREDENTIALS_PATH:}
+    nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
+    nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
+    consumer-enabled: ${COOKIE_NOTIFICATION_CONSUMER_ENABLED:true}
+    scheduler-enabled: ${COOKIE_NOTIFICATION_SCHEDULER_ENABLED:true}
+    poll-millis: 1000
+    security:
+      issuer: ${COOKIE_IDENTITY_ISSUER:https://api.cookie.app}
+      audience: ${COOKIE_IDENTITY_AUDIENCE:cookie-api}
+      jwks-url: ${COOKIE_IDENTITY_JWKS_URL:https://api.cookie.app/v1/auth/jwks}
+      private-key-path: ${COOKIE_NOTIFICATION_PRIVATE_KEY_PATH:}
+      retiring-private-key-paths: ${COOKIE_NOTIFICATION_RETIRING_PRIVATE_KEY_PATHS:}
+    delivery:
+      enabled: ${COOKIE_NOTIFICATION_DELIVERY_ENABLED:true}
+      verification-link-base-url: ${COOKIE_NOTIFICATION_VERIFICATION_LINK_BASE_URL:https://cookie.invalid/verify-email}
+      smtp:
+        host: ${COOKIE_SMTP_HOST:localhost}
+        port: ${COOKIE_SMTP_PORT:1025}
+        username: ${COOKIE_SMTP_USERNAME:}
+        password: ${COOKIE_SMTP_PASSWORD:}
+        from: ${COOKIE_SMTP_FROM:noreply@cookie.invalid}
+        message-id-domain: ${COOKIE_SMTP_MESSAGE_ID_DOMAIN:notification.cookie.invalid}
+        starttls-required: ${COOKIE_SMTP_STARTTLS_REQUIRED:true}
+      apns:
+        enabled: ${COOKIE_APNS_ENABLED:false}
+        key-path: ${COOKIE_APNS_KEY_PATH:}
+        key-id: ${COOKIE_APNS_KEY_ID:}
+        team-id: ${COOKIE_APNS_TEAM_ID:}
+        topic: ${COOKIE_APNS_TOPIC:}
+        base-url: ${COOKIE_APNS_BASE_URL:https://api.push.apple.com}
+      fcm:
+        enabled: ${COOKIE_FCM_ENABLED:false}
+        project-id: ${COOKIE_FCM_PROJECT_ID:}
+        credentials-path: ${COOKIE_FCM_CREDENTIALS_PATH:}
+        base-url: ${COOKIE_FCM_BASE_URL:https://fcm.googleapis.com}
+
+logging:
+  pattern:
+    level: "%5p [requestId=%X{requestId:-}]"

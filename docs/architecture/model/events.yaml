@@ -1,6 +1,6 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-09-04
+updated_at: 2026-09-17
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
 
@@ -13,7 +13,7 @@ transport:
   subject_mapping: cookie.events.<event_type>.v<event_version>
   stream: COOKIE_EVENTS
   retry_policy: producer retries forever with exponential backoff from 1s to 5m and jitter
-  dead_letter_policy: TBD
+  dead_letter_policy: consumer-owned PostgreSQL metadata quarantine; original broker replay while retained
 
 envelope:
   required:
@@ -44,9 +44,10 @@ events:
     consumers: [user, food_catalog, nutrition, recipe, shopping, health, progress, notification, media, meal_planner]
     payload: [accountId, deletionRequestId, requestedAt]
     implementation_note: >-
-      Identity is the only implemented participant in v1. The listed consumers
-      are target data owners and do not yet have inbox handlers or acknowledgement
-      events. The account therefore remains DELETION_PENDING. event_id and
+      Identity publishes the request; Notification consumes it and erases its
+      owned data with a minimal tombstone. Other listed consumers are target
+      data owners. No acknowledgement/finalization protocol exists; the account
+      therefore remains DELETION_PENDING. event_id and
       occurred_at are mandatory envelope fields and are intentionally not
       duplicated in this PII-free business payload.
 
@@ -65,18 +66,20 @@ events:
     version: 1
     producer: user
     consumers: [progress, notification]
-    payload: [userId, changedFields]
+    payload: [userId, changedFields, timezone, locale, onboardingCompleted]
+
+    aggregate_version_required: true
 
   - type: user.goal.changed
     version: 1
     producer: user
-    consumers: [progress, notification]
+    consumers: [progress]
     payload: [userId, nutritionGoalVersion]
 
   - type: user.goal_override.changed
     version: 1
     producer: user
-    consumers: [progress, notification]
+    consumers: [progress]
     payload: [userId, localDate, override]
 
   - type: user.hydration_goal.changed
@@ -91,17 +94,23 @@ events:
     consumers: [notification]
     payload: [mealId, userId, eatenAt, dishes]
 
+    aggregate_version_required: true
+
   - type: nutrition.meal.updated
     version: 1
     producer: nutrition
     consumers: [notification]
-    payload: [mealId, changedFields]
+    payload: [mealId, userId, eatenAt, changedFields]
+
+    aggregate_version_required: true
 
   - type: nutrition.meal.deleted
     version: 1
     producer: nutrition
     consumers: [notification]
-    payload: [mealId]
+    payload: [mealId, userId]
+
+    aggregate_version_required: true
 
   - type: nutrition.day.changed
     version: 1
@@ -113,7 +122,9 @@ events:
     version: 1
     producer: nutrition
     consumers: [progress, notification]
-    payload: [userId, localDate, totalMl]
+    payload: [userId, localDate, totalMl, lastConsumedAt]
+
+    aggregate_version_required: true
 
   - type: recipe.customization.updated
     version: 1
@@ -131,7 +142,9 @@ events:
     version: 1
     producer: health
     consumers: [progress, notification]
-    payload: [userId, valueKg, measuredAt]
+    payload: [measurementId, userId, deleted, valueKg, measuredAt]
+
+    aggregate_version_required: true
 
   - type: health.activity.changed
     version: 1
@@ -143,4 +156,6 @@ events:
     version: 1
     producer: progress
     consumers: [notification]
-    payload: [userId, localDate]
+    payload: [userId, localDate, timezone, calories, water]
+
+    aggregate_version_required: true

@@ -1,0 +1,919 @@
+{
+  "serviceId": "identity",
+  "facts": [
+    {
+      "id": "identity-authority",
+      "label": "Граница сервиса",
+      "value": "Свой PostgreSQL; publisher outbox",
+      "description": "Identity владеет credentials, попытками регистрации и refresh families; доставка email выполняется Notification через событие.",
+      "source": {
+        "path": "backend/services/identity/service.yaml",
+        "line": 9
+      }
+    },
+    {
+      "id": "identity-token-ttl",
+      "label": "Сроки по умолчанию",
+      "value": "JWT 15 мин · refresh family 30 дней",
+      "description": "Значения application.yaml; TTL family абсолютный, rotation его не продлевает. Production Compose эти сроки не переопределяет.",
+      "source": {
+        "path": "backend/services/identity/src/main/resources/application.yaml",
+        "line": 46
+      }
+    },
+    {
+      "id": "identity-registration-ttl",
+      "label": "Регистрация",
+      "value": "Попытка 24 ч · email token ≤30 мин · resend ≥1 мин",
+      "description": "Срок token ограничен также expiresAt самой попытки. Resend добавляет verifier; email event создаётся только для pending попытки. Для abandoned попытки token остаётся неотправленным и не может подтвердить account.",
+      "source": {
+        "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/RegistrationAttemptIssuer.kt",
+        "line": 36
+      }
+    },
+    {
+      "id": "identity-registration-defaults",
+      "label": "Настройки регистрации",
+      "value": "P1D / PT30M / PT1M",
+      "description": "Именно такие defaults заданы в application.yaml; это не гарантированный срок доставки письма.",
+      "source": {
+        "path": "backend/services/identity/src/main/resources/application.yaml",
+        "line": 48
+      }
+    },
+    {
+      "id": "identity-jwt-profile",
+      "label": "Access JWT",
+      "value": "ES256 / P-256 / typ=at+jwt",
+      "description": "Claims: iss, aud, sub=account UUID, sid=family UUID, jti, iat, exp. В JWT нет email, пароля или registrationProof.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/security/NimbusAccessTokenProvider.kt",
+        "line": 25
+      }
+    },
+    {
+      "id": "identity-jwks",
+      "label": "Публичные ключи",
+      "value": "Активный + retiring; cache 5 мин",
+      "description": "GET /v1/auth/jwks публикует только публичные параметры EC; закрытый ключ подписи остаётся у Identity.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/security/NimbusAccessTokenProvider.kt",
+        "line": 46
+      }
+    },
+    {
+      "id": "identity-jwe",
+      "label": "Email payload",
+      "value": "RSA-OAEP-256 + A256GCM",
+      "description": "Identity шифрует recipientEmail, token, locale, attemptId и expiresAt публичным ключом Notification. RegistrationProof в payload отсутствует; приватный JWE-ключ нужен только Notification.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/security/NotificationPayloadEncryptor.kt",
+        "line": 32
+      }
+    },
+    {
+      "id": "identity-secret-verifiers",
+      "label": "Refresh и proof",
+      "value": "SHA-256 verifier; секреты не сохраняются открыто",
+      "description": "Refresh successor воспроизводится из predecessor secret, replacementId и Idempotency-Key через HMAC-SHA-256. Exact retry не требует хранения открытого successor.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/security/Sha256SecretTokenService.kt",
+        "line": 37
+      }
+    },
+    {
+      "id": "identity-argon",
+      "label": "Пароли",
+      "value": "Argon2 · 19 456 KiB · 2 итерации · p=1",
+      "description": "Salt 16 байт, hash 32 байта; параллельность вычислений ограничена 1…4 permits по CPU, ожидание permit 2 с. Исчерпание capacity даёт 503.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/security/Argon2PasswordHasher.kt",
+        "line": 37
+      }
+    },
+    {
+      "id": "identity-lockout",
+      "label": "Блокировка пароля",
+      "value": "С 5-й ошибки: 30 с → максимум 15 мин",
+      "description": "Экспоненциальная блокировка хранится в account; одинаковый механизм используется при login и первичном подтверждении удаления паролем.",
+      "source": {
+        "path": "backend/services/identity/domain/src/main/kotlin/com/cookie/identity/domain/Account.kt",
+        "line": 162
+      }
+    },
+    {
+      "id": "identity-register-limits",
+      "label": "Register limits",
+      "value": "IP 20/час · email 3/час",
+      "description": "IP bucket применяется первым, в том числе к exact retry. Подтверждённый точный повтор не расходует email bucket.",
+      "source": {
+        "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/IdentityRateLimiter.kt",
+        "line": 11
+      }
+    },
+    {
+      "id": "identity-resend-limits",
+      "label": "Resend limits",
+      "value": "IP 30/час · email 1/мин и 5/час",
+      "description": "Готовая/истёкшая попытка и cooldown могут завершиться no-op до email bucket; оба email окна учитываются перед отказом.",
+      "source": {
+        "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/IdentityRateLimiter.kt",
+        "line": 17
+      }
+    },
+    {
+      "id": "identity-login-limits",
+      "label": "Login limits",
+      "value": "IP 100/15 мин · email 10/15 мин",
+      "description": "Дополняют account lockout; для неизвестного email вычисляется dummy hash, ответ не раскрывает наличие аккаунта.",
+      "source": {
+        "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/IdentityRateLimiter.kt",
+        "line": 27
+      }
+    },
+    {
+      "id": "identity-confirm-limits",
+      "label": "Confirm limits",
+      "value": "IP 60/15 мин · token 10/15 мин",
+      "description": "Exact successful retry обходит token bucket, но не IP bucket. Неизвестный/невалидный token не создаёт произвольный token scope.",
+      "source": {
+        "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/IdentityRateLimiter.kt",
+        "line": 33
+      }
+    },
+    {
+      "id": "identity-session-limits",
+      "label": "Refresh / logout limits",
+      "value": "IP 120/мин · family 30/мин для каждой операции",
+      "description": "Refresh family bucket расходуется только новой rotation; обнаруженный reuse отзывает family даже без прохождения business bucket.",
+      "source": {
+        "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/IdentityRateLimiter.kt",
+        "line": 40
+      }
+    },
+    {
+      "id": "identity-delete-limits",
+      "label": "Удаление: limits",
+      "value": "IP 30/час · account 10/час",
+      "description": "Account scope определяется только после проверки access JWT; limits применяются и к повторному запросу. Возврат существующего receipt дополнительно требует проверки currentPassword.",
+      "source": {
+        "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/IdentityRateLimiter.kt",
+        "line": 54
+      }
+    },
+    {
+      "id": "identity-limit-store",
+      "label": "Хранилище rate limits",
+      "value": "PostgreSQL fixed windows",
+      "description": "Атомарный INSERT ON CONFLICT использует время БД; scope pseudonymized через HMAC. Identity не использует Redis для этих counters.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/persistence/JdbcRateLimitRepository.kt",
+        "line": 21
+      }
+    },
+    {
+      "id": "identity-http-body",
+      "label": "HTTP body",
+      "value": "16 KiB",
+      "description": "BoundedRequestBodyFilter ограничивает тело до domain handler; malformed JSON не достигает application IP limiter.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/config/IdentityConfiguration.kt",
+        "line": 237
+      }
+    },
+    {
+      "id": "identity-db-defaults",
+      "label": "JDBC defaults",
+      "value": "pool 10; acquire 2 с; validate 1 с; socket 10 с",
+      "description": "Statement timeout 5 с и lock timeout 2 с по умолчанию; значения имеют env overrides. Отдельного общего server request deadline в application.yaml нет.",
+      "source": {
+        "path": "backend/services/identity/src/main/resources/application.yaml",
+        "line": 14
+      }
+    },
+    {
+      "id": "identity-db-production",
+      "label": "JDBC production override",
+      "value": "pool 8 · identity_app / identity_migrator",
+      "description": "Production Compose задаёт отдельные runtime и Flyway роли; их пароли приходят из файлов configtree.",
+      "source": {
+        "path": "deploy/production/compose.yaml",
+        "line": 158
+      }
+    },
+    {
+      "id": "identity-transaction",
+      "label": "Транзакции",
+      "value": "5 с; lock 2 с",
+      "description": "SpringTransactionRunner применяет TransactionTemplate и локальные statement/lock timeouts. Транзакция фиксируется до возврата handler.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/config/SpringTransactionRunner.kt",
+        "line": 19
+      }
+    },
+    {
+      "id": "identity-registration-audit",
+      "label": "Срок хранения registration tombstones",
+      "value": "Abandoned: после max(abandonedAt, expiresAt); completed: после completedAt",
+      "description": "К обеим границам применяется configured attempt-audit retention, по умолчанию 30 дней. У suppressed попытки abandonment наступает сразу, но удаление evidence ждёт также исходного expiry; exact retry не превращается в новую отправку из-за раннего cleanup.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/persistence/JdbcMaintenanceRepository.kt",
+        "line": 76
+      }
+    },
+    {
+      "id": "identity-retention",
+      "label": "Очистка по умолчанию",
+      "value": "attempt audit 30 д; family audit 90 д; published outbox 7 д",
+      "description": "Rate-limit grace 1 день; job каждую минуту, batch500, максимум400 batches и30 с на запуск. Эти сроки не продлевают credentials.",
+      "source": {
+        "path": "backend/services/identity/src/main/resources/application.yaml",
+        "line": 70
+      }
+    },
+    {
+      "id": "identity-outbox-loop",
+      "label": "Outbox polling",
+      "value": "500 мс · batch100 · lease30 с · ACK budget10 с",
+      "description": "После PubAck запись помечается published с fencing claimId; сбой/неопределённость ведёт к повтору того же eventId.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
+        "line": 121
+      }
+    },
+    {
+      "id": "identity-outbox-retry",
+      "label": "Outbox retry",
+      "value": "1 с → 5 мин, equal jitter",
+      "description": "Nats-Msg-Id равен eventId; это at-least-once, а не гарантия exactly-once. Inbox потребителя остаётся обязательным.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
+        "line": 128
+      }
+    },
+    {
+      "id": "identity-nats",
+      "label": "NATS connection",
+      "value": "connect2 с · reconnect1 с · без лимита reconnect",
+      "description": "В production обязательны tls://, workload credentials, readable truststore и hostname verification. Dev/test могут provision stream; production делает отдельный init job.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/NatsJetStreamConnection.kt",
+        "line": 100
+      }
+    },
+    {
+      "id": "identity-probes",
+      "label": "Probes",
+      "value": "/healthz: процесс; /readyz: PostgreSQL + ключи на старте",
+      "description": "Liveness не обращается к БД. Readiness проверяет JDBC isValid; KeyMaterial проходит startup validation. NATS outage не снимает readiness: outbox накапливается.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/SystemController.kt",
+        "line": 13
+      }
+    },
+    {
+      "id": "identity-proxy",
+      "label": "Client IP",
+      "value": "Только настроенные trusted proxy CIDRs",
+      "description": "Без доверенного peer используется remoteAddr; валидная XFF-цепочка обходится справа налево. Servlet forwarding отключён; default список доверенных CIDR пуст.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/ClientIpResolver.kt",
+        "line": 17
+      }
+    }
+  ],
+  "flows": [
+    {
+      "id": "identity-register",
+      "title": "Регистрация и постановка email в outbox",
+      "operationIds": [
+        "registerWithEmail"
+      ],
+      "description": "202 означает завершённый handler/commit, но не доставленное письмо. После commit HTTP-ответ и асинхронная публикация могут происходить независимо.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "POST /v1/auth/email/register",
+          "detail": "Публичный контракт Identity; поля, security и ответы определяет OpenAPI.",
+          "source": {
+            "path": "contracts/openapi/public/identity.yaml",
+            "line": 21
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "HTTPS → Identity",
+          "detail": "Начальный production gateway проксирует /v1/auth/* на HTTP-порт 8080 в VPC. Клиентский X-Forwarded-For удаляется; Authorization и Idempotency-Key сохраняются.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "IP limit → validation → exact retry",
+          "detail": "Проверяются locale, canonical email, admission policy, password и proof. Exact fingerprint совпадает — no-op; иначе email limiter и Argon2 до транзакции.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/RegistrationUseCases.kt",
+            "line": 43
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Блокировки и ветвления",
+          "detail": "Lock email + attemptId/proof. Exact retry — no-op; повторное использование id/proof с другими данными —409. Для существующего account сохраняется abandoned attempt с id/proof/fingerprint, чтобы retry и конфликты не раскрывали существование account.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/RegistrationUseCases.kt",
+            "line": 70
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Attempt + verifier; outbox только для pending",
+          "detail": "Pending attempt хранит password hash и proof/token verifier; encrypted notification.email.requested.v1 записывается в той же транзакции. При существующем account password hash/locale стираются до INSERT, token verifier сохраняется без email event. Token expiry ≤30 мин/attempt expiry.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/RegistrationAttemptIssuer.kt",
+            "line": 37
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Ответ 202",
+          "detail": "Ответ возвращается после execute; broker и SMTP не являются синхронными prerequisites. Асинхронное продолжение показано в общем outbox flow.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 59
+          }
+        }
+      ],
+      "nextFlows": [
+        "identity-outbox"
+      ]
+    },
+    {
+      "id": "identity-resend",
+      "title": "Повторная доставка verification token",
+      "operationIds": [
+        "resendEmailVerification"
+      ],
+      "description": "Привязана к конкретной попытке и registrationProof. Generic202 не подтверждает существование аккаунта или отправку письма.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "POST /v1/auth/email/verification/resend",
+          "detail": "Публичный контракт Identity; поля, security и ответы определяет OpenAPI.",
+          "source": {
+            "path": "contracts/openapi/public/identity.yaml",
+            "line": 148
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "HTTPS → Identity",
+          "detail": "Начальный production gateway проксирует /v1/auth/* на HTTP-порт 8080 в VPC. Клиентский X-Forwarded-For удаляется; Authorization и Idempotency-Key сохраняются.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "IP limit и проверка attempt/proof",
+          "detail": "Проверяются email и proof. Подтверждённая, истёкшая или ещё в cooldown попытка заканчивается202 no-op; неверная pair не выдаёт token.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/RegistrationUseCases.kt",
+            "line": 119
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Email business buckets",
+          "detail": "1/мин и5/час. Pending, suppressed и проигравшие abandoned attempts соблюдают одинаковый cooldown и расход email buckets. Неизвестная попытка либо неверный proof после applicable limits остаётся generic202.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/RegistrationUseCases.kt",
+            "line": 135
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Повторная проверка под lock",
+          "detail": "Account/email lock и attempt FOR UPDATE; повторно проверяются состояние и cooldown. Pending получает verifier и encrypted outbox event. Abandoned до исходного expiry получает только неотправленный verifier, сохраняя scrubbed password hash/locale; confirm для неё всегда недопустим.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/RegistrationUseCases.kt",
+            "line": 142
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Ответ 202 после commit/no-op",
+          "detail": "При созданном email event новый eventId запускает отдельную delivery; resend не меняет outcome прежнего SMTP UNKNOWN. Suppressed/abandoned путь возвращает тот же202 без отправки.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 62
+          }
+        }
+      ],
+      "nextFlows": [
+        "identity-outbox"
+      ]
+    },
+    {
+      "id": "identity-confirm",
+      "title": "Подтверждение: token + независимый proof",
+      "operationIds": [
+        "confirmEmail"
+      ],
+      "description": "Оба секрета необходимы. Успешный confirm активирует account, но не выдаёт refresh-секрет; login выполняется отдельно.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "POST /v1/auth/email/verification/confirm",
+          "detail": "Публичный контракт Identity; поля, security и ответы определяет OpenAPI.",
+          "source": {
+            "path": "contracts/openapi/public/identity.yaml",
+            "line": 110
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "HTTPS → Identity",
+          "detail": "Начальный production gateway проксирует /v1/auth/* на HTTP-порт 8080 в VPC. Клиентский X-Forwarded-For удаляется; Authorization и Idempotency-Key сохраняются.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "IP limit, parsing и verifiers",
+          "detail": "Invalid token/proof даёт400. Точный повтор уже завершённой pair возвращает204; для нового подтверждения применяются token limit и proof check.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 42
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Одна транзакция активации",
+          "detail": "Lock email и attempt. Проверяется отсутствие другого account; создаётся account с pending password hash, attempt complete, прочие pending attempts того же email abandoned.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 74
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "account.activated.v1 в outbox",
+          "detail": "Событие содержит userId и accountMetadata, без credentials. Записывается до commit вместе с account и завершением attempt.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 106
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Ответ 204",
+          "detail": "Невалидная/истёкшая/проигравшая pair —400; доказанный exact successful retry —204 пока audit сохранён (default30 дней). Сессия здесь не создаётся.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 72
+          }
+        }
+      ],
+      "nextFlows": [
+        "identity-outbox"
+      ]
+    },
+    {
+      "id": "identity-login",
+      "title": "Login и новая refresh family",
+      "operationIds": [
+        "loginWithEmail"
+      ],
+      "description": "200 содержит JWT и refresh secret только после успешного commit family. Невалидные credentials не раскрывают наличие email.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "POST /v1/auth/email/login",
+          "detail": "Публичный контракт Identity; поля, security и ответы определяет OpenAPI.",
+          "source": {
+            "path": "contracts/openapi/public/identity.yaml",
+            "line": 61
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "HTTPS → Identity",
+          "detail": "Начальный production gateway проксирует /v1/auth/* на HTTP-порт 8080 в VPC. Клиентский X-Forwarded-For удаляется; Authorization и Idempotency-Key сохраняются.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "IP → parsing → email limiter → Argon2",
+          "detail": "Для неизвестного email используется dummy hash. Password hashing выполняется до row lock; ограничение hash permits может дать503.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 123
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Проверка актуального credential и lockout",
+          "detail": "Под account FOR UPDATE сверяется snapshot password hash. При смене credential — до2 попыток, затем503. Ошибка пароля записывает failure/lockout; неизвестный/неактивный/заблокированный account —401.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 135
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Refresh family и verifier",
+          "detail": "ACTIVE account получает новую family с absolute TTL30 дней и opaque refresh verifier. Открытый refresh остаётся в памяти для ответа.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/SessionIssuer.kt",
+            "line": 20
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Подписать JWT и вернуть200",
+          "detail": "ES256 access JWT формируется при выдаче; HTTP response идёт после commit. Cache-Control:no-store и Pragma:no-cache. Outbox-событие login не публикуется.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 83
+          }
+        }
+      ]
+    },
+    {
+      "id": "identity-refresh",
+      "title": "Rotation, восстановление retry и обнаружение reuse",
+      "operationIds": [
+        "refreshSession"
+      ],
+      "description": "Refresh token + тот же UUIDv4 Idempotency-Key восстанавливают непосредственный successor, пока он остаётся текущим.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "POST /v1/auth/refresh",
+          "detail": "Публичный контракт Identity; поля, security и ответы определяет OpenAPI.",
+          "source": {
+            "path": "contracts/openapi/public/identity.yaml",
+            "line": 179
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "HTTPS → Identity",
+          "detail": "Начальный production gateway проксирует /v1/auth/* на HTTP-порт 8080 в VPC. Клиентский X-Forwarded-For удаляется; Authorization и Idempotency-Key сохраняются.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "IP limit, UUIDv4, verifier lookup",
+          "detail": "Неправильный Idempotency-Key —400; неизвестный или неподтверждённый refresh —401. Account определяется lookup по проверенному refresh credential, не из запроса пользователя.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 184
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Account + family FOR UPDATE",
+          "detail": "Неактивный account/истёкшая или revoked family —401. Другой ключ для уже использованного credential — reuse: family revoke фиксируется до401.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 199
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "ROTATE / RETRY / STALE_RETRY",
+          "detail": "ROTATE тратит family bucket и пишет successor verifier. RETRY восстанавливает тот же successor без новой rotation. После следующей rotation прежний exact retry stale:401 без отзыва family.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 210
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Ответ200 после commit",
+          "detail": "JWT может быть новым, refresh successor детерминированно тот же для exact retry. Absolute family expiry не продлевается; secrets response no-store/no-cache.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/SessionIssuer.kt",
+            "line": 70
+          }
+        }
+      ]
+    },
+    {
+      "id": "identity-logout",
+      "title": "Logout текущей refresh family",
+      "operationIds": [
+        "logout"
+      ],
+      "description": "Идемпотентная операция по предъявленному refresh token; bearer access JWT для неё не требуется.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "POST /v1/auth/logout",
+          "detail": "Публичный контракт Identity; поля, security и ответы определяет OpenAPI.",
+          "source": {
+            "path": "contracts/openapi/public/identity.yaml",
+            "line": 246
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "HTTPS → Identity",
+          "detail": "Начальный production gateway проксирует /v1/auth/* на HTTP-порт 8080 в VPC. Клиентский X-Forwarded-For удаляется; Authorization и Idempotency-Key сохраняются.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "IP limit и parsing",
+          "detail": "Malformed/unknown token либо несовпадающий verifier завершаются no-op. Это не401; transport validation тела всё ещё может дать400.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 245
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Проверенная family → revoke",
+          "detail": "Для известного verifier расходуется family bucket, затем family блокируется, verifier перепроверяется и фиксируется revoke(LOGOUT).",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AuthenticationUseCases.kt",
+            "line": 261
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Ответ204",
+          "detail": "Access JWT уже выпущены и не удаляются этой операцией; offline JWT consumers могут принимать их до exp. Другие refresh families не отзываются.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 101
+          }
+        }
+      ]
+    },
+    {
+      "id": "identity-delete",
+      "title": "Удаление аккаунта: JWT + пароль + durable request",
+      "operationIds": [
+        "requestAccountDeletion"
+      ],
+      "description": "Запускает асинхронное удаление. 202 не означает, что все сервисы уже удалили данные.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "POST /v1/auth/account-deletion-requests",
+          "detail": "Публичный контракт Identity; поля, security и ответы определяет OpenAPI.",
+          "source": {
+            "path": "contracts/openapi/public/identity.yaml",
+            "line": 274
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "HTTPS → Identity",
+          "detail": "Начальный production gateway проксирует /v1/auth/* на HTTP-порт 8080 в VPC. Клиентский X-Forwarded-For удаляется; Authorization и Idempotency-Key сохраняются.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Строгие headers и authentication",
+          "detail": "Один Authorization:Bearer и canonical UUIDv4 Idempotency-Key. Затем IP limit, JWT signature/iss/aud/expiry/sub/sid/jti, account limiter. Ошибка access JWT —401; accountId берётся только из sub.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 136
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Проверка currentPassword при каждом запросе",
+          "detail": "После JWT+limits выполняется Argon2 вне транзакции, включая повтор existing request. Под account lock сверяется credential snapshot; при его изменении проверка повторяется, максимум2 попытки. Existing receipt возвращается только при совпавшем пароле и статусе DELETION_PENDING.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AccountDeletionUseCase.kt",
+            "line": 40
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Commit запроса и немедленный запрет sessions",
+          "detail": "Первый успех одной транзакцией меняет account на DELETION_PENDING, сохраняет request, отзывает все refresh families и записывает account.deletion.requested.v1. Неверный пароль активного account учитывается lockout. Неверный пароль при receipt retry даёт401 без изменения lockout; верный retry не создаёт request/event повторно и не открывает sessions.",
+          "source": {
+            "path": "backend/services/identity/application/src/main/kotlin/com/cookie/identity/application/AccountDeletionUseCase.kt",
+            "line": 68
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Ответ202 + stable receipt",
+          "detail": "deletionRequestId/status/requestedAt; no-store/no-cache. Событие дойдёт до Notification асинхронно; до его ingestion удаление там ещё не применено.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 123
+          }
+        }
+      ],
+      "nextFlows": [
+        "identity-outbox",
+        "notification-account-deletion"
+      ]
+    },
+    {
+      "id": "identity-jwks",
+      "title": "Публичный JWKS discovery",
+      "operationIds": [
+        "getIdentityJwks"
+      ],
+      "description": "Не является внутренним domain RPC и не требует user JWT. Клиенты получают только публичные signing keys.",
+      "steps": [
+        {
+          "node": "notification",
+          "label": "Запрос к фиксированному HTTPS origin",
+          "detail": "Notification обращается к настроенному JWKS URL; token-controlled jku/x5u/jwk не выбирают источник ключей. Полный HTTP exchange ограничен3 с.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+            "line": 24
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "GET /v1/auth/jwks",
+          "detail": "Попадает в тот же public /v1/auth/* proxy; специальных приватных endpoint или database lookup не нужно.",
+          "source": {
+            "path": "contracts/openapi/public/identity.yaml",
+            "line": 335
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Публичная часть active + retiring",
+          "detail": "Источник — startup KeyMaterial. Ответ содержит EC/P-256, algES256, useSIG, kid,x,y; приватные параметры в transport не попадают.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/security/NimbusAccessTokenProvider.kt",
+            "line": 46
+          }
+        },
+        {
+          "node": "identity",
+          "label": "200; public max-age300",
+          "detail": "Контроллер устанавливает public cache5 минут. HTTP handler не обращается к PostgreSQL или NATS.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 130
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Кэш и fail-closed",
+          "detail": "Кэш300 с; scheduled refresh240 с, глобальный refresh cooldown30 с. Нет пригодных ключей —503, неверный токен при пригодном ключе —401.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+            "line": 78
+          }
+        }
+      ]
+    },
+    {
+      "id": "identity-outbox",
+      "title": "Общее асинхронное продолжение Identity outbox",
+      "operationIds": [],
+      "description": "Применяется к email request, account activation и deletion. После commit API-ответ и publisher независимы; порядок доставки и повторов не заменяет inbox.",
+      "steps": [
+        {
+          "node": "identity_db",
+          "label": "Transactional outbox",
+          "detail": "Pending регистрация/resend записывают JWE email event; suppressed/abandoned пути email event не создают. Новый confirm пишет account.activated; первый deletion —account.deletion.requested. Все записи создаются в transaction вызывающего handler.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxIdentityEventRecorder.kt",
+            "line": 20
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Claim batch и publishAsync",
+          "detail": "Publisher каждые500 мс забирает до100 записей с lease30 с, формирует envelope producer=identity и Nats-Msg-Id=eventId.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
+            "line": 28
+          }
+        },
+        {
+          "node": "nats",
+          "label": "JetStream PubAck",
+          "detail": "Публикация cookie.events.<type>.v1; общий batch ACK budget10 с. Сбой/потеря ACK может породить повтор, поэтому доставка at-least-once.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
+            "line": 74
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Mark published с fencing",
+          "detail": "Только успешный PubAck позволяет markPublished(eventId,claimId). Stale completion игнорируется; release назначает retry с jitter1с…5мин.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
+            "line": 79
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Consumer → inbox → обработка",
+          "detail": "Notification подтверждает сообщение только после успешного handler commit; replay тех же eventId не создаёт повторную delivery.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
+            "line": 40
+          }
+        }
+      ],
+      "nextFlows": [
+        "notification-verification-email",
+        "notification-account-deletion"
+      ]
+    }
+  ],
+  "operationNotes": {
+    "registerWithEmail": {
+      "flowId": "identity-register",
+      "notes": [
+        "202 одинаков для новой попытки, existing email и допустимого exact retry; email может не быть отправлен.",
+        "Для existing account сохраняется abandoned attempt с id/proof/fingerprint и неотправленным token verifier, без password hash/locale и email event. Exact retry расходует только IP bucket; изменённый payload конфликтует так же, как для pending.",
+        "Конфликт повторного attemptId/proof с другими данными:409. Validation:400; body>16KiB:413; applicable bucket:429+Retry-After; временная БД/hash capacity:503.",
+        "Независимый256-битный proof хранится клиентом до отправки; он не включается в JWE/email/link. Новое письмо после expiry требует нового attemptId+proof."
+      ]
+    },
+    "resendEmailVerification": {
+      "flowId": "identity-resend",
+      "notes": [
+        "202 скрывает наличие account и допустимость resend; неверный proof не выдаёт письмо.",
+        "Срок попытки24ч не продлевается; cooldown1мин; старые token children не отзываются самим resend и живут до expiry.",
+        "Suppressed и проигравшие abandoned attempts до исходного expiry добавляют неотправленные token verifiers с тем же cooldown и email limits. Такие tokens не могут подтвердить account и не создают delivery.",
+        "400 validation;413 body;429 applicable IP/email limits;503 временная зависимость. Новый eventId не сбрасывает прежний UNKNOWN SMTP outcome."
+      ]
+    },
+    "confirmEmail": {
+      "flowId": "identity-confirm",
+      "notes": [
+        "204 при новом успехе и доказанном exact successful retry в retained audit; сессия не создаётся.",
+        "Token без proof и proof без token недостаточны; неверная/истёкшая pair или competing account:400 INVALID_VERIFICATION_TOKEN.",
+        "IP60/15мин, token10/15мин; exact retry обходит только token bucket. Возможны413/429/503. account.activated записывается до commit."
+      ]
+    },
+    "loginWithEmail": {
+      "flowId": "identity-login",
+      "notes": [
+        "200 после commit refresh family; access15мин, family30дней по default. Secrets response: no-store/no-cache.",
+        "401 INVALID_CREDENTIALS одинаков для неизвестного email, неверного пароля и недоступного account; lockout с5-й неудачи30с…15мин.",
+        "400 validation,413 body,429 IP/email,503 БД/hash capacity или два credential snapshot конфликта. Login не публикует event."
+      ]
+    },
+    "refreshSession": {
+      "flowId": "identity-refresh",
+      "notes": [
+        "Обязателен UUIDv4 Idempotency-Key; access JWT не требуется. Refresh token+key —bearer-sensitive recovery material.",
+        "Тот же key+predecessor возвращает текущий непосредственный successor; после следующей rotation stale retry даёт401 без revoke. Другой key для использованного credential отзывает family и даёт401.",
+        "Family TTL не продлевается. 400 malformed key/body,401 invalid refresh,413 body,429 limits,503 зависимость. Token-bearing200 запрещён кэшированию."
+      ]
+    },
+    "logout": {
+      "flowId": "identity-logout",
+      "notes": [
+        "204 для валидного logout и malformed/unknown/уже отозванного refresh; access JWT не требуется.",
+        "Отзывается только предъявленная family. Уже выданные access JWT сохраняют криптографическую валидность до exp, если consumer не применил отдельный lifecycle gate.",
+        "400 transport validation,413 body,429 IP/family,503 зависимость. Событие logout отсутствует."
+      ]
+    },
+    "requestAccountDeletion": {
+      "flowId": "identity-delete",
+      "notes": [
+        "Единственная из этих mutation-операций требует access JWT; нужны currentPassword и canonical UUIDv4 Idempotency-Key.",
+        "Повтор с тем же или новым Idempotency-Key возвращает stable202 только после JWT+limits и повторной проверки currentPassword. Неверный пароль всегда даёт401, включая гонку за account lock; pending receipt path не меняет lockout и не открывает sessions.",
+        "Статус DELETION_PENDING не означает завершение удаления во всех consumers; успешный receipt retry не публикует повторное событие.",
+        "Неверный JWT:401 INVALID_ACCESS_TOKEN+WWW-Authenticate; неверный пароль:401 INVALID_CREDENTIALS. Также400/413/429/503. Все refresh families отзываются в том же commit, что event."
+      ]
+    },
+    "getIdentityJwks": {
+      "flowId": "identity-jwks",
+      "notes": [
+        "GET /v1/auth/jwks публичный;200 public,max-age=300. Не требует БД/NATS в самом handler.",
+        "Только public EC/P-256 signing keys; не выдаёт закрытый JWT-ключ или RSA JWE key. Active/retiring keys читаются на старте сервиса."
+      ]
+    }
+  }
+}

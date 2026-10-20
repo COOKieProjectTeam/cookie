@@ -1,0 +1,496 @@
+{
+  "serviceId": "infrastructure",
+  "facts": [
+    {
+      "id": "infra-topology",
+      "label": "Статус топологии",
+      "value": "Начальный production: single VM, non-HA",
+      "description": "Реализованы Identity и Notification; один PostgreSQL instance с отдельными БД и один NATS node. Target HA topology ещё TBD.",
+      "source": {
+        "path": "docs/architecture/model/services.yaml",
+        "line": 52
+      }
+    },
+    {
+      "id": "infra-current-edge",
+      "label": "Текущий edge",
+      "value": "Yandex API Gateway, HTTPS default domain",
+      "description": "Terraform прямо обозначает gateway временным ingress до готовности домена и Caddy. Это текущая конфигурация репозитория, не подтверждение состояния облака.",
+      "source": {
+        "path": "infra/terraform/environments/production/main.tf",
+        "line": 257
+      }
+    },
+    {
+      "id": "infra-target-edge",
+      "label": "Целевой edge",
+      "value": "Caddy; TLS, routing, edge rate limits",
+      "description": "Модель описывает target Caddy и Redis keyspace rate_limit. Этот target не означает, что Caddy или его counters уже развёрнуты в production Compose.",
+      "source": {
+        "path": "docs/architecture/model/services.yaml",
+        "line": 63
+      }
+    },
+    {
+      "id": "infra-gateway-identity",
+      "label": "Маршрут Identity",
+      "value": "/v1/auth/{path+} → private HTTP:8080",
+      "description": "Gateway сохраняет path/query/headers; Authorization и Idempotency-Key проходят. Клиентский X-Forwarded-For удаляется перед HTTP integration.",
+      "source": {
+        "path": "infra/terraform/environments/production/main.tf",
+        "line": 294
+      }
+    },
+    {
+      "id": "infra-gateway-notification",
+      "label": "Маршрут Notification",
+      "value": "/v1/notifications/{path+} → private HTTP:8082",
+      "description": "Это отдельный upstream на той же VM. /healthz и /readyz не входят в gateway specification; public source contracts генерируются отдельно.",
+      "source": {
+        "path": "infra/terraform/environments/production/main.tf",
+        "line": 330
+      }
+    },
+    {
+      "id": "infra-gateway-deadlines",
+      "label": "Gateway timeouts",
+      "value": "execution15 с · connect2 с · read12 с",
+      "description": "Execution timeout задан у API Gateway, connect/read — у обеих HTTP integrations. Это разные ограничения, а не единый гарантированный wall-clock budget application handler.",
+      "source": {
+        "path": "infra/terraform/environments/production/main.tf",
+        "line": 259
+      }
+    },
+    {
+      "id": "infra-gateway-http-timeouts",
+      "label": "Upstream HTTP timeouts",
+      "value": "connect2 с / read12 с для обоих routes",
+      "description": "Request upload/idle timeout и rate-limit quotas отдельно в этом Terraform specification не установлены; значения cloud defaults здесь не выводятся.",
+      "source": {
+        "path": "infra/terraform/environments/production/main.tf",
+        "line": 303
+      }
+    },
+    {
+      "id": "infra-app-deadline",
+      "label": "Application HTTP deadline",
+      "value": "Явно не задан в service YAML",
+      "description": "Identity server config задаёт port и отключает forward-headers; общего handler request deadline нет. DB, Argon2 и outbound вызовы имеют собственные пределы; framework defaults не объявляются как гарантия.",
+      "source": {
+        "path": "backend/services/identity/src/main/resources/application.yaml",
+        "line": 31
+      }
+    },
+    {
+      "id": "infra-ingress-ports",
+      "label": "Порты приложений",
+      "value": "Identity host8080→container8080; Notification host8082→container8080",
+      "description": "Compose default bind127.0.0.1. Для Terraform gateway runbook требует0.0.0.0; SG разрешает ingress только integration source CIDR198.19.0.0/16.",
+      "source": {
+        "path": "deploy/production/README.md",
+        "line": 22
+      }
+    },
+    {
+      "id": "infra-private-network",
+      "label": "Изоляция backend",
+      "value": "PostgreSQL/NATS/Redis: internal bridge, без host ports",
+      "description": "Identity и Notification также подключены к edge bridge. Notification нужен outbound HTTPS/SMTP; это не gateway к чужим таблицам.",
+      "source": {
+        "path": "deploy/production/README.md",
+        "line": 29
+      }
+    },
+    {
+      "id": "infra-security-group",
+      "label": "VM ingress",
+      "value": "SSH allowlist; HTTP8080/8082 только gateway",
+      "description": "DB/NATS/Redis host ingress не открыт этими rules. Egress ANY IPv4 разрешён; конкретный внешний provider endpoint определяется приложением.",
+      "source": {
+        "path": "infra/terraform/environments/production/main.tf",
+        "line": 35
+      }
+    },
+    {
+      "id": "infra-container-memory",
+      "label": "Memory limits",
+      "value": "Identity1536; Notification1536; PostgreSQL1536; NATS512; Redis256 MiB",
+      "description": "JVM MaxRAMPercentage70. Это стартовые container limits, не фактическое потребление и не capacity guarantee.",
+      "source": {
+        "path": "deploy/production/README.md",
+        "line": 36
+      }
+    },
+    {
+      "id": "infra-container-cpu",
+      "label": "CPU limits",
+      "value": "Identity1.5; Notification1.5; PostgreSQL1; NATS0.5; Redis0.25",
+      "description": "CPU quota задана Compose отдельно для контейнеров; VM и службы разделяют физические ресурсы.",
+      "source": {
+        "path": "deploy/production/compose.yaml",
+        "line": 215
+      }
+    },
+    {
+      "id": "infra-jdbc",
+      "label": "JDBC default → production",
+      "value": "Identity pool10→8; Notification pool12→8",
+      "description": "Оба runtime подключаются к своим БД собственными app roles; Flyway использует отдельные migrator roles. Acquire2с, validate1с, socket10с, statement5с, lock2с заданы service YAML.",
+      "source": {
+        "path": "deploy/production/compose.yaml",
+        "line": 296
+      }
+    },
+    {
+      "id": "infra-existing-volume",
+      "label": "Новая БД на существующем volume",
+      "value": "Повторяемый notification-db-provision",
+      "description": "Admin credential используется только one-shot job. Создаются/проверяются БД и роли, runtime получает DML/USAGE, migrator владеет схемой; неожиданный existing owner вызывает отказ.",
+      "source": {
+        "path": "deploy/production/scripts/postgres-provision-notification.sh",
+        "line": 26
+      }
+    },
+    {
+      "id": "infra-nats-wire",
+      "label": "NATS server",
+      "value": "TLS:4222; private health:8222; max_payload1MiB",
+      "description": "TLS handshake2с; write deadline10с. Certificate client verification отключён на TLS-слое, но workload credentials/JWT account auth на NATS обязательны через operator config.",
+      "source": {
+        "path": "deploy/production/config/nats-server.conf",
+        "line": 5
+      }
+    },
+    {
+      "id": "infra-nats-stream",
+      "label": "JetStream stream",
+      "value": "COOKIE_EVENTS; cookie.events.>; file; replicas1",
+      "description": "Limits retention: max7дней,1GiB,1M сообщений,1MiB/сообщение; discard old. Dedup window10мин. При достижении размерного лимита окно хранения может быть короче7дней.",
+      "source": {
+        "path": "deploy/production/config/cookie-events.json",
+        "line": 7
+      }
+    },
+    {
+      "id": "infra-nats-consumer",
+      "label": "Notification durable",
+      "value": "notification-v1; explicit ACK; ack_wait30с",
+      "description": "10 filter subjects; max_ack_pending128, max_waiting16, batch≤32, pull expiry≤5с; max_deliver=-1. Consumer хранит cursor durably, operational replay ограничен broker retention.",
+      "source": {
+        "path": "deploy/production/config/notification-consumer.json",
+        "line": 6
+      }
+    },
+    {
+      "id": "infra-nats-acl",
+      "label": "Broker runtime ACL",
+      "value": "Только собственные consumer INFO/NEXT/ACK и inbox",
+      "description": "Notification runtime credential не читает весь stream и не создаёт consumers; provisioning/replay используют отдельные operator credentials.",
+      "source": {
+        "path": "deploy/production/config/notification-nats-permissions.json",
+        "line": 2
+      }
+    },
+    {
+      "id": "infra-redis-state",
+      "label": "Redis — производный индекс",
+      "value": "6379; no persistence; maxmemory128MiB/noeviction",
+      "description": "Нет snapshot/AOF/volume. Redis loss допускает rebuild и PostgreSQL deadline fallback; counters Identity живут в PostgreSQL, не здесь.",
+      "source": {
+        "path": "deploy/production/config/redis.conf",
+        "line": 4
+      }
+    },
+    {
+      "id": "infra-redis-acl",
+      "label": "Redis ACL",
+      "value": "default off; notification; ~cookie:notification:*",
+      "description": "Разрешены ограниченные sorted-set/deadline/connection команды, ACL с password hash создаётся в tmpfs. FLUSHALL и произвольный SET не разрешены.",
+      "source": {
+        "path": "deploy/production/scripts/redis-entrypoint.sh",
+        "line": 13
+      }
+    },
+    {
+      "id": "infra-redis-timeouts",
+      "label": "Redis client",
+      "value": "connect1с · command1с",
+      "description": "Явные Spring Redis значения Notification; временный сбой индекса не должен блокировать авторитетный PostgreSQL scheduler.",
+      "source": {
+        "path": "backend/services/notification/src/main/resources/application.yaml",
+        "line": 26
+      }
+    },
+    {
+      "id": "infra-probes-identity",
+      "label": "Identity probes",
+      "value": "/healthz200; /readyz PostgreSQL200/503",
+      "description": "KeyMaterial проверяется при startup. NATS не входит в readiness, чтобы outage broker не мешал durable outbox и HTTP.",
+      "source": {
+        "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/SystemController.kt",
+        "line": 21
+      }
+    },
+    {
+      "id": "infra-probes-notification",
+      "label": "Notification probes",
+      "value": "/healthz200; /readyz DB + fresh JWKS + JWE keyring",
+      "description": "Readiness возвращает503 при отсутствии этих prerequisites; Redis, NATS и SMTP/APNs/FCM не опрашиваются probe-запросом.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/SystemController.kt",
+        "line": 19
+      }
+    },
+    {
+      "id": "infra-compose-health",
+      "label": "Container healthchecks",
+      "value": "Оба приложения: interval5с, timeout3с, retries24, start30с",
+      "description": "Shell healthcheck обращается к /readyz внутри контейнера. PostgreSQL start20с; NATS start10с; их interval5с/timeout3с/retries24. Redis interval5с/timeout3с/retries12.",
+      "source": {
+        "path": "deploy/production/compose.yaml",
+        "line": 206
+      }
+    },
+    {
+      "id": "infra-shutdown",
+      "label": "Остановка приложений",
+      "value": "Graceful phase20с; Docker stop grace30с",
+      "description": "Задано одинаково Identity/Notification. PostgreSQL получает60с stop grace; NATS30с. Это бюджет завершения, не rollback данных.",
+      "source": {
+        "path": "deploy/production/compose.yaml",
+        "line": 150
+      }
+    },
+    {
+      "id": "infra-providers-disabled",
+      "label": "Push channels",
+      "value": "APNs/FCM disabled по default",
+      "description": "При включении deploy.sh добавляет отдельные compose overlays для credential mounts. Disabled channel не симулирует accepted delivery; real provider smoke не выполняется healthcheck.",
+      "source": {
+        "path": "deploy/production/README.md",
+        "line": 101
+      }
+    },
+    {
+      "id": "infra-production-smtp",
+      "label": "SMTP production",
+      "value": "STARTTLS required; port default587",
+      "description": "Host, username, from и Message-ID domain обязательны; password приходит из configtree secret. Local Mailpit/default1025 не является production provider.",
+      "source": {
+        "path": "deploy/production/compose.yaml",
+        "line": 311
+      }
+    },
+    {
+      "id": "infra-secret-boundaries",
+      "label": "Ключи и secrets",
+      "value": "File mounts/configtree; отдельные роли",
+      "description": "Identity получает private JWT signing key и public Notification RSA key. Notification получает private JWE key и public JWT keys через HTTPS JWKS. Реальные secret values и cloud IDs здесь не приводятся.",
+      "source": {
+        "path": "deploy/production/README.md",
+        "line": 112
+      }
+    },
+    {
+      "id": "infra-image-deploy",
+      "label": "Релизы",
+      "value": "Immutable digest; per-service deploy; durable journal",
+      "description": "current.env обновляется только после readiness; pending.env записывается до restart. Rollback восстанавливает только затронутые приложения, не откатывает миграции/broker config/provider effects.",
+      "source": {
+        "path": "deploy/production/README.md",
+        "line": 261
+      }
+    },
+    {
+      "id": "infra-deploy-deadlines",
+      "label": "Deploy waits",
+      "value": "Health180с default; published-port30с",
+      "description": "Health timeout переопределяется COOKIE_DEPLOY_HEALTH_TIMEOUT_SECONDS. Published-port probe использует curl max-time3с; это operator rollout budget, не HTTP handler deadline.",
+      "source": {
+        "path": "deploy/production/deploy.sh",
+        "line": 11
+      }
+    },
+    {
+      "id": "infra-telemetry",
+      "label": "Telemetry",
+      "value": "Grafana target; backend TBD",
+      "description": "Metrics/logs/traces backends в модели не выбраны. Actuator HTTP exposure выключен у сервисов; наличие registry metrics не означает deployed monitoring pipeline.",
+      "source": {
+        "path": "docs/architecture/model/services.yaml",
+        "line": 38
+      }
+    }
+  ],
+  "flows": [
+    {
+      "id": "infrastructure-ingress",
+      "title": "Текущий public ingress и private probes",
+      "operationIds": [],
+      "description": "Реализованные routes и declared deadlines; отсутствующие конфигурационные значения не заменяются догадками о cloud/framework defaults.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "HTTPS к public gateway",
+          "detail": "Начальный production использует выданный API Gateway HTTPS domain. Целевой Caddy пока остаётся моделью будущего edge.",
+          "source": {
+            "path": "docs/architecture/model/services.yaml",
+            "line": 24
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "Route только public API",
+          "detail": "/v1/auth/* →Identity8080; /v1/notifications/* →Notification8082. Connect2с/read12с, execution15с; клиентский XFF удаляется.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Identity boundary",
+          "detail": "Body≤16KiB; application rate limits и JWT/password/refresh checks выполняет Identity. /healthz и /readyz доступны на service port, но не проксируются gateway.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/config/IdentityConfiguration.kt",
+            "line": 231
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Notification boundary",
+          "detail": "Body≤16KiB; account определяется из проверенного Identity JWT. Service /readyz дополнительно требует свежие JWKS и usable JWE ring.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/SystemController.kt",
+            "line": 20
+          }
+        }
+      ]
+    },
+    {
+      "id": "infrastructure-rollout",
+      "title": "Production rollout и восстановление",
+      "operationIds": [],
+      "description": "Оператор явно выбирает immutable service image. Указание same digest позволяет применить новую конфигурацию; неподанные сервисы сохраняют образ.",
+      "steps": [
+        {
+          "node": "gateway",
+          "label": "Ingress остаётся на прежнем origin",
+          "detail": "Добавление Notification расширяет существующий gateway и сохраняет issuer. Health/readiness probes в gateway не добавляются.",
+          "source": {
+            "path": "deploy/production/README.md",
+            "line": 24
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Общая инфраструктура готова",
+          "detail": "Deploy запускает PostgreSQL/NATS и ждёт их health перед provisioning и перезапуском приложений.",
+          "source": {
+            "path": "deploy/production/deploy.sh",
+            "line": 383
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Повторяемое provisioning",
+          "detail": "Отдельный one-shot создаёт отсутствующую Notification DB/роли и converges grants на существующем volume; приложению admin secret не выдаётся.",
+          "source": {
+            "path": "deploy/production/deploy.sh",
+            "line": 386
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Provision stream + consumer",
+          "detail": "nats-init converges existing stream и consumer без reset cursor; runtime consumer работает с ограниченными credentials.",
+          "source": {
+            "path": "deploy/production/scripts/nats-init.sh",
+            "line": 31
+          }
+        },
+        {
+          "node": "redis",
+          "label": "Допустимое degraded состояние",
+          "detail": "Deploy пытается запустить Redis; при отказе сообщает о PostgreSQL scheduler fallback и может продолжить rollout.",
+          "source": {
+            "path": "deploy/production/deploy.sh",
+            "line": 388
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Journal до restart",
+          "detail": "pending.env сохраняет old/new image pair и attempted services. Перезапускаются только выбранные сервисы в порядке Identity, Notification.",
+          "source": {
+            "path": "deploy/production/deploy.sh",
+            "line": 398
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Readiness → commit release",
+          "detail": "После container health и published-port readiness обоих выбранных сервисов атомарно фиксируется current.env. При failure recovery восстанавливает attempted services в обратном порядке; DB/Flyway не откатываются.",
+          "source": {
+            "path": "deploy/production/deploy.sh",
+            "line": 403
+          }
+        }
+      ]
+    },
+    {
+      "id": "infrastructure-jwks-startup",
+      "title": "Readiness Notification и ключи Identity",
+      "operationIds": [],
+      "description": "Public JWKS discovery — разрешённая синхронная зависимость. Обновления подписных и encryption keys — разные процессы.",
+      "steps": [
+        {
+          "node": "identity",
+          "label": "Startup KeyMaterial",
+          "detail": "Production требует active EC private signing JWK, retiring public keys и public RSA encryption key Notification. Dev/test могут генерировать временные ключи.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/security/KeyMaterialConfiguration.kt",
+            "line": 35
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Фиксированный HTTPS JWKS endpoint",
+          "detail": "URL настроен конфигурацией, connect2с, весь JWKS exchange3с; URL из JWT headers не используется. Cache300с, refresh240с/cooldown30с.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+            "line": 24
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "Public GET /v1/auth/jwks",
+          "detail": "Тот же public gateway route ведёт к Identity; user bearer и internal workload token для JWKS discovery не нужны.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 274
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Только public signing keys",
+          "detail": "Active + retiring keys, Cache-Control:public,max-age300. RSA encryption key и private signing material не выдаются этим endpoint.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/AuthController.kt",
+            "line": 130
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Готовность и rotation",
+          "detail": "Readiness требует PostgreSQL, fresh JWKS cache и usable JWE keys. Новую private JWE key устанавливают у Notification до переключения public encryption key у Identity.",
+          "source": {
+            "path": "deploy/production/README.md",
+            "line": 117
+          }
+        }
+      ]
+    }
+  ],
+  "operationNotes": {}
+}

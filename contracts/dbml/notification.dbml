@@ -1,59 +1,162 @@
-// COOKie — notification service database schema
-//
-// This file contains only tables owned by the notification service.
-// Cross-service references are logical IDs only; never add cross-service foreign keys.
+// COOKie — Notification Service PostgreSQL schema.
+// Mirrors V001__notification_core.sql through V003__push_submission_evidence.sql.
+// Cross-service identifiers are logical references only, never foreign keys.
 
-Table push_devices as PushDevices {
-  id uuid [pk]
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  platform varchar [not null, note: 'IOS | ANDROID']
-  device_id varchar [not null]
-  push_token varchar [not null]
-  enabled boolean [not null, default: true]
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-
-  indexes {
-    (user_id, device_id) [unique]
-  }
-
-  Note: 'Service: Notification'
+Table account_tombstones as AccountTombstones {
+  user_id uuid [pk, note: 'Logical Identity account id. Prevents late events and residual JWTs from recreating deleted data']
+  deletion_request_id uuid [not null]
+  deleted_at timestamptz [not null]
+  Note: 'Service: Notification. Minimal durable deletion evidence; not removed by ordinary retention'
 }
 
 Table settings as Settings {
-  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
+  user_id uuid [pk, note: 'Logical Identity account id']
   water_enabled boolean [not null, default: true]
   food_enabled boolean [not null, default: true]
-  food_inactive_minutes integer [not null, default: 240]
+  food_inactive_minutes integer [not null, default: 240, note: 'CHECK BETWEEN 1 AND 10080']
   weigh_enabled boolean [not null, default: true]
-  weigh_time time
+  weigh_time time [not null, default: '08:00']
   goal_warning_enabled boolean [not null, default: true]
-  quiet_start time
-  quiet_end time
-  updated_at timestamptz [not null]
-
-  Note: 'Service: Notification'
+  quiet_start time [not null, default: '23:00']
+  quiet_end time [not null, default: '08:00']
+  timezone varchar(255) [null, note: 'Notification settings are authoritative. No scheduled push before explicit IANA timezone']
+  locale varchar(255) [not null, default: 'ru']
+  locale_overridden boolean [not null, default: false]
+  scheduling_started_at timestamptz [null]
+  food_started_at timestamptz [null]
+  water_started_at timestamptz [null]
+  last_water_reminder_at timestamptz [null, note: 'Queue reservation time, separate from provider submission']
+  last_water_submission_at timestamptz [null]
+  last_water_submission_occurrence_id uuid [null, note: 'Same occurrence may fan out to several devices; different occurrences wait at least two hours']
+  updated_at timestamptz [not null, default: `clock_timestamp()`]
+  Note: 'Service: Notification. PostgreSQL owns timer baselines; profile locale only fills a non-overridden default'
 }
 
-Table state as State {
-  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
-  last_meal_at timestamptz [null]
-  last_water_at timestamptz [null]
-  next_food_reminder_at timestamptz [null]
-  next_water_reminder_at timestamptz [null]
-  timezone varchar [not null]
-  updated_at timestamptz [not null]
-
-  Note: 'Service: Notification. Redis food_reminders sorted-set can be rebuilt from this table if Redis is lost'
-}
-
-Table delivery as Delivery {
+Table push_devices as PushDevices {
   id uuid [pk]
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  type varchar [not null]
-  sent_at timestamptz [not null]
-  status varchar [not null, note: 'SENT | FAILED']
-  provider_message_id varchar [null]
-
+  user_id uuid [not null, note: 'Logical Identity account id']
+  platform varchar(10) [not null, note: 'CHECK IOS | ANDROID']
+  device_id varchar(255) [not null]
+  push_token varchar(4096) [not null]
+  enabled boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null, note: 'Revision guard for conditional provider token invalidation']
+  indexes {
+    (user_id, device_id) [unique]
+    (platform, push_token) [unique, name: 'push_devices_active_token', note: 'Partial index WHERE enabled']
+    user_id [name: 'push_devices_user']
+  }
   Note: 'Service: Notification'
 }
+
+Table inbox_events as InboxEvents {
+  consumer_name varchar(100) [not null]
+  event_id uuid [not null]
+  event_type varchar(100) [not null]
+  processed_at timestamptz [not null, default: `clock_timestamp()`]
+  indexes {
+    (consumer_name, event_id) [pk]
+    processed_at [name: 'inbox_events_retention']
+  }
+  Note: 'Service: Notification. Same transaction as projections and delivery intent; 30-day retention exceeds seven-day stream retention'
+}
+
+Table event_projections as EventProjections {
+  kind varchar(30) [not null, note: 'PROFILE | MEAL | WATER | WEIGHT | PROGRESS']
+  user_id uuid [not null]
+  entity_id varchar(255) [not null, note: 'Aggregate projection key; progress includes timezone and localDate']
+  version bigint [not null, note: 'CHECK > 0. Older or equal aggregate versions never overwrite a projection']
+  payload jsonb [not null, note: 'Allowlisted minimal notification snapshot; no dishes or weight values']
+  deleted boolean [not null, default: false]
+  updated_at timestamptz [not null, default: `clock_timestamp()`]
+  indexes {
+    (kind, user_id, entity_id) [pk]
+    (user_id, kind) [name: 'event_projections_user']
+  }
+  Note: 'Service: Notification. Meal/weight tombstones prevent resurrection after out-of-order delivery'
+}
+
+Table reminder_deadlines as ReminderDeadlines {
+  user_id uuid [pk]
+  due_at timestamptz [not null]
+  generation bigint [not null, default: 1]
+  indexes {
+    (due_at, user_id) [name: 'reminder_deadlines_due']
+  }
+  Note: 'Service: Notification. Canonical schedule, rebuilds Redis cookie:notification:reminder_deadlines members userId:generation; PostgreSQL fallback scans every 30 seconds'
+}
+
+Table reminder_occurrences as ReminderOccurrences {
+  id uuid [pk]
+  user_id uuid [not null]
+  kind varchar(40) [not null]
+  cycle_key varchar(255) [not null, note: 'Food activity cycle, water deadline or local date depending on kind']
+  scheduled_at timestamptz [not null]
+  last_submitted_at timestamptz [null, note: 'Durable submission evidence survives delivery-job retention; fully unsent FOOD can be rescheduled after diary correction']
+  created_at timestamptz [not null, default: `clock_timestamp()`]
+  indexes {
+    (user_id, kind, cycle_key) [unique]
+    user_id [name: 'reminder_occurrences_user']
+  }
+  Note: 'Service: Notification. Logical occurrence deduplication across scheduler replicas'
+}
+
+Table message_quarantine as MessageQuarantine {
+  id uuid [pk]
+  message_hash char(64) [not null, unique, note: 'SHA-256 of original envelope bytes']
+  event_id uuid [null]
+  subject varchar(255) [not null]
+  reason varchar(100) [not null, note: 'Safe classified reason, not exception text']
+  stream_sequence bigint [not null]
+  created_at timestamptz [not null, default: `clock_timestamp()`]
+  replay_requested_at timestamptz [null]
+  replayed_at timestamptz [null]
+  replay_attempts integer [not null, default: 0]
+  indexes {
+    replay_requested_at [name: 'quarantine_replay', note: 'Partial index WHERE replayed_at IS NULL']
+    created_at [name: 'quarantine_retention']
+  }
+  Note: 'Service: Notification. Metadata only. Operator replay uses original retained broker message with separate credentials; no raw payload persisted'
+}
+
+Table delivery_jobs as DeliveryJobs {
+  id uuid [pk]
+  dedup_key varchar(200) [not null, unique]
+  channel varchar(8) [not null, note: 'CHECK EMAIL | PUSH']
+  user_id uuid [null]
+  device_id uuid [null, note: 'Logical local push device id; no FK so deletion/retention remains explicit']
+  registration_attempt_id uuid [null, note: 'Pre-account email aggregate; not an Identity FK']
+  occurrence_id uuid [null, note: 'Logical local reminder occurrence id']
+  kind varchar(40) [not null]
+  locale varchar(64) [not null, default: 'ru']
+  encrypted_payload text [null, note: 'Compact JWE only; removed after terminal completion']
+  expires_at timestamptz [not null]
+  created_at timestamptz [not null, default: `clock_timestamp()`]
+  next_attempt_at timestamptz [not null, default: `clock_timestamp()`]
+  status varchar(24) [not null, default: 'PENDING', note: 'CHECK PENDING | CLAIMED | SMTP_SUBMITTING | ACCEPTED | FAILED | UNKNOWN | CANCELLED | EXPIRED']
+  attempt_count integer [not null, default: 0, note: 'CHECK >= 0']
+  lease_token uuid [null]
+  lease_until timestamptz [null]
+  provider_message_id varchar(512) [null]
+  last_code varchar(64) [null]
+  finished_at timestamptz [null]
+  indexes {
+    (next_attempt_at, created_at) [name: 'delivery_jobs_pending', note: 'Partial index WHERE status = PENDING']
+    expires_at [name: 'delivery_jobs_expiry', note: 'Partial index WHERE status = PENDING']
+    lease_until [name: 'delivery_jobs_leases', note: 'Partial index WHERE status IN (CLAIMED, SMTP_SUBMITTING)']
+    user_id [name: 'delivery_jobs_user', note: 'Partial index WHERE user_id IS NOT NULL']
+    finished_at [name: 'delivery_jobs_finished', note: 'Partial index WHERE finished_at IS NOT NULL']
+  }
+  Note: 'Service: Notification. CHECK lease_token/lease_until both null or both set. EMAIL requires registration_attempt_id with null user_id/device_id; PUSH requires user_id/device_id with null registration_attempt_id. SMTP_SUBMITTING expired lease becomes terminal UNKNOWN, never an automatic retry. ACCEPTED means provider accepted, not proof of delivery'
+}
+
+Table delivery_attempts as DeliveryAttempts {
+  id uuid [pk]
+  delivery_id uuid [not null]
+  started_at timestamptz [not null, default: `clock_timestamp()`]
+  finished_at timestamptz [null]
+  outcome varchar(24) [null]
+  safe_code varchar(64) [null]
+  Note: 'Service: Notification. Id equals delivery claim fencing token; no provider payload or arbitrary errors'
+}
+Ref: DeliveryAttempts.delivery_id > DeliveryJobs.id [delete: cascade]

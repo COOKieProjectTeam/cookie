@@ -25,6 +25,9 @@ jobs:
       platform_messaging: ${{ steps.scope.outputs.platform_messaging }}
       platform_testing: ${{ steps.scope.outputs.platform_testing }}
       identity: ${{ steps.scope.outputs.identity }}
+      notification: ${{ steps.scope.outputs.notification }}
+      notification_image: ${{ steps.scope.outputs.notification_image }}
+      notification_container: ${{ steps.scope.outputs.notification_container }}
       notification_sink: ${{ steps.scope.outputs.notification_sink }}
       service_contracts: ${{ steps.scope.outputs.service_contracts }}
       planned_openapi: ${{ steps.scope.outputs.planned_openapi }}
@@ -41,7 +44,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Test CI scope mapping
-        run: bash .github/scripts/test-detect-ci-scope.sh
+        run: |
+          bash .github/scripts/test-detect-ci-scope.sh
+          PYTHONPYCACHEPREFIX=.cache/python python3 -m py_compile backend/tools/service-template/create-service.py
       - name: Select affected checks
         id: scope
         env:
@@ -120,6 +125,30 @@ jobs:
           ./gradlew
           :backend:services:identity:check
           :backend:services:identity:integrationTest
+
+  notification:
+    name: Notification service
+    if: needs.changes.outputs.notification == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Require Docker for Testcontainers
+        run: docker info
+      - name: Run Notification unit and integration tests
+        run: >-
+          ./gradlew
+          :backend:services:notification:check
+          :backend:services:notification:integrationTest
 
   notification_sink:
     name: Notification sink
@@ -236,6 +265,26 @@ jobs:
           tags: cookie/identity-ci:${{ github.sha }}
           cache-from: type=gha,scope=identity-linux-amd64
 
+  notification_container:
+    name: Notification image build
+    if: github.event_name == 'pull_request' && needs.changes.outputs.notification_container == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build the production image without publishing
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: deploy/docker/notification.Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: cookie/notification-ci:${{ github.sha }}
+          cache-from: type=gha,scope=notification-linux-amd64
+
   compose:
     name: Deployment bundle
     if: needs.changes.outputs.compose == 'true'
@@ -257,32 +306,47 @@ jobs:
         run: >-
           make --dry-run
           dev-build-identity
+          dev-build-notification
           dev-build-notification-sink
           dev-up
           dev-down
       - name: Validate production deployment bundle
         env:
           IDENTITY_IMAGE: cr.yandex/crp00000000000000000/identity@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          NOTIFICATION_IMAGE: cr.yandex/crp00000000000000000/notification@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         run: |
           set -Eeuo pipefail
           docker compose \
             --env-file deploy/production/.env.example \
             --file deploy/production/compose.yaml \
             config
+          COOKIE_APNS_ENABLED=true COOKIE_FCM_ENABLED=true docker compose \
+            --env-file deploy/production/.env.example \
+            --file deploy/production/compose.yaml \
+            --file deploy/production/compose.apns.yaml \
+            --file deploy/production/compose.fcm.yaml config
           for script in \
             deploy/production/deploy.sh \
             deploy/production/scripts/identity-healthcheck.sh \
+            deploy/production/scripts/notification-healthcheck.sh \
             deploy/docker/verify-pinned-images.sh; do
             bash -n "$script"
           done
           for script in \
             deploy/production/scripts/nats-init.sh \
-            deploy/production/scripts/postgres-init-identity.sh; do
+            deploy/production/scripts/postgres-init-identity.sh \
+            deploy/production/scripts/postgres-provision-notification.sh \
+            deploy/production/scripts/redis-entrypoint.sh; do
             sh -n "$script"
           done
           jq --exit-status . deploy/production/config/cookie-events.json >/dev/null
+          jq --exit-status . deploy/production/config/notification-consumer.json >/dev/null
       - name: Test production deployment lifecycle
-        run: python3 .github/scripts/test-production-deploy.py
+        env:
+          COOKIE_DEPLOY_CONTAINER_TESTS: "1"
+        run: |
+          python3 .github/scripts/test-production-deploy.py
+          python3 .github/scripts/test-notification-deployment.py
       - name: Test immutable image verification
         run: python3 .github/scripts/test-pinned-images.py
       - name: Verify immutable external image manifests
@@ -291,6 +355,55 @@ jobs:
           deploy/docker/compose.yaml
           deploy/production/compose.yaml
           deploy/docker/*.Dockerfile
+
+  production_rehearsal:
+    name: Production deployment rehearsal
+    if: >-
+      needs.changes.outputs.compose == 'true' ||
+      needs.changes.outputs.identity_container == 'true' ||
+      needs.changes.outputs.notification_container == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build and load the actual Identity image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: deploy/docker/identity.Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: cookie/identity-rehearsal:${{ github.sha }}
+          cache-from: type=gha,scope=identity-linux-amd64
+      - name: Build and load the actual Notification image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: deploy/docker/notification.Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: cookie/notification-rehearsal:${{ github.sha }}
+          cache-from: type=gha,scope=notification-linux-amd64
+      - name: Prepare synthetic fixture tooling
+        run: |
+          python3 -m venv .cache/production-test-venv
+          .cache/production-test-venv/bin/pip install -r .github/scripts/production-test-requirements.txt
+      - name: Exercise the production bundle on the disposable runner
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,PATH .cache/production-test-venv/bin/python
+          .github/scripts/test-production-containers.py
+          --identity-image cookie/identity-rehearsal:${{ github.sha }}
+          --notification-image cookie/notification-rehearsal:${{ github.sha }}
 
   terraform:
     name: Terraform
@@ -312,6 +425,16 @@ jobs:
       - run: terraform -chdir=infra/terraform/environments/production init -backend=false
       - run: terraform -chdir=infra/terraform/environments/production validate
 
+  architecture_explorer:
+    name: Architecture snapshot and generator
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify offline architecture documentation
+        run: make architecture-check
+
   ci_required:
     name: CI required
     if: always()
@@ -320,19 +443,24 @@ jobs:
       - legacy_api
       - backend_platform
       - identity
+      - notification
       - notification_sink
       - service_contracts
       - planned_openapi
       - public_client
       - mobile
       - identity_container
+      - notification_container
       - compose
+      - production_rehearsal
       - terraform
+      - architecture_explorer
     runs-on: ubuntu-24.04
     steps:
       - name: Require every affected check to pass
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
+          ARCHITECTURE_EXPLORER_RESULT: ${{ needs.architecture_explorer.result }}
           LEGACY_API_EXPECTED: ${{ needs.changes.outputs.go_api }}
           LEGACY_API_RESULT: ${{ needs.legacy_api.result }}
           BACKEND_PLATFORM_EXPECTED: ${{ needs.changes.outputs.platform }}
@@ -343,6 +471,12 @@ jobs:
           PLATFORM_TESTING_SELECTED: ${{ needs.changes.outputs.platform_testing }}
           IDENTITY_EXPECTED: ${{ needs.changes.outputs.identity }}
           IDENTITY_RESULT: ${{ needs.identity.result }}
+          NOTIFICATION_EXPECTED: ${{ needs.changes.outputs.notification }}
+          NOTIFICATION_RESULT: ${{ needs.notification.result }}
+          NOTIFICATION_CONTAINER_EXPECTED: ${{ github.event_name == 'pull_request' && needs.changes.outputs.notification_container == 'true' }}
+          NOTIFICATION_CONTAINER_RESULT: ${{ needs.notification_container.result }}
+          NOTIFICATION_IMAGE_SELECTED: ${{ needs.changes.outputs.notification_image }}
+          NOTIFICATION_CONTAINER_SELECTED: ${{ needs.changes.outputs.notification_container }}
           NOTIFICATION_SINK_EXPECTED: ${{ needs.changes.outputs.notification_sink }}
           NOTIFICATION_SINK_RESULT: ${{ needs.notification_sink.result }}
           SERVICE_CONTRACTS_EXPECTED: ${{ needs.changes.outputs.service_contracts }}
@@ -357,6 +491,8 @@ jobs:
           IDENTITY_CONTAINER_RESULT: ${{ needs.identity_container.result }}
           COMPOSE_EXPECTED: ${{ needs.changes.outputs.compose }}
           COMPOSE_RESULT: ${{ needs.compose.result }}
+          PRODUCTION_REHEARSAL_EXPECTED: ${{ needs.changes.outputs.compose == 'true' || needs.changes.outputs.identity_container == 'true' || needs.changes.outputs.notification_container == 'true' }}
+          PRODUCTION_REHEARSAL_RESULT: ${{ needs.production_rehearsal.result }}
           TERRAFORM_EXPECTED: ${{ needs.changes.outputs.terraform }}
           TERRAFORM_RESULT: ${{ needs.terraform.result }}
           IDENTITY_IMAGE_SELECTED: ${{ needs.changes.outputs.identity_image }}
@@ -375,6 +511,9 @@ jobs:
               "platform_messaging:${PLATFORM_MESSAGING_SELECTED}" \
               "platform_testing:${PLATFORM_TESTING_SELECTED}" \
               "identity:${IDENTITY_EXPECTED}" \
+              "notification:${NOTIFICATION_EXPECTED}" \
+              "notification_image:${NOTIFICATION_IMAGE_SELECTED}" \
+              "notification_container:${NOTIFICATION_CONTAINER_SELECTED}" \
               "notification_sink:${NOTIFICATION_SINK_EXPECTED}" \
               "service_contracts:${SERVICE_CONTRACTS_EXPECTED}" \
               "planned_openapi:${PLANNED_OPENAPI_EXPECTED}" \
@@ -404,15 +543,21 @@ jobs:
               "$PLATFORM_TESTING_SELECTED" == "true" ) ]]; then
               failures+=("platform:module-selected-without-job")
             fi
+            if [[ "$NOTIFICATION_IMAGE_SELECTED" == "true" && "$NOTIFICATION_CONTAINER_SELECTED" != "true" ]]; then
+              failures+=("notification_image:container-validation-not-selected")
+            fi
             if [[ "$IDENTITY_IMAGE_SELECTED" == "true" && "$IDENTITY_CONTAINER_SELECTED" != "true" ]]; then
               failures+=("identity_image:container-validation-not-selected")
             fi
           fi
 
           for check in \
+            "architecture_explorer:true:${ARCHITECTURE_EXPLORER_RESULT}" \
             "legacy_api:${LEGACY_API_EXPECTED}:${LEGACY_API_RESULT}" \
             "backend_platform:${BACKEND_PLATFORM_EXPECTED}:${BACKEND_PLATFORM_RESULT}" \
             "identity:${IDENTITY_EXPECTED}:${IDENTITY_RESULT}" \
+            "notification:${NOTIFICATION_EXPECTED}:${NOTIFICATION_RESULT}" \
+            "notification_container:${NOTIFICATION_CONTAINER_EXPECTED}:${NOTIFICATION_CONTAINER_RESULT}" \
             "notification_sink:${NOTIFICATION_SINK_EXPECTED}:${NOTIFICATION_SINK_RESULT}" \
             "service_contracts:${SERVICE_CONTRACTS_EXPECTED}:${SERVICE_CONTRACTS_RESULT}" \
             "planned_openapi:${PLANNED_OPENAPI_EXPECTED}:${PLANNED_OPENAPI_RESULT}" \
@@ -420,6 +565,7 @@ jobs:
             "mobile:${MOBILE_EXPECTED}:${MOBILE_RESULT}" \
             "identity_container:${IDENTITY_CONTAINER_EXPECTED}:${IDENTITY_CONTAINER_RESULT}" \
             "compose:${COMPOSE_EXPECTED}:${COMPOSE_RESULT}" \
+            "production_rehearsal:${PRODUCTION_REHEARSAL_EXPECTED}:${PRODUCTION_REHEARSAL_RESULT}" \
             "terraform:${TERRAFORM_EXPECTED}:${TERRAFORM_RESULT}"; do
             IFS=: read -r name expected result <<< "$check"
             if [[ "$expected" == "true" && "$result" != "success" ]]; then
@@ -453,3 +599,21 @@ jobs:
       image_repository: identity
       context: .
       dockerfile: deploy/docker/identity.Dockerfile
+
+  publish_notification:
+    name: Publish Notification image
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.notification_image == 'true' &&
+      needs.ci_required.result == 'success'
+    needs: [changes, ci_required]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-service-image.yml
+    with:
+      service_name: notification
+      image_repository: notification
+      context: .
+      dockerfile: deploy/docker/notification.Dockerfile

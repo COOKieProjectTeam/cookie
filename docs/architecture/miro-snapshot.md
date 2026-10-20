@@ -62,3 +62,11 @@ These user decisions supersede missing or older board details:
 - The Miro-generated board overview could not be retrieved because the Miro AI
   credit quota was exhausted. Tables and raw board objects were still read
   directly, so this model does not depend on that overview.
+
+## Notification implementation update (2026-09-17)
+
+ADR 0013 implements Notification with PostgreSQL inbox/delivery, Redis deadline
+index, public settings/devices and SMTP/APNs/FCM. Future event snapshots were
+clarified, and effective goals now come only through Progress. The live board
+could not be read due to authentication; these accepted Git changes supersede
+its older target depiction and await visual mirroring.

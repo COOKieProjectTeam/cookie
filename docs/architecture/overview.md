@@ -32,7 +32,7 @@ flowchart LR
     Shopping <--> Bus
     HealthData <--> Bus
     Progress <--> Bus
-    Notification <--> Bus
+    Notification <-- Bus
     Media <--> Bus
     MealPlanner <--> Bus
 
@@ -64,8 +64,8 @@ flowchart LR
 ## Initial production slice
 
 Постоянный test stand пока отсутствует: pull request проверяется CI и
-disposable Testcontainers, а development stack запускается локально. В Yandex
-Cloud разворачивается только Identity:
+disposable Testcontainers, а development stack запускается локально. Первоначальный Identity-only slice приведён ниже для контекста; ADR 0013
+расширяет production-конфигурацию Notification и Redis:
 
 ```mermaid
 flowchart LR
@@ -80,9 +80,10 @@ flowchart LR
 ```
 
 API Gateway является временным TLS ingress до собственного домена и целевого
-Caddy edge. Он не проксирует component probes. Реализация Notification Service
-ещё отсутствует, поэтому development Notification sink и Mailpit в production
-не попадают.
+Caddy edge. Он не проксирует component probes. ADR 0013 добавляет
+`/v1/notifications/*`, отдельную Notification БД и эфемерный Redis. Development
+sink и Mailpit в production не попадают. Production credentials и рабочий
+мобильный email-link handler настраиваются до открытия регистрации.
 
 ## Health terminology
 

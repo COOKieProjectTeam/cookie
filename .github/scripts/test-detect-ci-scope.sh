@@ -267,3 +267,58 @@ unknown_deleted_head="$(commit_fixture delete-unknown)"
 expect_git_rejected "$unknown_head" "$unknown_deleted_head" pull_request contracts/openapi/unknown.yaml
 
 echo "CI scope mapping tests passed."
+
+classify backend/services/notification/application/src/main/kotlin/example.kt
+expect_flag notification true
+expect_flag notification_image true
+expect_flag notification_container true
+expect_flag identity false
+expect_flag public_client false
+classify backend/services/notification/src/test/kotlin/example.kt
+expect_flag notification true
+expect_flag notification_image false
+expect_flag identity false
+classify backend/services/notification/service.yaml
+expect_flag service_contracts true
+expect_flag compose true
+classify contracts/openapi/public/notification.yaml
+expect_flag notification true
+expect_flag notification_image true
+expect_flag public_client true
+expect_flag service_contracts true
+expect_flag identity false
+classify backend/platform/starter-postgres/src/main/kotlin/example.kt
+expect_flag notification true
+expect_flag notification_image true
+classify backend/platform/starter-testing/src/main/kotlin/example.kt
+expect_flag notification true
+expect_flag notification_image false
+classify backend/clients/identity/src/main/kotlin/JwksClient.kt
+expect_flag notification true
+expect_flag notification_image true
+expect_flag identity false
+classify deploy/docker/notification.Dockerfile
+expect_flag notification_image true
+expect_flag notification_container true
+expect_flag identity_image false
+classify backend/tools/service-template/create-service.py
+expect_flag identity true
+expect_flag notification true
+classify .github/workflows/publish-service-image.yml
+expect_flag identity_image true
+expect_flag notification_image true
+classify docs/adr/README.md
+expect_flag notification false
+expect_flag notification_image false
+expect_flag notification_container false
+
+classify backend/services/identity/src/main/kotlin/security/KeyMaterial.kt
+expect_flag identity true
+expect_flag notification true
+expect_flag identity_image true
+expect_flag notification_image false
+classify backend/services/identity/src/test/kotlin/IdentityTest.kt
+expect_flag notification false
+classify contracts/openapi/public/identity.yaml
+expect_flag notification true
+expect_flag notification_image false

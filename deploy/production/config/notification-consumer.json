@@ -1,0 +1,28 @@
+{
+  "durable_name": "notification-v1",
+  "name": "notification-v1",
+  "description": "Notification durable inbox ingestion; PostgreSQL owns processing and quarantine",
+  "deliver_policy": "all",
+  "ack_policy": "explicit",
+  "ack_wait": 30000000000,
+  "max_deliver": -1,
+  "filter_subjects": [
+    "cookie.events.account.deletion.requested.v1",
+    "cookie.events.notification.email.requested.v1",
+    "cookie.events.account.activated.v1",
+    "cookie.events.nutrition.meal.created.v1",
+    "cookie.events.nutrition.meal.updated.v1",
+    "cookie.events.nutrition.meal.deleted.v1",
+    "cookie.events.nutrition.water.changed.v1",
+    "cookie.events.health.weight.changed.v1",
+    "cookie.events.user.profile.updated.v1",
+    "cookie.events.progress.day.updated.v1"
+  ],
+  "replay_policy": "instant",
+  "max_ack_pending": 128,
+  "max_waiting": 16,
+  "max_batch": 32,
+  "max_expires": 5000000000,
+  "num_replicas": 1,
+  "mem_storage": false
+}

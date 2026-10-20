@@ -1,0 +1,2 @@
+# Only the disposable Linux deployment rehearsal uses this dependency.
+cryptography==46.0.3

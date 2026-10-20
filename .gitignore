@@ -22,6 +22,10 @@ bin/
 coverage.out
 .cache/
 
+# Python tooling
+__pycache__/
+*.pyc
+
 # Gradle / Kotlin
 .gradle/
 .kotlin/

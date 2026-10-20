@@ -62,7 +62,73 @@ services:
     volumes:
       - dev-keys:/keys
 
+  notification-db-provision:
+    image: postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    entrypoint: ["/bin/sh", "/config/provision.sh"]
+    environment:
+      COOKIE_DEV_DATABASE_PROVISIONING: "true"
+      PGHOST: postgres
+      PGUSER: identity
+      PGDATABASE: identity
+      PGPASSWORD: identity
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../production/scripts/postgres-provision-notification.sh:/config/provision.sh:ro
+
+  redis:
+    image: redis:8.2-alpine@sha256:30abb90e62f14b737010746def3ba99cc79fe19dcdb3d37b41f21fc62e7da19d
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  notification:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/notification.Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      COOKIE_NOTIFICATION_BIND_ADDRESS: 0.0.0.0
+      PORT: "8080"
+      COOKIE_NOTIFICATION_DATABASE_URL: jdbc:postgresql://postgres:5432/notification
+      COOKIE_NOTIFICATION_DATABASE_USER: notification_app
+      COOKIE_NOTIFICATION_DATABASE_PASSWORD: notification
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/notification
+      SPRING_FLYWAY_USER: notification_migrator
+      SPRING_FLYWAY_PASSWORD: notification_migrator
+      COOKIE_NATS_URL: nats://nats:4222
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      COOKIE_IDENTITY_JWKS_URL: http://identity:8080/v1/auth/jwks
+      COOKIE_NOTIFICATION_PRIVATE_KEY_PATH: /keys/notification-private.jwk
+      COOKIE_SMTP_HOST: mailpit
+      COOKIE_SMTP_PORT: "1025"
+      COOKIE_SMTP_FROM: noreply@cookie.local
+      COOKIE_SMTP_MESSAGE_ID_DOMAIN: cookie.local
+      COOKIE_SMTP_STARTTLS_REQUIRED: "false"
+      COOKIE_NOTIFICATION_VERIFICATION_LINK_BASE_URL: https://cookie.invalid/verify-email
+      COOKIE_APNS_ENABLED: "false"
+      COOKIE_FCM_ENABLED: "false"
+    depends_on:
+      notification-db-provision:
+        condition: service_completed_successfully
+      identity:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8082:8080"
+    volumes:
+      - dev-keys:/keys:ro
+
   notification-sink:
+    profiles: [legacy-sink]
     build:
       context: ../..
       dockerfile: deploy/docker/notification-sink.Dockerfile

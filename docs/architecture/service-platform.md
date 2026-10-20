@@ -108,7 +108,7 @@ database access layer и не разрешает читать таблицы д�
 Сейчас Messaging starter реализует общий event envelope, subject mapping и
 NATS client primitives. Первая outbox-реализация остаётся локальным adapter
 Identity; переносить её в platform до второго реального publisher нельзя.
-Аналогично inbox runtime появится вместе с первым реальным consumer, а станет
+Первый inbox runtime реализован локально в Notification и станет
 общим только после проверки повторным потребителем. Domain event payloads и
 handlers всегда принадлежат сервисам. Broker acknowledgement consumer выполняет
 только после commit consumer transaction.
@@ -148,8 +148,8 @@ probes:
 
 Gradle task `validateServiceDescriptors` уже проверяет разрешённые поля и
 согласованность descriptor с service/event models, active OpenAPI, runtime
-contract, dependencies и event ownership. Отдельная JSON Schema и generator
-service template ещё не реализованы; архитектурная модель в
+contract, dependencies и event ownership. Отдельная JSON Schema ещё не реализована. Минимальный scaffold находится
+в `backend/tools/service-template`; архитектурная модель в
 `model/services.yaml` остаётся источником целевых service boundaries.
 
 Для deployable service descriptor также содержит callee-owned `access.http`
@@ -179,8 +179,8 @@ implementation остаются rollout requirements:
 
 1. Принять отдельный ADR по framework и build stack (ADR 0008).
 2. Создать `build-logic` и минимальный набор platform starters.
-3. Дополнить semantic descriptor validator JSON Schema и generator/template
-   (ещё не реализованы).
+3. Использовать проверенный scaffold `backend/tools/service-template`; отдельная
+   JSON Schema остаётся будущим дополнением semantic validator.
 4. Реализовать `identity` как пилотный vertical slice: generated HTTP transport,
    PostgreSQL, transactional outbox, JetStream и runtime probes.
 5. Исправить platform API по результатам пилота.

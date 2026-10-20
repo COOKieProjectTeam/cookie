@@ -1,6 +1,6 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-09-04
+updated_at: 2026-09-17
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
   authority: docs/architecture/README.md
@@ -22,11 +22,11 @@ infrastructure:
   edge_gateway:
     product: caddy
     initial_production_ingress: yandex_api_gateway_default_https_domain
-    initial_production_ingress_scope: identity /v1/auth/* only; temporary until a custom domain and Caddy TLS edge exist
+    initial_production_ingress_scope: identity /v1/auth/* and notification /v1/notifications/*; temporary until a custom domain and Caddy TLS edge exist
   relational_database:
     product: postgresql
     rule: each stateful domain service owns an isolated database or schema
-    initial_production_topology: one non-HA instance on the production VM; Identity database only
+    initial_production_topology: one non-HA instance on the production VM; isolated Identity and Notification databases
     target_deployment_topology: TBD after the single-VM bootstrap
   event_bus:
     product: nats_jetstream
@@ -50,7 +50,7 @@ deployment:
   production:
     cloud: yandex_cloud
     topology: single_vm_non_ha
-    deployed_services: [identity]
+    deployed_services: [identity, notification]
     artifact_source: yandex_container_registry
     artifact_identity: immutable_digest
 
@@ -75,6 +75,7 @@ services:
       - recipe
       - shopping
       - health
+      - notification
       - media
       - meal_planner
 
@@ -223,12 +224,11 @@ services:
       - nutrition.water.changed
       - health.weight.changed
       - user.profile.updated
-      - user.goal.changed
-      - user.goal_override.changed
       - progress.day.updated
     redis:
       - keyspace: reminder_deadlines
         data: ephemeral queue/index of due reminder deadlines
+    synchronous_dependencies: [identity]
     external_dependencies: [apns, fcm, smtp]
 
   - id: media

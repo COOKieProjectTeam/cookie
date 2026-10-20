@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-04
+- Update: ADR 0013 expands this initial Identity-only slice with Notification and Redis. The original context below is historical.
 
 ## Context
 

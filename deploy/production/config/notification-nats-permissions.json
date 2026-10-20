@@ -1,0 +1,13 @@
+{
+  "publish": {
+    "allow": [
+      "$JS.API.CONSUMER.INFO.COOKIE_EVENTS.notification-v1",
+      "$JS.API.CONSUMER.MSG.NEXT.COOKIE_EVENTS.notification-v1",
+      "$JS.ACK.COOKIE_EVENTS.notification-v1.>",
+      "$JS.ACK.*.*.COOKIE_EVENTS.notification-v1.>"
+    ]
+  },
+  "subscribe": {
+    "allow": ["_INBOX.cookie.notification.>"]
+  }
+}

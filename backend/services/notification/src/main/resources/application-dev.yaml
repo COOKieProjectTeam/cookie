@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    url: ${COOKIE_NOTIFICATION_DATABASE_URL:jdbc:postgresql://localhost:5432/notification}
+    username: ${COOKIE_NOTIFICATION_DATABASE_USER:notification_app}
+    password: ${COOKIE_NOTIFICATION_DATABASE_PASSWORD:notification}
+  flyway:
+    url: ${SPRING_FLYWAY_URL:jdbc:postgresql://localhost:5432/notification}
+    user: ${SPRING_FLYWAY_USER:notification_migrator}
+    password: ${SPRING_FLYWAY_PASSWORD:notification_migrator}
+
+server:
+  address: ${COOKIE_NOTIFICATION_BIND_ADDRESS:127.0.0.1}
+  port: ${PORT:8082}
+
+cookie:
+  notification:
+    security:
+      jwks-url: ${COOKIE_IDENTITY_JWKS_URL:http://localhost:8080/v1/auth/jwks}
+    delivery:
+      smtp:
+        starttls-required: ${COOKIE_SMTP_STARTTLS_REQUIRED:false}

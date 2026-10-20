@@ -46,6 +46,9 @@ platform_postgres=false
 platform_messaging=false
 platform_testing=false
 identity=false
+notification=false
+notification_image=false
+notification_container=false
 notification_sink=false
 service_contracts=false
 planned_openapi=false
@@ -65,6 +68,7 @@ enable_all_gradle_checks() {
   platform_messaging=true
   platform_testing=true
   identity=true
+  notification=true
   notification_sink=true
   service_contracts=true
   planned_openapi=true
@@ -78,6 +82,7 @@ enable_all_checks() {
   compose=true
   terraform=true
   identity_container=true
+  notification_container=true
 }
 
 if [[ "$explicit_paths" == "true" ]]; then
@@ -114,6 +119,7 @@ while IFS= read -r -d '' path; do
   case "$path" in
     .github/workflows/publish-service-image.yml)
       identity_image=true
+      notification_image=true
       ;;
     apps/api/* | go.work | go.work.sum)
       go_api=true
@@ -143,15 +149,19 @@ while IFS= read -r -d '' path; do
     build.gradle.kts | settings.gradle.kts | gradle.properties | gradlew | gradlew.bat | gradle/*)
       enable_all_gradle_checks
       identity_image=true
+      notification_image=true
       ;;
     build-logic/build.gradle.kts | build-logic/settings.gradle.kts)
       enable_all_gradle_checks
       identity_image=true
+      notification_image=true
       ;;
     build-logic/*/CookieSpringServicePlugin.kt)
       identity=true
+      notification=true
       notification_sink=true
       identity_image=true
+      notification_image=true
       ;;
     build-logic/*/CookieKotlinLibraryPlugin.kt)
       platform=true
@@ -160,8 +170,10 @@ while IFS= read -r -d '' path; do
       platform_messaging=true
       platform_testing=true
       identity=true
+      notification=true
       notification_sink=true
       identity_image=true
+      notification_image=true
       ;;
     build-logic/*/CookieKotlinMultiplatformPlugin.kt)
       mobile=true
@@ -170,6 +182,7 @@ while IFS= read -r -d '' path; do
       # Unknown convention-plugin changes are treated as common Gradle changes.
       enable_all_gradle_checks
       identity_image=true
+      notification_image=true
       ;;
   esac
 
@@ -184,13 +197,17 @@ while IFS= read -r -d '' path; do
           platform=true
           platform_web=true
           identity=true
+          notification=true
           identity_image=true
+          notification_image=true
           ;;
         *)
           platform=true
           platform_web=true
           identity=true
+          notification=true
           identity_image=true
+          notification_image=true
           ;;
       esac
       ;;
@@ -204,13 +221,17 @@ while IFS= read -r -d '' path; do
           platform=true
           platform_postgres=true
           identity=true
+          notification=true
           identity_image=true
+          notification_image=true
           ;;
         *)
           platform=true
           platform_postgres=true
           identity=true
+          notification=true
           identity_image=true
+          notification_image=true
           ;;
       esac
       ;;
@@ -224,15 +245,19 @@ while IFS= read -r -d '' path; do
           platform=true
           platform_messaging=true
           identity=true
+          notification=true
           notification_sink=true
           identity_image=true
+          notification_image=true
           ;;
         *)
           platform=true
           platform_messaging=true
           identity=true
+          notification=true
           notification_sink=true
           identity_image=true
+          notification_image=true
           ;;
       esac
       ;;
@@ -249,6 +274,7 @@ while IFS= read -r -d '' path; do
           platform_web=true
           platform_messaging=true
           identity=true
+          notification=true
           notification_sink=true
           ;;
         *)
@@ -257,6 +283,7 @@ while IFS= read -r -d '' path; do
           platform_web=true
           platform_messaging=true
           identity=true
+          notification=true
           notification_sink=true
           ;;
       esac
@@ -275,12 +302,26 @@ while IFS= read -r -d '' path; do
       case "$path" in
         */src/main/* | */build.gradle.kts)
           identity_image=true
+          notification=true # Real Identity-to-Notification contract flow.
           ;;
+      esac
+      ;;
+    backend/services/notification/service.yaml)
+      service_contracts=true
+      compose=true
+      ;;
+    backend/services/notification/*)
+      notification=true
+      case "$path" in
+        */src/main/* | */build.gradle.kts) notification_image=true ;;
       esac
       ;;
     backend/services/*/*)
       # A new service must declare its own path-to-test mapping before it can merge.
       unmapped_component=true
+      ;;
+    backend/tools/service-template/*)
+      enable_all_gradle_checks
       ;;
     backend/tools/notification-sink/*)
       notification_sink=true
@@ -294,14 +335,23 @@ while IFS= read -r -d '' path; do
     contracts/openapi/public/identity.yaml)
       service_contracts=true
       identity=true
+      notification=true
       public_client=true
       identity_image=true
+      ;;
+    contracts/openapi/public/notification.yaml)
+      service_contracts=true
+      notification=true
+      public_client=true
+      notification_image=true
       ;;
     contracts/openapi/public/*)
       service_contracts=true
       public_client=true
       ;;
     contracts/openapi/runtime.yaml)
+      notification=true
+      notification_image=true
       service_contracts=true
       identity=true
       identity_image=true
@@ -310,6 +360,8 @@ while IFS= read -r -d '' path; do
       planned_openapi=true
       ;;
     contracts/openapi/generation.yaml)
+      notification=true
+      notification_image=true
       service_contracts=true
       identity=true
       public_client=true
@@ -338,11 +390,18 @@ while IFS= read -r -d '' path; do
       public_client=true
       ;;
     docs/architecture/model/events.yaml)
+      notification=true
       service_contracts=true
       ;;
   esac
 
   case "$path" in
+    backend/clients/identity/*)
+      notification=true
+      case "$path" in
+        */src/main/* | */build.gradle.kts) notification_image=true ;;
+      esac
+      ;;
     backend/clients/*)
       unmapped_component=true
       ;;
@@ -355,8 +414,15 @@ while IFS= read -r -d '' path; do
   esac
 
   case "$path" in
-    .dockerignore | deploy/docker/identity.Dockerfile)
+    .dockerignore)
       identity_image=true
+      notification_image=true
+      ;;
+    deploy/docker/identity.Dockerfile)
+      identity_image=true
+      ;;
+    deploy/docker/notification.Dockerfile)
+      notification_image=true
       ;;
   esac
 
@@ -389,6 +455,10 @@ if [[ "$identity_image" == "true" ]]; then
   identity_container=true
 fi
 
+if [[ "$notification_image" == "true" ]]; then
+  notification_container=true
+fi
+
 emit_output() {
   local output_name="$1"
   local output_value="$2"
@@ -406,6 +476,9 @@ emit_output platform_postgres "$platform_postgres"
 emit_output platform_messaging "$platform_messaging"
 emit_output platform_testing "$platform_testing"
 emit_output identity "$identity"
+emit_output notification "$notification"
+emit_output notification_image "$notification_image"
+emit_output notification_container "$notification_container"
 emit_output notification_sink "$notification_sink"
 emit_output service_contracts "$service_contracts"
 emit_output planned_openapi "$planned_openapi"
@@ -427,6 +500,9 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     printf '| %s | %s |\n' go_api "$go_api"
     printf '| %s | %s |\n' platform "$platform"
     printf '| %s | %s |\n' identity "$identity"
+    printf '| %s | %s |\n' notification "$notification"
+    printf '| %s | %s |\n' notification_image "$notification_image"
+    printf '| %s | %s |\n' notification_container "$notification_container"
     printf '| %s | %s |\n' notification_sink "$notification_sink"
     printf '| %s | %s |\n' service_contracts "$service_contracts"
     printf '| %s | %s |\n' planned_openapi "$planned_openapi"

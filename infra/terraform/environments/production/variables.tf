@@ -161,26 +161,26 @@ variable "vm_platform_id" {
 }
 
 variable "vm_cores" {
-  description = "VM vCPU count. The MVP default is the smallest practical size for the JVM service, PostgreSQL, and NATS."
-  type        = number
-  default     = 2
-  nullable    = false
-
-  validation {
-    condition     = var.vm_cores >= 2 && floor(var.vm_cores) == var.vm_cores
-    error_message = "vm_cores must be an integer of at least 2."
-  }
-}
-
-variable "vm_memory_gib" {
-  description = "VM RAM in GiB. Four GiB is the initial non-HA production floor."
+  description = "VM vCPU count for two JVM services, PostgreSQL, Redis, and NATS."
   type        = number
   default     = 4
   nullable    = false
 
   validation {
-    condition     = var.vm_memory_gib >= 4
-    error_message = "vm_memory_gib must be at least 4 GiB."
+    condition     = var.vm_cores >= 4 && floor(var.vm_cores) == var.vm_cores
+    error_message = "vm_cores must be an integer of at least 4."
+  }
+}
+
+variable "vm_memory_gib" {
+  description = "VM RAM in GiB. Eight GiB is the two-service non-HA production floor."
+  type        = number
+  default     = 8
+  nullable    = false
+
+  validation {
+    condition     = var.vm_memory_gib >= 8
+    error_message = "vm_memory_gib must be at least 8 GiB."
   }
 }
 

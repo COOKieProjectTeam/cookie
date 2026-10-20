@@ -1,0 +1,11 @@
+# The operator entry point processes only the requested quarantine record.
+spring:
+  main:
+    web-application-type: none
+
+cookie:
+  notification:
+    consumer-enabled: false
+    scheduler-enabled: false
+    delivery:
+      enabled: false

@@ -1,0 +1,1389 @@
+{
+  "serviceId": "notification",
+  "facts": [
+    {
+      "id": "notification-api",
+      "label": "Публичный API",
+      "value": "4 операции /v1/notifications",
+      "description": "registerDevice, unregisterDevice, getNotificationSettings, updateNotificationSettings; accountId не принимается от клиента.",
+      "source": {
+        "path": "contracts/openapi/public/notification.yaml",
+        "line": 15
+      }
+    },
+    {
+      "id": "notification-gateway",
+      "label": "Production ingress",
+      "value": "Yandex API Gateway → private TCP/8082",
+      "description": "Маршрут /v1/notifications/{path+}; сохраняет headers и query, удаляет входящий X-Forwarded-For; connect timeout 2 s, read timeout 12 s. Caddy остаётся целевой архитектурой.",
+      "source": {
+        "path": "infra/terraform/environments/production/main.tf",
+        "line": 310
+      }
+    },
+    {
+      "id": "notification-body",
+      "label": "HTTP body",
+      "value": "16 KiB",
+      "description": "Общий фильтр ограничивает тело, включая запрос без Content-Length, и возвращает 413. JSON-валидатор дополнительно отвергает null, неизвестные поля и неверные scalar types.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/config/NotificationConfiguration.kt",
+        "line": 33
+      }
+    },
+    {
+      "id": "notification-jwt-header",
+      "label": "Bearer и владелец",
+      "value": "ровно 1 Authorization; token ≤8192 символов",
+      "description": "Контроллер требует Bearer без whitespace внутри токена и берёт userId только из результата проверки JWT sub.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+        "line": 79
+      }
+    },
+    {
+      "id": "notification-jwt-profile",
+      "label": "Профиль access JWT",
+      "value": "ES256 / at+jwt / P-256",
+      "description": "Проверяются подпись, точный issuer и единственный audience, iat/exp/nbf без clock skew; lifetime ≤24 h; sub/sid/jti — UUIDv7. Token-controlled jwk/jku/x5u и crit запрещены.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+        "line": 44
+      }
+    },
+    {
+      "id": "notification-jwks-cache",
+      "label": "JWKS cache и unknown kid",
+      "value": "TTL 300 s; refresh 240 s; cooldown 30 s",
+      "description": "Неизвестный kid или истёкший cache вызывает refresh, ограниченный общим cooldown. Старый cache используется только до expiry; неизвестный kid после успешного refresh даёт 401, отсутствие пригодных ключей — 503. Cache/refresh/cooldown зафиксированы в коде, env overrides для этих интервалов нет.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+        "line": 80
+      }
+    },
+    {
+      "id": "notification-jwks-http",
+      "label": "JWKS HTTP",
+      "value": "полный обмен ≤3 s",
+      "description": "Источник задан COOKIE_IDENTITY_JWKS_URL, а issuer/audience — COOKIE_IDENTITY_ISSUER / COOKIE_IDENTITY_AUDIENCE. HTTP разрешён только dev/test; production требует HTTPS.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+        "line": 24
+      }
+    },
+    {
+      "id": "notification-http-client",
+      "label": "HTTP client провайдеров и JWKS",
+      "value": "connect 2 s; без redirects; HTTP/2",
+      "description": "Общий HttpClient. Таймауты transport в коде фиксированы, отдельных env overrides для них нет.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/config/SecurityConfiguration.kt",
+        "line": 33
+      }
+    },
+    {
+      "id": "notification-http-body",
+      "label": "Ответы HTTP",
+      "value": "≤65536 bytes; deadline включает body",
+      "description": "BoundedHttpExchange ограничивает размер ответа и весь обмен, включая зависшее тело; при timeout отменяет future.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/BoundedHttpExchange.kt",
+        "line": 15
+      }
+    },
+    {
+      "id": "notification-devices",
+      "label": "Устройства",
+      "value": "(user_id,device_id) + уникальный активный (platform,token)",
+      "description": "deviceId — непустой ≤255; token — непустой ≤4096 без control chars; IOS/ANDROID. Повторная регистрация обновляет существующую запись, новый владелец platform/token отключает старую привязку.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+        "line": 46
+      }
+    },
+    {
+      "id": "notification-settings-defaults",
+      "label": "Настройки по умолчанию",
+      "value": "food 240 min; water 2 h; weigh 08:00; quiet 23:00–08:00",
+      "description": "Все типы включены, locale=ru. timezone отсутствует; scheduled push не запускается до явного PATCH timezone.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/NotificationModels.kt",
+        "line": 14
+      }
+    },
+    {
+      "id": "notification-settings-validation",
+      "label": "PATCH",
+      "value": "IANA timezone; locale ru/en; food 1..10080 min",
+      "description": "Поля сливаются частично; timezone нельзя очистить null. Пустой PATCH/раздел, неизвестные поля, null и coercion отвергаются. Время — HH:mm.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/NotificationModels.kt",
+        "line": 28
+      }
+    },
+    {
+      "id": "notification-settings-activation",
+      "label": "Начало расписания",
+      "value": "первая timezone задаёт baseline",
+      "description": "Первое timezone и повторное включение food/water начинают соответствующий inactivity baseline с текущего времени БД. Смена уже заданной timezone не сбрасывает elapsed inactivity.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+        "line": 28
+      }
+    },
+    {
+      "id": "notification-locale",
+      "label": "Язык push",
+      "value": "актуальные настройки; ru fallback",
+      "description": "Будущий user.profile.updated меняет default locale только пока locale_overridden=false. Явный PATCH locale сохраняет приоритет.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+        "line": 72
+      }
+    },
+    {
+      "id": "notification-database",
+      "label": "PostgreSQL timeouts",
+      "value": "pool 12 по умолчанию; acquire 2 s; validation 1 s",
+      "description": "COOKIE_NOTIFICATION_DATABASE_POOL_SIZE переопределяет pool; statement_timeout=5 s, lock_timeout=2 s, socketTimeout=10 s. URL/user/password — COOKIE_NOTIFICATION_DATABASE_*; configtree /run/secrets поддержан.",
+      "source": {
+        "path": "backend/services/notification/src/main/resources/application.yaml",
+        "line": 2
+      }
+    },
+    {
+      "id": "notification-database-production",
+      "label": "Production pool",
+      "value": "8 connections",
+      "description": "Compose задаёт COOKIE_NOTIFICATION_DATABASE_POOL_SIZE=8, отдельные notification_app / notification_migrator и Flyway connection. Это переопределение application default 12.",
+      "source": {
+        "path": "deploy/production/compose.yaml",
+        "line": 294
+      }
+    },
+    {
+      "id": "notification-after-commit",
+      "label": "Изменение deadline",
+      "value": "PostgreSQL transaction → afterCommit Redis hint",
+      "description": "dirty() увеличивает generation и ставит due_at=min(old,new). Redis вызывается только после commit; ошибка индекса не превращает успешную мутацию в HTTP 500.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+        "line": 71
+      }
+    },
+    {
+      "id": "notification-redis-key",
+      "label": "Redis index",
+      "value": "cookie:notification:reminder_deadlines",
+      "description": "ZSET member=userId:generation, score=epoch milliseconds. Это одноразовые подсказки: scheduler проверяет due_at и generation в PostgreSQL.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/RedisDeadlineIndex.kt",
+        "line": 23
+      }
+    },
+    {
+      "id": "notification-redis-timeouts",
+      "label": "Redis connection",
+      "value": "connect 1 s; command 1 s",
+      "description": "SPRING_DATA_REDIS_HOST/PORT/USERNAME/PASSWORD; host default localhost, port 6379. Потеря Redis не удаляет расписание.",
+      "source": {
+        "path": "backend/services/notification/src/main/resources/application.yaml",
+        "line": 20
+      }
+    },
+    {
+      "id": "notification-scheduler-poll",
+      "label": "Планировщик",
+      "value": "tick 1000 ms; batch ≤100",
+      "description": "cookie.notification.poll-millis переопределяет tick; COOKIE_NOTIFICATION_SCHEDULER_ENABLED отключает scheduler. PostgreSQL overdue sweep каждые 30 s действует даже при исправном Redis.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
+        "line": 36
+      }
+    },
+    {
+      "id": "notification-redis-rebuild",
+      "label": "Восстановление индекса",
+      "value": "60 s; до 4 страниц ×500 за проход",
+      "description": "cookie.notification.redis-rebuild-millis переопределяет период. Keyset cursor проходит все deadlines, а после первого успешного чтения вслед за ошибкой начинается немедленный rebuild с начала.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/RedisDeadlineIndex.kt",
+        "line": 27
+      }
+    },
+    {
+      "id": "notification-scheduler-transaction",
+      "label": "Атомарный выпуск reminder",
+      "value": "per-user advisory lock + unique occurrence",
+      "description": "В одной PostgreSQL transaction сохраняются occurrence, задания на активные устройства, время резервирования воды и следующий deadline. Unique(user_id,kind,cycle_key) предотвращает дубли; полностью неотправленный FOOD можно возобновить с прежними ID. Providers вызываются отдельно от scheduler/ingestion transaction.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
+        "line": 49
+      }
+    },
+    {
+      "id": "notification-food",
+      "label": "Food policy",
+      "value": "один раз после 240 min в цикле последнего meal",
+      "description": "Интервал настраивается. Цикл включает activation baseline и mealId. Исправление времени меняет deadline; полностью неотправленный CANCELLED/EXPIRED цикл возобновляется с прежними occurrence/job ID. last_submitted_at сохраняет факт отправки после retention jobs. Без еды используется initial cycle. TTL — 1 day от выпуска.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/ReminderPlanner.kt",
+        "line": 75
+      }
+    },
+    {
+      "id": "notification-water",
+      "label": "Water policy",
+      "value": "2 h с последней записи или reminder",
+      "description": "Anchor учитывает activation, последнюю воду, резервирование и actual submission. Задержанная отправка сдвигает следующий distinct occurrence минимум на2 h; другие устройства того же occurrence разрешены. Quiet/outage сводят пропущенные интервалы в один reminder. Matching Progress consumed≥positive target подавляет воду; неизвестная цель — нет. TTL — 2 h от выпуска.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/ReminderPlanner.kt",
+        "line": 83
+      }
+    },
+    {
+      "id": "notification-weigh",
+      "label": "Weigh policy",
+      "value": "один раз за local date, default 08:00",
+      "description": "Запись измерения в текущую local date подавляет reminder; учитываются только extant измерения не из будущего. В первый день время раньше schedulingStartedAt не догоняется; предыдущие даты не восстанавливаются.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/ReminderPlanner.kt",
+        "line": 93
+      }
+    },
+    {
+      "id": "notification-calories",
+      "label": "Calories policies",
+      "value": "выше target + ниже 80% с 20:00",
+      "description": "Два независимых occurrence за local date. Нужны consumed, positive target и unlimitedCalories=false; null не означает zero. Daily delivery истекает на следующей местной полуночи.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/ReminderPlanner.kt",
+        "line": 101
+      }
+    },
+    {
+      "id": "notification-progress-authority",
+      "label": "Resolved goals",
+      "value": "только Progress snapshot той же timezone и даты",
+      "description": "Timezone принадлежит настройкам Notification. Несовпадение/отсутствие snapshot подавляет calorie warnings, но не generic water. Same-day snapshot не имеет произвольного freshness timeout; direct User goal subscriptions отсутствуют.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/ReminderPlanner.kt",
+        "line": 162
+      }
+    },
+    {
+      "id": "notification-quiet-dst",
+      "label": "Quiet hours и DST",
+      "value": "[start,end); start=end отключает quiet",
+      "description": "Food/water используют elapsed UTC durations, quiet/daily — IANA zone. Gap разрешается в первый валидный instant, overlap — ранний offset; quiet end во втором повторном часу выбирает следующую фактическую границу. Daily reminders не переносятся за local date.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/ReminderPolicy.kt",
+        "line": 10
+      }
+    },
+    {
+      "id": "notification-future-records",
+      "label": "Будущие timestamps и outage",
+      "value": "пересчёт при наступлении record time",
+      "description": "Future meal/water/weight пока не влияют на текущую eligibility, но добавляют wakeup. Пропуски не создают пачку исторических reminder occurrences; daily dedup key — date без timezone.",
+      "source": {
+        "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/ReminderPlanner.kt",
+        "line": 48
+      }
+    },
+    {
+      "id": "notification-nats-connection",
+      "label": "NATS transport",
+      "value": "connect 2 s; reconnect 1 s; unlimited reconnect",
+      "description": "Production требует tls://, workload credentials и JKS truststore с hostname verification. COOKIE_NATS_URL/CREDENTIALS_PATH/TRUSTSTORE_PATH/TRUSTSTORE_PASSWORD; приложение bind-ится к заранее созданному consumer.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
+        "line": 66
+      }
+    },
+    {
+      "id": "notification-nats-production",
+      "label": "Production durable",
+      "value": "notification-v1; ACK wait 30 s",
+      "description": "COOKIE_EVENTS; explicit ACK, deliver all, max_deliver=-1, max_ack_pending=128, max_waiting=16, max_batch=32, max_expires=5 s; 10 точных subject filters, replica=1.",
+      "source": {
+        "path": "deploy/production/config/notification-consumer.json",
+        "line": 2
+      }
+    },
+    {
+      "id": "notification-nats-local",
+      "label": "Dev/test durable",
+      "value": "ACK wait 60 s; max_ack_pending=100",
+      "description": "Локальный bootstrap создаёт/обновляет stream и consumer. Эти значения отличаются от production provisioning.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
+        "line": 47
+      }
+    },
+    {
+      "id": "notification-nats-pull",
+      "label": "Pull consumer",
+      "value": "до 20 messages / fetch 1 s; poll 100 ms",
+      "description": "cookie.notification.consumer-poll-millis переопределяет задержку между poll. COOKIE_NOTIFICATION_CONSUMER_ENABLED включает/выключает consumption. ACK только после завершения handler transaction.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
+        "line": 29
+      }
+    },
+    {
+      "id": "notification-nats-retry",
+      "label": "Ошибка ingestion",
+      "value": "NAK с задержкой 2^min(deliveredCount,8) s",
+      "description": "Точный верхний предел этой формулы — 256 s (последующий coerceAtMost(300) его не увеличивает). Все ошибки кроме InvalidNotificationEvent повторяются без лимита; broker delivery count не превращает outage в poison.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
+        "line": 38
+      }
+    },
+    {
+      "id": "notification-stream-retention",
+      "label": "JetStream limits",
+      "value": "7 days / 1 GiB / 1M messages / message 1 MiB",
+      "description": "File storage, discard old, single replica; duplicate window 10 min. Original quarantine payload может исчезнуть раньше 7 дней при лимите размера/количества.",
+      "source": {
+        "path": "deploy/production/config/cookie-events.json",
+        "line": 7
+      }
+    },
+    {
+      "id": "notification-projections",
+      "label": "Inbox и projections",
+      "value": "event_id dedup; aggregate_version strictly increasing",
+      "description": "Проверяются v1, matching subject, expected producer; snapshots требуют положительный целочисленный 64-bit aggregate_version. Старые/равные версии игнорируются; хранится allowlist, не блюда и не valueKg.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+        "line": 52
+      }
+    },
+    {
+      "id": "notification-upstream-status",
+      "label": "Реализованные producers",
+      "value": "Identity — реализован; User/Nutrition/Health/Progress — fixtures",
+      "description": "Будущие profile/meal/water/weight/progress события покрыты synthetic contract fixtures. Их production producers и замены producers сейчас не развёрнуты.",
+      "source": {
+        "path": "backend/services/notification/README.md",
+        "line": 24
+      }
+    },
+    {
+      "id": "notification-email-crypto",
+      "label": "Verification email JWE",
+      "value": "RSA-OAEP-256 + A256GCM",
+      "description": "Расшифровка только в worker memory; matching registrationAttemptId и expiresAt, contentType application/json, без compression/crit/token-controlled key URLs. Compact ≤32768 chars, plaintext ≤16384 bytes; locale ru/en с ru fallback.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/VerificationPayloadDecryptor.kt",
+        "line": 43
+      }
+    },
+    {
+      "id": "notification-email-keys",
+      "label": "JWE key ring",
+      "value": "до 16 active/retiring key paths",
+      "description": "COOKIE_NOTIFICATION_PRIVATE_KEY_PATH и COOKIE_NOTIFICATION_RETIRING_PRIVATE_KEY_PATHS; production проверяет mounts и key material при старте. Отсутствующий kid/key временно ставит канал на паузу, неправильный payload завершает FAILED.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/config/SecurityConfiguration.kt",
+        "line": 52
+      }
+    },
+    {
+      "id": "notification-worker",
+      "label": "Delivery worker",
+      "value": "8 workers; poll 500 ms; heartbeat 15 s",
+      "description": "COOKIE_NOTIFICATION_DELIVERY_ENABLED управляет worker; maintenance каждые 30 s. Поллинг берёт не больше свободных permits.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
+        "line": 54
+      }
+    },
+    {
+      "id": "notification-lease",
+      "label": "Delivery leases",
+      "value": "120 s; FOR UPDATE SKIP LOCKED",
+      "description": "Каждый claim получает новый lease_token и увеличивает attempt_count; heartbeat/finish/retry fenced по token и живой lease. beginSmtpSubmission фиксируется отдельной REQUIRES_NEW transaction; её timeout 5 s.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
+        "line": 57
+      }
+    },
+    {
+      "id": "notification-delivery-states",
+      "label": "Delivery state",
+      "value": "PENDING → CLAIMED → terminal / retry",
+      "description": "Terminal: ACCEPTED, FAILED, UNKNOWN, CANCELLED, EXPIRED. EMAIL дополнительно проходит SMTP_SUBMITTING. ACCEPTED подтверждает принятие provider, не показ/прочтение. Terminal finish удаляет encrypted_payload.",
+      "source": {
+        "path": "backend/services/notification/src/main/resources/db/migration/V002__delivery_queue.sql",
+        "line": 15
+      }
+    },
+    {
+      "id": "notification-smtp-timeouts",
+      "label": "SMTP phases",
+      "value": "connect 5 s; read/write 30 s; phase deadlines 60 s",
+      "description": "Отдельные 60 s deadlines подготовки connect/auth и sendMessage закрывают underlying socket. Production требует STARTTLS и hostname verification; настройки host/port/user/password/from/domain задаются COOKIE_SMTP_*.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/SmtpVerificationSender.kt",
+        "line": 35
+      }
+    },
+    {
+      "id": "notification-smtp-retry",
+      "label": "SMTP certainty",
+      "value": "4xx retry; 5xx FAILED; ambiguous UNKNOWN",
+      "description": "Подготовка до DATA может повторяться; перед DATA записывается SMTP_SUBMITTING. Потеря ответа commit не запускает sendMessage. Generic exception после начала submission не доказывает отказ и становится terminal UNKNOWN.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
+        "line": 22
+      }
+    },
+    {
+      "id": "notification-expired-lease",
+      "label": "Истёкшая lease",
+      "value": "CLAIMED → PENDING; SMTP_SUBMITTING → UNKNOWN",
+      "description": "Maintenance обрабатывает до500 leases, затем до500 просроченных PENDING и до500 старых terminal jobs. UNKNOWN никогда автоматически не сбрасывается; ciphertext удаляется.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
+        "line": 185
+      }
+    },
+    {
+      "id": "notification-retry",
+      "label": "Provider retry",
+      "value": "10 counted attempts; jitter 10..300 s + provider minimum",
+      "description": "Retry uses exponential cap300 s и jitter, минимум10 s. Provider minimum может быть больше300 s; next attempt после expiry завершает EXPIRED. Unavailable канал ставится на60 s pause; эта ветка отдельно от лимита Retry attempts.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
+        "line": 137
+      }
+    },
+    {
+      "id": "notification-apns",
+      "label": "APNs",
+      "value": "HTTP ≤15 s; provider JWT cache 50 min",
+      "description": "IOS; alert payload≤4096 bytes, apns-id=deliveryId, collapse-id=occurrenceId, expiration=job expiry. Retry-After: seconds или HTTP-date, минимум60 s для429,15 min для5xx, максимум24 h. 403/TooManyProviderTokenUpdates — unavailable. Invalid-device response отключает только отправленную revision.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/PushProviders.kt",
+        "line": 45
+      }
+    },
+    {
+      "id": "notification-fcm",
+      "label": "FCM",
+      "value": "send ≤15 s; OAuth ≤10 s; refresh lock ≤5 s",
+      "description": "ANDROID; FCM v1, normal priority, notification tag=occurrenceId, Android TTL=min(remaining lifetime,3600 s). 401/403 unavailable, UNREGISTERED disables same token revision;429 Retry-After≥60 s;5xx Retry-After≥10 s, upper bound24 h.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/PushProviders.kt",
+        "line": 125
+      }
+    },
+    {
+      "id": "notification-google-auth",
+      "label": "FCM OAuth transport",
+      "value": "POST fixed Google token endpoint; ≤10 s",
+      "description": "Official ServiceAccountCredentials signing, firebase.messaging scope; default library retries disabled. Request body≤65536 bytes; network uses bounded shared transport.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/BoundedGoogleAuthTransport.kt",
+        "line": 14
+      }
+    },
+    {
+      "id": "notification-channel-config",
+      "label": "Provider enablement",
+      "value": "APNs=false; FCM=false по умолчанию",
+      "description": "COOKIE_APNS_ENABLED / COOKIE_FCM_ENABLED и отдельные key/credentials mounts. Production SMTP port default587 в Compose; application local default1025. Provider HTTP endpoints фиксированы production validation.",
+      "source": {
+        "path": "backend/services/notification/src/main/resources/application.yaml",
+        "line": 64
+      }
+    },
+    {
+      "id": "notification-preflight",
+      "label": "Последняя проверка push",
+      "value": "current device + settings + projected eligibility",
+      "description": "Перед provider проверяются lease/expiry, ownership, enabled, deletion, timezone, locale, quiet и актуальные domain snapshots. Устаревший reminder → CANCELLED; quiet → retry до quiet end. Изменение после preflight не позволяет отозвать уже отправленный запрос.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
+        "line": 99
+      }
+    },
+    {
+      "id": "notification-quarantine",
+      "label": "Quarantine",
+      "value": "только metadata; SHA-256 dedup",
+      "description": "InvalidNotificationEvent сохраняет hash,eventId,subject,reason,stream sequence без payload; ACK только после успешной записи. Недоступная БД оставляет сообщение без ACK.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
+        "line": 43
+      }
+    },
+    {
+      "id": "notification-replay",
+      "label": "Operator replay",
+      "value": "profile notification-replay + --notification-replay-id",
+      "description": "Отдельный cookie.notification.operator-nats-credentials-path; runtime ACL запрещает stream message GET. Replay проверяет subject/hash оригинала, вызывает тот же handler без republish. Нет HTTP endpoint и нет reset UNKNOWN; отсутствие original — явная ошибка. Ошибки JDBC/broker выводятся безопасным сообщением без исходных данных; контекст CLI закрывается при любом исходе. Lookup использует только STREAM.MSG.GET с timeout2 s, без STREAM.INFO discovery.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/OperatorQuarantineReplay.kt",
+        "line": 21
+      }
+    },
+    {
+      "id": "notification-retention",
+      "label": "Retention",
+      "value": "inbox/quarantine/non-FOOD occurrences:30 days",
+      "description": "Очистка каждую60 s, до500 строк каждой таблицы; cookie.notification.retention-poll-millis меняет период. FOOD cycle evidence и account tombstones не истекают автоматически. Terminal delivery jobs удаляются спустя30 days.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationRetention.kt",
+        "line": 8
+      }
+    },
+    {
+      "id": "notification-deletion",
+      "label": "Удаление аккаунта",
+      "value": "permanent tombstone + удаление owned state",
+      "description": "account.deletion.requested сериализуется с account operations; удаляются devices/settings/projections/deadlines/occurrences/user delivery jobs и cascade attempts. Поздние события и действующий JWT не могут восстановить state после tombstone.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+        "line": 83
+      }
+    },
+    {
+      "id": "notification-readiness",
+      "label": "Readiness",
+      "value": "PostgreSQL + usable JWKS + JWE keys",
+      "description": "/readyz 200/503 проверяет БД isValid(1), свежие signing keys и decryption ring. Redis/NATS/provider outage не входит в readiness; /healthz отвечает200.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/SystemController.kt",
+        "line": 17
+      }
+    },
+    {
+      "id": "notification-metrics",
+      "label": "Диагностика backlog",
+      "value": "snapshot каждые10 s",
+      "description": "Scheduler overdue/oldest age, NATS pending/unacknowledged/healthy, delivery pending/age/unknown/failed/metrics.healthy. При ошибке health=0 и последнее backlog значение становится устаревшим, а не нулевым.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/config/NotificationRuntimeMetrics.kt",
+        "line": 29
+      }
+    },
+    {
+      "id": "notification-http-errors",
+      "label": "Ошибки API",
+      "value": "400 /401 /403 /404 /413 /503",
+      "description": "Invalid input400; invalid JWT401; local deleted account403; missing own device404; body limit413; DB/transaction/unusable signing keys503 с Retry-After:1. Ошибки и successful settings/device responses имеют no-store.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/ApiExceptionHandler.kt",
+        "line": 26
+      }
+    },
+    {
+      "id": "notification-key-reload",
+      "label": "Перечитывание JWE key ring",
+      "value": "проверка файлов приблизительно каждые 5 s при использовании",
+      "description": "decrypt перечитывает active/retiring paths, если последняя загрузка старше 5 s; readiness также проверяет ring через этот интервал. Отсутствие ключа не разрешает расшифровку другим способом.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/VerificationPayloadDecryptor.kt",
+        "line": 43
+      }
+    },
+    {
+      "id": "notification-push-submission-fence",
+      "label": "Граница отправки push",
+      "value": "user + token locks; transaction ≤45 s",
+      "description": "Отдельная transaction удерживает общие с регистрацией/удалением advisory locks до provider outcome. После token lock владелец и lease перечитываются; eligibility присоединяется к этой transaction. Lock timeout2 s, statement timeout5 s. Provider вызов никогда не входит в ingestion transaction. Push сохраняет at-least-once semantics при rollback.",
+      "source": {
+        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
+        "line": 86
+      }
+    }
+  ],
+  "flows": [
+    {
+      "id": "notification-register-device",
+      "title": "Регистрация и перенос push-токена",
+      "operationIds": [
+        "registerDevice"
+      ],
+      "description": "POST /v1/notifications/devices. Новый logical device возвращает201, обновление существующего200. Token никогда не задаёт account ownership.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "POST device",
+          "detail": "HTTPS /v1/notifications; access JWT в Authorization: Bearer. Владелец не передаётся в JSON.",
+          "source": {
+            "path": "contracts/openapi/public/notification.yaml",
+            "line": 20
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "Proxy в Notification",
+          "detail": "Production gateway сохраняет Authorization и request headers; private TCP/8082, connect2 s/read12 s.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 328
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Проверить Identity JWT",
+          "detail": "Ровно один Bearer; ES256 at+jwt, issuer/audience/expiry и UUIDv7 sub/sid/jti. userId=verified sub. Невалидный token401, недоступный пригодный keyset503.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 79
+          }
+        },
+        {
+          "node": "identity",
+          "label": "JWKS только при refresh",
+          "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+            "line": 54
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Проверить тело",
+          "detail": "16 KiB filter; только platform/deviceId/token без null/coercion. Platform IOS/ANDROID, deviceId≤255, token≤4096 и без control characters.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationRequestBodyAdvice.kt",
+            "line": 24
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Account transaction и token lock",
+          "detail": "Advisory lock account, запрет tombstone, lazy settings. Отдельный lock platform/token отключает прежнего active owner и upsert(user_id,device_id) устанавливает новый token/revision.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 46
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Dirty deadline в той же transaction",
+          "detail": "due_at становится не позднее текущего времени, generation увеличивается; commit сохраняет device и deadline атомарно.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 71
+          }
+        },
+        {
+          "node": "redis",
+          "label": "After-commit index hint",
+          "detail": "ZADD userId:generation только после commit; ошибка Redis переносится на PostgreSQL fallback/rebuild и не меняет успешный HTTP результат.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 75
+          }
+        },
+        {
+          "node": "mobile_client",
+          "label": "201/200 + no-store",
+          "detail": "PushDevice содержит id,deviceId,platform,token,enabled; один logical device имеет стабильный id при обновлении.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 64
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification-unregister-device",
+      "title": "Удаление своего устройства",
+      "operationIds": [
+        "unregisterDevice"
+      ],
+      "description": "DELETE использует клиентский deviceId, а не database UUID. Нельзя удалить устройство другого account; отсутствующий device возвращает404.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "DELETE /devices/{deviceId}",
+          "detail": "HTTPS /v1/notifications; access JWT в Authorization: Bearer. Владелец не передаётся в JSON.",
+          "source": {
+            "path": "contracts/openapi/public/notification.yaml",
+            "line": 69
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "Proxy в Notification",
+          "detail": "Production gateway сохраняет Authorization и request headers; private TCP/8082, connect2 s/read12 s.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 328
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Проверить Identity JWT",
+          "detail": "Ровно один Bearer; ES256 at+jwt, issuer/audience/expiry и UUIDv7 sub/sid/jti. userId=verified sub. Невалидный token401, недоступный пригодный keyset503.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 79
+          }
+        },
+        {
+          "node": "identity",
+          "label": "JWKS только при refresh",
+          "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+            "line": 54
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Удалить в account transaction",
+          "detail": "Advisory lock и deletion tombstone check; DELETE WHERE user_id=JWT sub AND device_id=path. 0 deleted rows →404; при успехе204. Redis deadline здесь не меняется.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 61
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Уже queued push проверяется перед отправкой",
+          "detail": "currentPushTarget больше не находит device, поэтому worker завершает job CANCELLED. Уже начатый provider request отозвать нельзя.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
+            "line": 99
+          }
+        },
+        {
+          "node": "mobile_client",
+          "label": "204 No Content",
+          "detail": "Успешное удаление без response body.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 74
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification-get-settings",
+      "title": "Чтение настроек",
+      "operationIds": [
+        "getNotificationSettings"
+      ],
+      "description": "GET lazily materializes defaults в PostgreSQL; это не означает запуск reminders до первой timezone.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "GET /settings",
+          "detail": "HTTPS /v1/notifications; access JWT в Authorization: Bearer. Владелец не передаётся в JSON.",
+          "source": {
+            "path": "contracts/openapi/public/notification.yaml",
+            "line": 88
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "Proxy в Notification",
+          "detail": "Production gateway сохраняет Authorization и request headers; private TCP/8082, connect2 s/read12 s.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 328
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Проверить Identity JWT",
+          "detail": "Ровно один Bearer; ES256 at+jwt, issuer/audience/expiry и UUIDv7 sub/sid/jti. userId=verified sub. Невалидный token401, недоступный пригодный keyset503.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 79
+          }
+        },
+        {
+          "node": "identity",
+          "label": "JWKS только при refresh",
+          "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+            "line": 54
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Прочитать или создать defaults",
+          "detail": "Account advisory lock; tombstone→403; INSERT settings ON CONFLICT DO NOTHING и SELECT settings. GET не создаёт deadline и не пишет Redis.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 23
+          }
+        },
+        {
+          "node": "mobile_client",
+          "label": "200 settings, Cache-Control:no-store",
+          "detail": "timezone отсутствует до явного PATCH; ru default, food240 min, weigh08:00, quiet23:00–08:00, все switches true.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 36
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification-update-settings",
+      "title": "Частичное изменение настроек",
+      "operationIds": [
+        "updateNotificationSettings"
+      ],
+      "description": "PATCH принимает только переданные поля. Timezone и locale в Notification settings — явные пользовательские настройки.",
+      "steps": [
+        {
+          "node": "mobile_client",
+          "label": "PATCH /settings",
+          "detail": "HTTPS /v1/notifications; access JWT в Authorization: Bearer. Владелец не передаётся в JSON.",
+          "source": {
+            "path": "contracts/openapi/public/notification.yaml",
+            "line": 110
+          }
+        },
+        {
+          "node": "gateway",
+          "label": "Proxy в Notification",
+          "detail": "Production gateway сохраняет Authorization и request headers; private TCP/8082, connect2 s/read12 s.",
+          "source": {
+            "path": "infra/terraform/environments/production/main.tf",
+            "line": 328
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Проверить Identity JWT",
+          "detail": "Ровно один Bearer; ES256 at+jwt, issuer/audience/expiry и UUIDv7 sub/sid/jti. userId=verified sub. Невалидный token401, недоступный пригодный keyset503.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 79
+          }
+        },
+        {
+          "node": "identity",
+          "label": "JWKS только при refresh",
+          "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
+            "line": 54
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Strict JSON и merge patch",
+          "detail": "16 KiB; отвергаются null, unknown fields, coercion, пустой patch/section. IANA timezone, ru/en, HH:mm, food1..10080 min.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 39
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Сохранить settings и baselines",
+          "detail": "Под account lock: merge, первое timezone устанавливает schedulingStartedAt и food/water baselines; re-enable сбрасывает свой baseline; explicit locale помечается overridden.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 28
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Поставить немедленный пересчёт",
+          "detail": "В той же transaction dirty(deadline,generation); изменения timezone/quiet/interval будут оценены по текущим snapshots.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 42
+          }
+        },
+        {
+          "node": "redis",
+          "label": "Обновить hint после commit",
+          "detail": "ZSET ускоряет пересчёт; падение Redis компенсируется PG sweep30 s и bounded rebuild60 s.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 75
+          }
+        },
+        {
+          "node": "mobile_client",
+          "label": "200 merged settings + no-store",
+          "detail": "Возвращается полная актуальная форма настроек, не только patch.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/NotificationsController.kt",
+            "line": 61
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification-verification-email",
+      "title": "Identity → verification email → SMTP",
+      "operationIds": [],
+      "description": "Реальный реализованный producer — Identity. ACK JetStream означает durable ingestion, а не доставку письма. Email не зависит от timezone/device/quiet.",
+      "steps": [
+        {
+          "node": "identity",
+          "label": "Сформировать EMAIL_VERIFICATION",
+          "detail": "Identity шифрует registrationAttemptId,email,locale,raw token,expiry для Notification; outer payload содержит template,encryptedPayload,expiresAt.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxIdentityEventRecorder.kt",
+            "line": 26
+          }
+        },
+        {
+          "node": "identity_db",
+          "label": "Transactional outbox",
+          "detail": "notification.email.requested v1 с aggregate_type=registration_attempt; eventId используется для dedup.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxIdentityEventRecorder.kt",
+            "line": 41
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Публикация и durable pull",
+          "detail": "Identity publishAsync отправляет envelope и Nats-Msg-Id=eventId; Notification получает cookie.events.notification.email.requested.v1 через notification-v1.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
+            "line": 49
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Envelope validation",
+          "detail": "Проверяются type/version/subject/producer, supported template, expiry и registration attempt. Просроченное письмо не создаёт job.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 26
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Inbox + encrypted delivery job в одной transaction",
+          "detail": "inbox(consumer,eventId) защищает от redelivery. enqueueEmail ON CONFLICT(dedup_key) DO NOTHING хранит JWE, attemptId и expiry; payload не раскрывается.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 52
+          }
+        },
+        {
+          "node": "nats",
+          "label": "ACK после commit",
+          "detail": "После успешного handler возвращения отправляется ACK. DB/transaction failure приводит к NAK/retry, poison — metadata quarantine.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
+            "line": 38
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Worker claim",
+          "detail": "SKIP LOCKED: PENDING→CLAIMED, lease120 s, новый fencing token и delivery_attempt; heartbeat15 s.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
+            "line": 57
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Расшифровать и проверить JWE",
+          "detail": "Только память worker; RSA-OAEP-256/A256GCM; inner attemptId/expiry должны совпасть с queued metadata; key missing→channel unavailable, malformed→FAILED.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/VerificationPayloadDecryptor.kt",
+            "line": 43
+          }
+        },
+        {
+          "node": "smtp",
+          "label": "Подготовить соединение до submission marker",
+          "detail": "Connect/auth/STARTTLS с hostname check; connect5 s, read/write30 s, preparation deadline60 s. Адресат один, Message-ID стабилен для deliveryId.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/SmtpVerificationSender.kt",
+            "line": 35
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Commit SMTP_SUBMITTING",
+          "detail": "Отдельная REQUIRES_NEW transaction fenced по живой lease; только успешный commit разрешает DATA. Потерянный commit response не вызывает submit.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
+            "line": 28
+          }
+        },
+        {
+          "node": "smtp",
+          "label": "Отправить DATA",
+          "detail": "Submission deadline60 s; confirmed acceptance→ACCEPTED, явный4xx→Retry,5xx→FAILED, неопределённый результат→UNKNOWN.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/SmtpVerificationSender.kt",
+            "line": 80
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Сохранить результат / terminal UNKNOWN",
+          "detail": "Terminal finish очищает ciphertext. Expired SMTP_SUBMITTING lease также UNKNOWN; automatic retry и operator replay его не сбрасывают.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
+            "line": 185
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification-snapshot-ingestion",
+      "title": "Будущие domain snapshots → локальные projections",
+      "operationIds": [],
+      "description": "User, Nutrition, Health и Progress пока не реализованы как producers: ниже контракт и synthetic fixture flow, не действующая production интеграция.",
+      "steps": [
+        {
+          "node": "user",
+          "label": "Планируется: profile snapshot",
+          "detail": "user.profile.updated: userId, optional locale, positive aggregate_version. Обновляет default locale, timezone не задаёт.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 94
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Планируется: meal/water snapshots",
+          "detail": "Meal create/update/delete дают mealId и eatenAt/tombstone; water.changed — localDate,totalMl,lastConsumedAt (explicit null для empty day).",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 99
+          }
+        },
+        {
+          "node": "health",
+          "label": "Планируется: weight snapshot",
+          "detail": "measurementId,userId,deleted; live record требует measuredAt,valueKg; Notification сохраняет только время, без weight value.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 111
+          }
+        },
+        {
+          "node": "progress",
+          "label": "Планируется: resolved daily goals",
+          "detail": "progress.day.updated — localDate,timezone,calories(consumed,target,unlimitedCalories),water(consumedMl,targetMl); unknown выражается explicit null.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 117
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Точные v1 subjects",
+          "detail": "Consumer принимает только10 перечисленных subject filters, producer field дополнительно проверяется handler.",
+          "source": {
+            "path": "deploy/production/config/notification-consumer.json",
+            "line": 9
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Atomic inbox + monotonic projection",
+          "detail": "Per-user lock; eventId dedup; только version>stored version меняет allowlisted projection. Сохраняются entity tombstones; account tombstone блокирует любые поздние updates.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 52
+          }
+        },
+        {
+          "node": "redis",
+          "label": "После commit — подсказка пересчёта",
+          "detail": "Применённая новая версия вызывает dirty и afterCommit hint; stale/equal version не меняет deadline. Внешний provider в ingest transaction не вызывается.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 67
+          }
+        },
+        {
+          "node": "nats",
+          "label": "ACK durable result",
+          "detail": "Duplicate/старое событие также безопасно ACK после transaction; неисправность инфраструктуры даёт unlimited retry.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
+            "line": 38
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification-reminder-delivery",
+      "title": "Расписание → occurrence → APNs/FCM",
+      "operationIds": [],
+      "description": "PostgreSQL — источник истины; Redis — ускоряющий индекс. Планировщик использует чистый ReminderPlanner, а worker повторно проверяет те же правила перед provider.",
+      "steps": [
+        {
+          "node": "redis",
+          "label": "Извлечь due hints",
+          "detail": "Tick1000 ms выбирает до100 ZSET userId:generation с score≤now и удаляет выбранные hints. Redis failure возвращает пустую выборку и счётчик ошибки.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/RedisDeadlineIndex.kt",
+            "line": 27
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Независимый overdue sweep",
+          "detail": "Каждые30 s выбираются до100 due deadlines. Невзятые/stale hints не являются потерей authoritative schedule.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
+            "line": 40
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Account lock и authoritative check",
+          "detail": "pg_try_advisory_xact_lock; проверить timezone/tombstone, due_at≤now и expected generation. Другая реплика не выпускает occurrence одновременно.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
+            "line": 49
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Pure plan текущего состояния",
+          "detail": "Minimal projections, baselines, occurrences → food/water/weigh/calorie candidates и next wakeup; quiet/DST/day rollover и текущая timezone учтены.",
+          "source": {
+            "path": "backend/services/notification/domain/src/main/kotlin/com/cookie/notification/domain/ReminderPlanner.kt",
+            "line": 48
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Occurrence + per-device delivery jobs",
+          "detail": "В одной transaction unique(user,kind,cycle), enqueue на каждое enabled устройство, last_water_reminder_at и следующий deadline/generation. Без устройств cycle не потребляется; повторная проверка≤60 s.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
+            "line": 60
+          }
+        },
+        {
+          "node": "redis",
+          "label": "Записать следующий deadline после transaction",
+          "detail": "PostgreSQL commit предшествует обновлению ZSET; периодический/reconnect rebuild восстановит индекс при потерянной записи.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
+            "line": 84
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Claim с lease и fencing",
+          "detail": "До8 worker slots; lease120 s, heartbeat15 s; jobs остаются durable при падении процесса.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
+            "line": 57
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Final eligibility и quiet recheck",
+          "detail": "Отдельная push transaction≤45 s удерживает user/token locks до outcome; transfer/deletion сериализованы с отправкой. После lock перечитываются owner/revision/lease, projections и настройки. Quiet и интервал воды переносят отправку.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
+            "line": 86
+          }
+        },
+        {
+          "node": "apns",
+          "label": "IOS: APNs bounded request",
+          "detail": "15 s total; collapse-id=occurrenceId, apns-id=deliveryId, generic localized text. 200 означает provider acceptance; invalid token response условно отключает только submitted revision.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/PushProviders.kt",
+            "line": 45
+          }
+        },
+        {
+          "node": "fcm",
+          "label": "ANDROID: FCM bounded request",
+          "detail": "Refresh lock≤5 s, OAuth≤10 s, send≤15 s; generic text + deliveryId, tag=occurrenceId, TTL≤1 h. Retry-After и UNREGISTERED учитываются.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/PushProviders.kt",
+            "line": 125
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Fenced outcome",
+          "detail": "ACCEPTED/FAILED/CANCELLED/EXPIRED или scheduled retry; provider unavailable pause60 s, transient max10 counted attempts, jitter и expiry ограничивают повтор.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
+            "line": 137
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification-quarantine-replay",
+      "title": "Poison, outage и operator replay",
+      "operationIds": [],
+      "description": "Невалидный контракт и временная ошибка разделены; quarantine хранит metadata, оригинал ограничен retention JetStream. Replay не является повтором SMTP UNKNOWN.",
+      "steps": [
+        {
+          "node": "notification",
+          "label": "Классифицировать сбой",
+          "detail": "Только InvalidNotificationEvent считается poison. Все остальные exceptions дают unlimited NAK, задержка по deliveredCount максимум256 s.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
+            "line": 38
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Durable quarantine metadata",
+          "detail": "SHA-256,message eventId,subject,reason,stream sequence; no raw envelope. Failed DB insert оставляет сообщение не ACKed.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
+            "line": 59
+          }
+        },
+        {
+          "node": "nats",
+          "label": "ACK после сохранения quarantine",
+          "detail": "Оператор может исправить причину и запросить replay; runtime credentials разрешают только own consumer INFO/NEXT/ACK, не shared stream GET.",
+          "source": {
+            "path": "deploy/production/config/notification-nats-permissions.json",
+            "line": 2
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Одноразовый operator process",
+          "detail": "Profile notification-replay отключает web/consumer/scheduler/delivery. --notification-replay-id выбирает запись, отдельный operator credentials path обязателен.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/OperatorQuarantineReplay.kt",
+            "line": 31
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Прочитать original по sequence",
+          "detail": "Operator credential делает прямой STREAM.MSG.GET с timeout2 s, без STREAM.INFO; отсутствие original даёт явное cannot recover/replay. Subject и SHA-256 должны совпасть с quarantine.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/OperatorQuarantineReplay.kt",
+            "line": 43
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Тот же handler и eventId",
+          "detail": "После успешного handler помечается replayed_at. Inbox/queue dedup остаются; direct re-publish и reset terminal UNKNOWN не выполняются.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/OperatorQuarantineReplay.kt",
+            "line": 56
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification-account-deletion",
+      "title": "Account deletion и защита от поздних событий",
+      "operationIds": [],
+      "description": "После получения deletion request Notification запрещает доступ даже с ещё не истёкшим Identity JWT. Завершённый внешний provider request отозвать невозможно.",
+      "steps": [
+        {
+          "node": "identity",
+          "label": "account.deletion.requested v1",
+          "detail": "Реальный producer формирует accountId,deletionRequestId,requestedAt и пишет transactional outbox.",
+          "source": {
+            "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxIdentityEventRecorder.kt",
+            "line": 76
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Durable delivery deletion request",
+          "detail": "Точный subject включён в notification-v1; обработка следует общим inbox/ACK правилам.",
+          "source": {
+            "path": "deploy/production/config/notification-consumer.json",
+            "line": 10
+          }
+        },
+        {
+          "node": "notification_db",
+          "label": "Account lock + inbox + permanent tombstone",
+          "detail": "В одной transaction INSERT tombstone, удалить user delivery_jobs (attempts cascade), devices/settings/projections/deadlines/occurrences.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 83
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Поздние события и API",
+          "detail": "Handler записывает dedup и игнорирует mutation для tombstoned account; repository transactions отвечают ACCOUNT_DELETED403. Tombstone не истекает.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
+            "line": 85
+          }
+        },
+        {
+          "node": "redis",
+          "label": "Устаревшие hints безопасны",
+          "detail": "Оставшийся Redis member не создаёт state: scheduler перечитывает PostgreSQL, видит отсутствующие settings/deleted account и не выпускает reminder.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
+            "line": 49
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Preflight отменяет pending delivery",
+          "detail": "Worker проверяет current target и projections перед submit; если account удалён, CANCELLED/отсутствующая job не допускает отправку.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
+            "line": 99
+          }
+        }
+      ]
+    }
+  ],
+  "operationNotes": {
+    "registerDevice": {
+      "notes": [
+        "POST /v1/notifications/devices; body≤16 KiB: {platform: IOS|ANDROID,deviceId,token}.",
+        "201 новый logical device;200 upsert того же (JWT sub,deviceId). Enabled platform/token переносится с прежнего владельца.",
+        "JWT sub — единственный источник account ownership. PostgreSQL account/token locks и unique active token; Redis hint только after commit.",
+        "Invalid JSON400; invalid JWT401; deleted account403; body413; dependency503 с Retry-After:1."
+      ],
+      "flowId": "notification-register-device"
+    },
+    "unregisterDevice": {
+      "notes": [
+        "DELETE /v1/notifications/devices/{deviceId}; path — клиентский deviceId, не внутренний UUID.",
+        "Удаляется только запись текущего JWT sub:204 success,404 отсутствующее/чужое устройство.",
+        "Account transaction проверяет tombstone; Redis не обновляется. Уже queued jobs проверят device перед provider и будут отменены."
+      ],
+      "flowId": "notification-unregister-device"
+    },
+    "getNotificationSettings": {
+      "notes": [
+        "GET /v1/notifications/settings lazily создаёт default settings под account lock.",
+        "200 + Cache-Control:no-store; timezone отсутствует до первого явного PATCH, scheduled push пока paused.",
+        "ru default; all types enabled, food240 min, water2 h, weigh08:00, quiet23:00–08:00. GET не dirty-ит schedule."
+      ],
+      "flowId": "notification-get-settings"
+    },
+    "updateNotificationSettings": {
+      "notes": [
+        "PATCH /v1/notifications/settings с частичным nested merge; null/unknown fields/coercion/empty patch/empty section→400.",
+        "timezone — IANA; locale ru/en; food.inactiveForMinutes1..10080; weighIn.time и quietHours — HH:mm.",
+        "Первое timezone и re-enable food/water задают текущий baseline. Последующая смена timezone пересчитывает local schedules, не сбрасывая inactivity.",
+        "В одной transaction settings+generation deadline; afterCommit Redis hint. 200 полные merged settings/no-store."
+      ],
+      "flowId": "notification-update-settings"
+    }
+  }
+}

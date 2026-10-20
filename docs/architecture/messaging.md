@@ -61,8 +61,8 @@ A crash between steps 6 and 7 can publish a duplicate and is expected.
 7. Acknowledge JetStream only after commit.
 
 Failures before commit are retried. Poison messages eventually require an
-operator-visible dead-letter/advisory path; exact retry counts and backoff are
-TBD.
+operator-visible dead-letter/advisory path; Notification uses delayed NAK for transient failures and durable metadata-only
+quarantine for invalid events; see ADR 0013 and `notification.md`.
 
 ## Identity v1 publisher profile
 
@@ -92,9 +92,10 @@ locale and raw one-time token exist only inside the encrypted payload.
 Notification consumers discard a delivery whose payload expiry is not in the
 future. They must also deduplicate `event_id`; broker acknowledgement alone does
 not make the SMTP side effect idempotent.
-The local Mailpit sink uses a bounded process-local deduplication cache; this is
-deliberately development-only. A production notification service needs a durable
-inbox/idempotency record coordinated with its delivery-provider policy.
+The production Notification implementation atomically records inbox and delivery
+intent before ACK. SMTP ambiguous submission becomes terminal UNKNOWN without
+automatic resend, including crash recovery. The legacy sink retains process-local
+deduplication and is optional development tooling only.
 
 Account deletion uses `account.deletion.requested` version 1 and subject
 `cookie.events.account.deletion.requested.v1`. The common envelope carries
@@ -108,8 +109,8 @@ deliver that event more than once and is handled by future consumer inboxes.
 
 User, Food Catalog, Nutrition, Recipe, Shopping, Health, Progress, Notification,
 Media and Meal Planner are target consumers because they own user-linked data.
-None of those deletion consumers or their acknowledgement events is implemented
-in v1. Identity remains producer-only, does not add a placeholder inbox and does
+Notification implements local deletion and a minimal tombstone; the other target
+consumers and all acknowledgement events remain unimplemented. Identity remains producer-only, does not add a placeholder inbox and does
 not publish `account.deleted`; the account honestly remains
 `DELETION_PENDING`. Before completion is introduced, the system also needs a
 reconciliation/replay path for pending requests whose original event is older
@@ -128,8 +129,9 @@ for a further 90 days and expired rate-limit buckets for a 1-day grace period.
 Expired active attempts are first marked abandoned and have password hash/locale
 scrubbed atomically; only aged tombstones are deleted. Cleanup polls every minute,
 rotates fairly across tables, and has configurable batch-count and time budgets.
-Consumer inbox retention is selected when a real consumer is built and
-must be no shorter than the matching stream/redelivery window.
+Notification retains inbox and delivery/quarantine metadata for 30 days, longer
+than the current seven-day maximum stream age. Quarantine payload recovery is
+limited by all stream limits (age, bytes and count), not guaranteed for seven days.
 
 ## Forbidden patterns
 
