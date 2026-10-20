@@ -283,6 +283,8 @@ jobs:
           jq --exit-status . deploy/production/config/cookie-events.json >/dev/null
       - name: Test production deployment lifecycle
         run: python3 .github/scripts/test-production-deploy.py
+      - name: Test immutable image verification
+        run: python3 .github/scripts/test-pinned-images.py
       - name: Verify immutable external image manifests
         run: >-
           deploy/docker/verify-pinned-images.sh

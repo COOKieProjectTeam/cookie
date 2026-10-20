@@ -47,5 +47,9 @@ for reference in "${references[@]}"; do
   fi
 
   printf 'Verifying %s\n' "${reference}"
-  docker manifest inspect "${reference}" >/dev/null
+  repository="${reference%@*}"
+  if [[ "${repository##*/}" == *:* ]]; then
+    repository="${repository%:*}"
+  fi
+  docker manifest inspect "${repository}@${reference##*@}" >/dev/null
 done
