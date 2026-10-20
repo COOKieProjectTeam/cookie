@@ -19,12 +19,20 @@ IANA timezones, invalid `HH:mm` times and food intervals outside 1..10080 minute
 Timezone is absent until explicitly set; all scheduled push remains paused until
 then. Locale supports `ru` and `en`, with Russian fallback. Devices are scoped to
 their account, and an enabled platform/token is bound to only one account at a
-time. IOS hexadecimal tokens are normalized to lowercase before locking and ownership
-transfer; ANDROID tokens remain case-sensitive opaque strings. A trigger-maintained
+time. Both IOS and ANDROID register opaque, case-sensitive FCM registration tokens;
+tokens are never lowercased, including hexadecimal-looking strings. A trigger-maintained
 SHA-256 digest bounds the unique index entry while preserving the 4096-character
-API limit. Existing IOS aliases migrate to one active owner, choosing the latest
-registration by revision and a stable ID tie-breaker. Invalid-token provider responses are conditional on the submitted token
+API limit. Migration V006 disables existing IOS APNs registrations and cancels their
+active push jobs; the client must re-register with an FCM token. Android registrations
+are preserved. Invalid-token provider responses are conditional on the submitted token
 revision, so a delayed response cannot disable a newly registered token.
+
+Android and iOS mobile apps must obtain Firebase Messaging registration tokens,
+register them after sign-in and token refresh, and request OS notification permission.
+The generated client exposes the device/settings API; native push SDK integration
+is a separate mobile prerequisite. For iOS, upload the Apple APNs authentication key
+to the Firebase project. Notification stores only FCM credentials and sends both
+platforms through FCM HTTP v1; Firebase delivers the iOS message through APNs.
 
 ## Reminder rules
 
@@ -112,10 +120,13 @@ recheck authoritative deadlines and occurrence uniqueness before issuing work.
 SMTP uses mandatory production STARTTLS, certificate/hostname checks, one recipient
 and a stable Message-ID. Only proven pre-submission failures/negative transient
 replies can retry. Ambiguous submission is terminal `UNKNOWN`; replay never resets
-it. APNs and FCM have separate bounded adapters and provider-aware retry policies.
-APNs honors `Retry-After` as seconds or an HTTP date, with a one-minute minimum
-for throttling, fifteen minutes for server errors and a one-day maximum. FCM
-uses the same parsing, with its own one-minute/ten-second minimums.
+it. FCM is the sole bounded push adapter for Android and iOS. Its platform-specific
+payload preserves Android TTL/tag and Apple expiration/collapse ID. FCM honors
+`Retry-After` as seconds or an HTTP date, with a one-minute minimum for throttling,
+a ten-second minimum for server errors and a one-day maximum.
+FCM authentication failures pause both platforms. Apple credential failures pause
+only iOS, keeping Android delivery available; neither disables the device.
+`UNREGISTERED` disables only the submitted token revision.
 Only retryable provider failures consume the persistent ten-failure budget and
 advance exponential backoff. Queue claims, unavailable channels, authentication or
 key outages, quiet hours and water-interval deferrals do not consume that budget.

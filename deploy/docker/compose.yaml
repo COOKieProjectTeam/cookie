@@ -113,7 +113,6 @@ services:
       COOKIE_SMTP_MESSAGE_ID_DOMAIN: cookie.local
       COOKIE_SMTP_STARTTLS_REQUIRED: "false"
       COOKIE_NOTIFICATION_VERIFICATION_LINK_BASE_URL: https://cookie.invalid/verify-email
-      COOKIE_APNS_ENABLED: "false"
       COOKIE_FCM_ENABLED: "false"
     depends_on:
       notification-db-provision:

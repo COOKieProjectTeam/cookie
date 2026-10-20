@@ -296,7 +296,7 @@ else:
             "COOKIE_NOTIFICATION_VERIFICATION_LINK_BASE_URL=https://fixture.cookie.test/verify",
             "COOKIE_SMTP_HOST=fixture.cookie.test", "COOKIE_SMTP_PORT=2525",
             "COOKIE_SMTP_USERNAME=fixture", "COOKIE_SMTP_FROM=noreply@fixture.cookie.test",
-            "COOKIE_SMTP_MESSAGE_ID_DOMAIN=fixture.cookie.test", "COOKIE_APNS_ENABLED=false", "COOKIE_FCM_ENABLED=false",
+            "COOKIE_SMTP_MESSAGE_ID_DOMAIN=fixture.cookie.test", "COOKIE_FCM_ENABLED=false",
         ]) + "\n")
         self.envfile.chmod(0o600)
         # Read the original Compose model with the real CLI. Retain every
@@ -372,11 +372,12 @@ else:
                           body={"platform": "ANDROID", "deviceId": str(uuid.uuid4()), "token": android_token},
                           expected=201)
         assert android["token"] == android_token
-        ios_token = "ABCD" * 16
+        ios_token = ("iOS:FcmToken_MiXeD-" + base64.b64encode(os.urandom(3072)).decode("ascii"))[:4096]
         ios = request(8082, "/v1/notifications/devices", token=login["accessToken"],
                       body={"platform": "IOS", "deviceId": str(uuid.uuid4()), "token": ios_token},
                       expected=201)
-        assert ios["token"] == ios_token.lower()
+        assert len(ios_token) == 4096
+        assert ios["token"] == ios_token
         eventually(lambda: self.sql("notification", "SELECT count(*) FROM delivery_jobs WHERE status='ACCEPTED'") != "0",
                    "provider acceptance recorded")
         return login

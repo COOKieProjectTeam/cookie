@@ -19,6 +19,10 @@ paths:
         - accessToken: []
       operationId: registerDevice
       summary: Зарегистрировать push-токен устройства
+      description: >-
+        Register the Firebase Cloud Messaging registration token for IOS or ANDROID.
+        Existing IOS clients using direct APNs must obtain and re-register an FCM token;
+        APNs device tokens cannot be used as FCM registration tokens.
       requestBody:
         required: true
         content:
@@ -227,8 +231,9 @@ components:
           minLength: 1
           maxLength: 4096
           description: >-
-            IOS hexadecimal APNs tokens of 32–512 characters are case-insensitive and
-            stored in lowercase. ANDROID tokens are opaque and remain case-sensitive.
+            Firebase Cloud Messaging registration token on both IOS and ANDROID;
+            opaque and case-sensitive, including tokens that look hexadecimal.
+            IOS clients must send the FCM token, never the APNs device token.
             Registering an existing token transfers its active binding to this account and device.
         deviceId:
           type: string
@@ -246,7 +251,7 @@ components:
           type: string
           minLength: 1
           maxLength: 4096
-          description: Canonical stored token; valid hexadecimal IOS tokens are lowercase.
+          description: Exact opaque FCM registration token as registered, preserving letter case on both platforms.
         deviceId:
           type: string
           minLength: 1

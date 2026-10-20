@@ -95,7 +95,7 @@
       "id": "notification-devices",
       "label": "Устройства",
       "value": "(user_id,device_id) + уникальный активный (platform,SHA-256(token))",
-      "description": "deviceId — непустой ≤255; token — непустой ≤4096 без control chars. IOS hex приводится к lowercase до lock/переноса; ANDROID остаётся opaque и case-sensitive. Trigger хранит digest32 bytes для bounded unique index; перенос проверяет также полный token. Повторная регистрация обновляет запись и отключает прежнего владельца.",
+      "description": "deviceId — непустой ≤255; token — непрозрачный регистрозависимый FCM registration token ≤4096 без control chars для IOS и ANDROID. Trigger хранит digest32 bytes для bounded unique index; перенос проверяет также полный token. Повторная регистрация обновляет revision и отключает прежнего владельца. V006 отключает старые IOS APNs-привязки до регистрации FCM-токена.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
         "line": 46
@@ -168,7 +168,7 @@
       "description": "dirty() увеличивает generation и ставит due_at=min(old,new). Redis вызывается только после commit; ошибка индекса не превращает успешную мутацию в HTTP 500.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-        "line": 76
+        "line": 77
       }
     },
     {
@@ -368,7 +368,7 @@
       "description": "Будущие profile/meal/water/weight/progress события покрыты synthetic contract fixtures. Их production producers и замены producers сейчас не развёрнуты.",
       "source": {
         "path": "backend/services/notification/README.md",
-        "line": 24
+        "line": 33
       }
     },
     {
@@ -455,30 +455,30 @@
       "id": "notification-retry",
       "label": "Provider retry",
       "value": "10 retryable provider failures; jitter 10..300 s + provider minimum",
-      "description": "Persistent provider_failure_count увеличивается только при Retry; claim attempt_count остаётся аудитом. Unavailable/auth/key, CHANNEL_PAUSED, quiet hours и water interval не расходуют бюджет и backoff. Exponential cap300 s, jitter, минимум10 s; provider minimum может быть больше300 s. Retry после expiry завершает EXPIRED; unavailable канал ставится на60 s pause.",
+      "description": "Persistent provider_failure_count увеличивается только при Retry; claim attempt_count остаётся аудитом. Unavailable/auth/key, CHANNEL_PAUSED, quiet hours и water interval не расходуют бюджет и backoff. Exponential cap300 s, jitter, минимум10 s; provider minimum может быть больше300 s. Retry после expiry завершает EXPIRED; unavailable канал ставится на60 s pause; Apple credentials — только IOS, общая FCM авторизация — обе платформы.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
-        "line": 137
+        "line": 138
       }
     },
     {
       "id": "notification-apns",
-      "label": "APNs",
-      "value": "HTTP ≤15 s; provider JWT cache 50 min",
-      "description": "IOS; alert payload≤4096 bytes, apns-id=deliveryId, collapse-id=occurrenceId, expiration=job expiry. Retry-After: seconds или HTTP-date, минимум60 s для429,15 min для5xx, максимум24 h. 403/TooManyProviderTokenUpdates — unavailable. Invalid-device response отключает только отправленную revision.",
+      "label": "iOS через FCM → APNs",
+      "value": "Apple payload внутри FCM HTTP v1",
+      "description": "Firebase выполняет downstream-доставку в APNs. Notification задаёт alert, priority10, collapse-id=occurrenceId, apns-id=deliveryId, expiration=job expiry. Ключ Apple загружается в Firebase; прямого APNs-адаптера и secret mount в Notification нет.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/PushProviders.kt",
-        "line": 45
+        "line": 63
       }
     },
     {
       "id": "notification-fcm",
       "label": "FCM",
       "value": "send ≤15 s; OAuth ≤10 s; refresh lock ≤5 s",
-      "description": "ANDROID; FCM v1, normal priority, notification tag=occurrenceId, Android TTL=min(remaining lifetime,3600 s). 401/403 unavailable, UNREGISTERED disables same token revision;429 Retry-After≥60 s;5xx Retry-After≥10 s, upper bound24 h.",
+      "description": "IOS и ANDROID; единый FCM HTTP v1. Android: normal priority, notification tag=occurrenceId, TTL=min(remaining lifetime,3600 s). iOS: apns headers; alert формируется Firebase из notification. 401/403 приостанавливают FCM; THIRD_PARTY_AUTH_ERROR приостанавливает только IOS без отключения устройства; UNREGISTERED отключает только submitted revision. 429 Retry-After≥60 s;5xx≥10 s, верхняя граница24 h.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/PushProviders.kt",
-        "line": 125
+        "line": 41
       }
     },
     {
@@ -494,11 +494,11 @@
     {
       "id": "notification-channel-config",
       "label": "Provider enablement",
-      "value": "APNs=false; FCM=false по умолчанию",
-      "description": "COOKIE_APNS_ENABLED / COOKIE_FCM_ENABLED и отдельные key/credentials mounts. Production SMTP port default587 в Compose; application local default1025. Provider HTTP endpoints фиксированы production validation.",
+      "value": "FCM=false по умолчанию",
+      "description": "COOKIE_FCM_ENABLED и один fcm-credentials.json mount для Android/iOS. Apple APNs key настраивается в Firebase. Production SMTP port default587 в Compose; application local default1025. Provider HTTP endpoints фиксированы production validation.",
       "source": {
         "path": "backend/services/notification/src/main/resources/application.yaml",
-        "line": 64
+        "line": 72
       }
     },
     {
@@ -600,6 +600,16 @@
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
         "line": 86
       }
+    },
+    {
+      "id": "notification-ios-fcm-migration",
+      "label": "Переход iOS на FCM",
+      "value": "V006; обязательная повторная регистрация токена",
+      "description": "Старые IOS APNs-привязки отключаются, активные PUSH jobs отменяются, leases и attempts закрываются. Android, terminal outcomes и SMTP сохраняются. До Flyway deploy останавливает старый Notification. Новый IOS FCM token хранится без изменения регистра.",
+      "source": {
+        "path": "backend/services/notification/src/main/resources/db/migration/V006__fcm_only_push.sql",
+        "line": 14
+      }
     }
   ],
   "flows": [
@@ -659,7 +669,7 @@
         {
           "node": "notification_db",
           "label": "Account transaction и token lock",
-          "detail": "Advisory lock account, запрет tombstone, lazy settings. IOS hex сначала canonical lowercase, ANDROID opaque; lock platform/canonical token отключает прежнего active owner и upsert(user_id,device_id) устанавливает новый token/revision. Trigger-maintained SHA-256 даёт bounded unique index; полная строка тоже проверяется при переносе.",
+          "detail": "Advisory lock account, запрет tombstone, lazy settings. IOS и ANDROID передают opaque case-sensitive FCM token; lock platform/token отключает прежнего active owner и upsert(user_id,device_id) устанавливает новый token/revision. Trigger-maintained SHA-256 даёт bounded unique index; полная строка тоже проверяется при переносе.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
             "line": 46
@@ -671,7 +681,7 @@
           "detail": "due_at становится не позднее текущего времени, generation увеличивается; commit сохраняет device и deadline атомарно.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 76
+            "line": 77
           }
         },
         {
@@ -680,7 +690,7 @@
           "detail": "ZADD userId:generation только после commit; ошибка Redis переносится на PostgreSQL fallback/rebuild и не меняет успешный HTTP результат.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 80
+            "line": 81
           }
         },
         {
@@ -708,7 +718,7 @@
           "detail": "HTTPS /v1/notifications; access JWT в Authorization: Bearer. Владелец не передаётся в JSON.",
           "source": {
             "path": "contracts/openapi/public/notification.yaml",
-            "line": 69
+            "line": 73
           }
         },
         {
@@ -744,7 +754,7 @@
           "detail": "Advisory lock и deletion tombstone check; DELETE WHERE user_id=JWT sub AND device_id=path. 0 deleted rows →404; при успехе204. Redis deadline здесь не меняется.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 66
+            "line": 67
           }
         },
         {
@@ -781,7 +791,7 @@
           "detail": "HTTPS /v1/notifications; access JWT в Authorization: Bearer. Владелец не передаётся в JSON.",
           "source": {
             "path": "contracts/openapi/public/notification.yaml",
-            "line": 88
+            "line": 92
           }
         },
         {
@@ -845,7 +855,7 @@
           "detail": "HTTPS /v1/notifications; access JWT в Authorization: Bearer. Владелец не передаётся в JSON.",
           "source": {
             "path": "contracts/openapi/public/notification.yaml",
-            "line": 110
+            "line": 114
           }
         },
         {
@@ -908,7 +918,7 @@
           "detail": "ZSET ускоряет пересчёт; падение Redis компенсируется PG sweep30 s и bounded rebuild60 s.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 80
+            "line": 81
           }
         },
         {
@@ -1120,7 +1130,7 @@
     },
     {
       "id": "notification-reminder-delivery",
-      "title": "Расписание → occurrence → APNs/FCM",
+      "title": "Расписание → occurrence → FCM → устройство",
       "operationIds": [],
       "description": "PostgreSQL — источник истины; Redis — ускоряющий индекс. Планировщик использует чистый ReminderPlanner, а worker повторно проверяет те же правила перед provider.",
       "steps": [
@@ -1197,21 +1207,21 @@
           }
         },
         {
-          "node": "apns",
-          "label": "IOS: APNs bounded request",
-          "detail": "15 s total; collapse-id=occurrenceId, apns-id=deliveryId, generic localized text. 200 означает provider acceptance; invalid token response условно отключает только submitted revision.",
+          "node": "fcm",
+          "label": "Android и iOS: FCM bounded request",
+          "detail": "Refresh lock≤5 s, OAuth≤10 s, send≤15 s; generic text + deliveryId. Android: tag=occurrenceId, TTL≤1 h. iOS: expiration/collapse headers и alert из общего notification. Retry-After и UNREGISTERED учитываются; Apple credentials error приостанавливает только IOS и не отключает устройство.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/PushProviders.kt",
-            "line": 45
+            "line": 41
           }
         },
         {
-          "node": "fcm",
-          "label": "ANDROID: FCM bounded request",
-          "detail": "Refresh lock≤5 s, OAuth≤10 s, send≤15 s; generic text + deliveryId, tag=occurrenceId, TTL≤1 h. Retry-After и UNREGISTERED учитываются.",
+          "node": "apns",
+          "label": "iOS: Firebase пересылает в APNs",
+          "detail": "Внешний участок доставки, управляемый Firebase. Ключ Apple настроен в Firebase; Notification не делает отдельный HTTP-запрос в APNs. ACCEPTED — подтверждение FCM, не показ и не прочтение.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/PushProviders.kt",
-            "line": 125
+            "path": "docs/architecture/notification.md",
+            "line": 35
           }
         },
         {
@@ -1220,7 +1230,7 @@
           "detail": "ACCEPTED/FAILED/CANCELLED/EXPIRED или scheduled retry; provider unavailable pause60 s, transient max10 persistent provider failures, технические отсрочки вне бюджета, jitter и expiry ограничивают повтор.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
-            "line": 137
+            "line": 138
           }
         }
       ]
@@ -1326,7 +1336,7 @@
           "detail": "Handler записывает dedup и игнорирует mutation для tombstoned account; repository transactions отвечают ACCOUNT_DELETED403. Tombstone не истекает.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 90
+            "line": 91
           }
         },
         {
@@ -1354,9 +1364,10 @@
     "registerDevice": {
       "notes": [
         "POST /v1/notifications/devices; body≤16 KiB: {platform: IOS|ANDROID,deviceId,token}.",
-        "201 новый logical device;200 upsert того же (JWT sub,deviceId). Enabled platform/canonical token переносится с прежнего владельца; IOS hex lowercase, ANDROID без изменения.",
+        "201 новый logical device;200 upsert того же (JWT sub,deviceId). Enabled platform/token переносится с прежнего владельца; FCM-токен регистрозависимый и сохраняется без изменения для IOS и ANDROID.",
         "JWT sub — единственный источник account ownership. PostgreSQL account/token locks и unique active token; Redis hint только after commit.",
-        "Invalid JSON400; invalid JWT401; deleted account403; body413; dependency503 с Retry-After:1."
+        "Invalid JSON400; invalid JWT401; deleted account403; body413; dependency503 с Retry-After:1.",
+        "После V006 старые IOS APNs-привязки отключены: приложение должно передать FCM registration token, сырой APNs token не подходит."
       ],
       "flowId": "notification-register-device"
     },

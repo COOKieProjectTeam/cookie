@@ -85,7 +85,7 @@ class DeployTest(unittest.TestCase):
         files = {
             "postgres": ["admin-password", "identity-password", "identity-migration-password", "notification-password", "notification-migration-password"],
             "identity": ["spring.datasource.password", "spring.flyway.password", "cookie.identity.rate-limit-hmac-key", "cookie.identity.nats-truststore-password", "identity-jwt-private.jwk", "notification-public.jwk", "nats-identity.creds", "nats-truststore.jks"],
-            "notification": ["spring.datasource.password", "spring.flyway.password", "cookie.notification.nats-truststore-password", "spring.data.redis.password", "cookie.notification.delivery.smtp.password", "notification-private.jwk", "nats-notification.creds", "nats-truststore.jks", "apns-key.p8", "fcm-credentials.json"],
+            "notification": ["spring.datasource.password", "spring.flyway.password", "cookie.notification.nats-truststore-password", "spring.data.redis.password", "cookie.notification.delivery.smtp.password", "notification-private.jwk", "nats-notification.creds", "nats-truststore.jks", "fcm-credentials.json"],
             "nats": ["auth.conf", "ca.crt", "server.crt", "server.key", "stream-admin.creds"],
             "redis": ["password"],
         }
@@ -164,6 +164,12 @@ COOKIE_NOTIFICATION_BIND_IP=127.0.0.1
                 result = self.run_deploy("--" + service, image(service, "b"), service=service)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual([e["service"] for e in self.events("start")], [service])
+                changes = [(e["stage"], e["service"]) for e in self.events()
+                           if e["stage"] in ("stop", "start")]
+                expected = [("start", service)]
+                if service == "notification":
+                    expected.insert(0, ("stop", service))
+                self.assertEqual(changes, expected)
                 other = "notification" if service == "identity" else "identity"
                 self.assertIn(image(other, "a"), self.release.read_text())
 
@@ -175,6 +181,8 @@ COOKIE_NOTIFICATION_BIND_IP=127.0.0.1
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(self.release.read_text(), original)
                 self.assertEqual([e["image"] for e in self.events("start")], [image("notification", "b"), image("notification", "a")])
+                self.assertEqual([e["stage"] for e in self.events() if e["stage"] in ("stop", "start")],
+                                 ["stop", "start", "stop", "start"])
                 self.assertFalse(self.pending.exists())
 
     def test_pair_failure_rolls_back_in_reverse_order(self):
@@ -189,7 +197,7 @@ COOKIE_NOTIFICATION_BIND_IP=127.0.0.1
         result = self.run_deploy("--notification", image("notification", "b"), mode="failure")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.release.read_text(), original)
-        self.assertEqual([e["service"] for e in self.events("stop")], ["notification"])
+        self.assertEqual([e["service"] for e in self.events("stop")], ["notification", "notification"])
 
     def test_termination_recovers_and_preserves_committed_release(self):
         original = self.seed()
@@ -246,29 +254,28 @@ COOKIE_NOTIFICATION_BIND_IP=127.0.0.1
 
     def test_disabled_push_needs_no_provider_secret_files(self):
         self.seed()
-        for name in ("apns-key.p8", "fcm-credentials.json"):
-            (self.data / "secrets/notification" / name).unlink()
+        (self.data / "secrets/notification/fcm-credentials.json").unlink()
         result = self.run_deploy("--notification", image("notification", "b"))
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_enabled_channels_select_only_their_secret_overlays(self):
+    def test_enabled_push_selects_fcm_secret_overlay(self):
         self.seed()
         with self.config.open("a") as output:
-            output.write("COOKIE_APNS_ENABLED=true\nCOOKIE_APNS_KEY_ID=KEY\nCOOKIE_APNS_TEAM_ID=TEAM\nCOOKIE_APNS_TOPIC=com.example.cookie\nCOOKIE_FCM_ENABLED=true\nCOOKIE_FCM_PROJECT_ID=synthetic-project\n")
+            output.write("COOKIE_FCM_ENABLED=true\nCOOKIE_FCM_PROJECT_ID=synthetic-project\n")
         result = self.run_deploy("--notification", image("notification", "b"))
         self.assertEqual(result.returncode, 0, result.stderr)
         config = next(event for event in self.events("compose") if event["service"] == "config")
-        self.assertTrue(any(arg.endswith("compose.apns.yaml") for arg in config["args"]))
-        self.assertTrue(any(arg.endswith("compose.fcm.yaml") for arg in config["args"]))
+        self.assertEqual([Path(arg).name for arg in config["args"] if arg.endswith(".yaml")],
+                         ["compose.yaml", "compose.fcm.yaml"])
 
     def test_enabled_push_requires_its_credentials(self):
         self.seed()
         with self.config.open("a") as output:
-            output.write("COOKIE_APNS_ENABLED=true\nCOOKIE_APNS_KEY_ID=KEY\nCOOKIE_APNS_TEAM_ID=TEAM\nCOOKIE_APNS_TOPIC=com.example.cookie\n")
-        (self.data / "secrets/notification/apns-key.p8").unlink()
+            output.write("COOKIE_FCM_ENABLED=true\nCOOKIE_FCM_PROJECT_ID=synthetic-project\n")
+        (self.data / "secrets/notification/fcm-credentials.json").unlink()
         result = self.run_deploy("--notification", image("notification", "b"))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("enabled APNs requires its private key file", result.stderr)
+        self.assertIn("enabled FCM requires its credentials file", result.stderr)
         self.assertEqual(self.events("start"), [])
 
     def test_password_copy_mismatch_is_rejected(self):

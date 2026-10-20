@@ -235,7 +235,7 @@
       "id": "infra-probes-notification",
       "label": "Notification probes",
       "value": "/healthz200; /readyz DB + fresh JWKS + JWE keyring",
-      "description": "Readiness возвращает503 при отсутствии этих prerequisites; Redis, NATS и SMTP/APNs/FCM не опрашиваются probe-запросом.",
+      "description": "Readiness возвращает503 при отсутствии этих prerequisites; Redis, NATS и SMTP/FCM не опрашиваются probe-запросом.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/SystemController.kt",
         "line": 19
@@ -264,8 +264,8 @@
     {
       "id": "infra-providers-disabled",
       "label": "Push channels",
-      "value": "APNs/FCM disabled по default",
-      "description": "При включении deploy.sh добавляет отдельные compose overlays для credential mounts. Disabled channel не симулирует accepted delivery; real provider smoke не выполняется healthcheck.",
+      "value": "FCM disabled по default для Android и iOS",
+      "description": "При включении deploy.sh добавляет compose.fcm.yaml для credential mount. Ключ Apple загружается в Firebase. Disabled channel не симулирует accepted delivery; real provider smoke не выполняется healthcheck.",
       "source": {
         "path": "deploy/production/README.md",
         "line": 111
@@ -288,7 +288,7 @@
       "description": "Identity получает private JWT signing key и public Notification RSA key. Notification получает private JWE key и public JWT keys через HTTPS JWKS. Реальные secret values и cloud IDs здесь не приводятся.",
       "source": {
         "path": "deploy/production/README.md",
-        "line": 122
+        "line": 133
       }
     },
     {
@@ -298,7 +298,7 @@
       "description": "current.env обновляется только после readiness; pending.env записывается до restart. Rollback восстанавливает только затронутые приложения, не откатывает миграции/broker config/provider effects.",
       "source": {
         "path": "deploy/production/README.md",
-        "line": 271
+        "line": 286
       }
     },
     {
@@ -398,7 +398,7 @@
           "detail": "Deploy запускает PostgreSQL/NATS и ждёт их health перед provisioning и перезапуском приложений.",
           "source": {
             "path": "deploy/production/deploy.sh",
-            "line": 383
+            "line": 386
           }
         },
         {
@@ -407,7 +407,7 @@
           "detail": "Отдельный one-shot создаёт отсутствующую Notification DB/роли и converges grants на существующем volume; приложению admin secret не выдаётся.",
           "source": {
             "path": "deploy/production/deploy.sh",
-            "line": 386
+            "line": 389
           }
         },
         {
@@ -425,16 +425,16 @@
           "detail": "Deploy пытается запустить Redis; при отказе сообщает о PostgreSQL scheduler fallback и может продолжить rollout.",
           "source": {
             "path": "deploy/production/deploy.sh",
-            "line": 388
+            "line": 391
           }
         },
         {
           "node": "identity",
           "label": "Journal до restart",
-          "detail": "pending.env сохраняет old/new image pair и attempted services. Перезапускаются только выбранные сервисы в порядке Identity, Notification.",
+          "detail": "pending.env сохраняет old/new image pair и attempted services. Перезапускаются только выбранные сервисы в порядке Identity, Notification. Notification останавливается перед новым JVM/Flyway, чтобы старые workers не пересекались с V006.",
           "source": {
             "path": "deploy/production/deploy.sh",
-            "line": 398
+            "line": 401
           }
         },
         {
@@ -443,7 +443,7 @@
           "detail": "После container health и published-port readiness обоих выбранных сервисов атомарно фиксируется current.env. При failure recovery восстанавливает attempted services в обратном порядке; DB/Flyway не откатываются.",
           "source": {
             "path": "deploy/production/deploy.sh",
-            "line": 403
+            "line": 406
           }
         }
       ]
@@ -496,7 +496,7 @@
           "detail": "Readiness требует PostgreSQL, fresh JWKS cache и usable JWE keys. Новую private JWE key устанавливают у Notification до переключения public encryption key у Identity.",
           "source": {
             "path": "deploy/production/README.md",
-            "line": 127
+            "line": 138
           }
         }
       ]

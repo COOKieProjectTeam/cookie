@@ -1,7 +1,6 @@
 package com.cookie.notification.delivery
 
 import com.cookie.notification.application.ports.PushEligibility
-import com.cookie.notification.config.ApnsProperties
 import com.cookie.notification.config.DeliveryProperties
 import com.cookie.notification.config.FcmProperties
 import com.cookie.notification.domain.DevicePlatform
@@ -233,9 +232,44 @@ class PushSubmissionIntegrationTest {
             .isAfterOrEqualTo(firstSubmission.plus(Duration.ofHours(2)))
     }
 
-    private fun createJob(user: UUID, token: String, kind: String = "FOOD"): DeliveryJob {
+    @ParameterizedTest
+    @ValueSource(strings = ["IOS", "ANDROID"])
+    fun `FCM unregistered disables only the submitted registration revision`(platform: String) {
+        val user = UUID.randomUUID()
+        val job = createJob(user, "MiXeD:old-fcm-token", platform = DevicePlatform.valueOf(platform))
+        val sentTarget = requireNotNull(deliveries.currentPushTarget(job))
+        worker(eligibility, 404, fcmError("UNREGISTERED")).process(job)
+        assertThat(requests.get()).isEqualTo(1)
+        assertThat(status(job)).isEqualTo("FAILED")
+        assertThat(jdbc.queryForObject("SELECT enabled FROM push_devices WHERE id=?", Boolean::class.java, sentTarget.deviceId))
+            .isFalse()
+        val current = notifications.registerDevice(user,
+            RegisterDevice(DevicePlatform.valueOf(platform), "installation", "MiXeD:new-fcm-token")).device
+        assertThat(current.id).isEqualTo(sentTarget.deviceId)
+        // A delayed result from the old delivery cannot disable the refreshed registration.
+        deliveries.invalidateDevice(sentTarget)
+        assertThat(jdbc.queryForObject("SELECT enabled FROM push_devices WHERE id=?", Boolean::class.java, current.id))
+            .isTrue()
+        assertThat(jdbc.queryForObject("SELECT push_token FROM push_devices WHERE id=?", String::class.java, current.id))
+            .isEqualTo("MiXeD:new-fcm-token")
+    }
+
+    @Test fun `FCM Apple credentials error keeps iOS registration and retry budget intact`() {
+        val job = createJob(UUID.randomUUID(), "MiXeD:ios-fcm-token", platform = DevicePlatform.IOS)
+        worker(eligibility, 401, fcmError("THIRD_PARTY_AUTH_ERROR")).process(job)
+        assertThat(requests.get()).isEqualTo(1)
+        assertThat(status(job)).isEqualTo("PENDING")
+        assertThat(jdbc.queryForObject("SELECT last_code FROM delivery_jobs WHERE id=?", String::class.java, job.id))
+            .isEqualTo("FCM_THIRD_PARTY_AUTH")
+        assertThat(jdbc.queryForObject("SELECT provider_failure_count FROM delivery_jobs WHERE id=?", Int::class.java, job.id))
+            .isZero()
+        assertThat(jdbc.queryForObject("SELECT enabled FROM push_devices WHERE id=?", Boolean::class.java, job.deviceId))
+            .isTrue()
+    }
+
+    private fun createJob(user: UUID, token: String, kind: String = "FOOD", platform: DevicePlatform = DevicePlatform.ANDROID): DeliveryJob {
         val baseline = Instant.now().minus(Duration.ofHours(6))
-        val device = notifications.registerDevice(user, RegisterDevice(DevicePlatform.ANDROID, "installation", token)).device
+        val device = notifications.registerDevice(user, RegisterDevice(platform, "installation", token)).device
         notifications.updateSettings(user, SettingsPatch(timezone = "UTC", quietStart = LocalTime.MIDNIGHT, quietEnd = LocalTime.MIDNIGHT))
         jdbc.update("""UPDATE settings SET scheduling_started_at=?,food_started_at=?,water_started_at=? WHERE user_id=?""",
             Timestamp.from(baseline), Timestamp.from(baseline), Timestamp.from(baseline), user)
@@ -248,14 +282,18 @@ class PushSubmissionIntegrationTest {
         return deliveries.claim(1).single()
     }
 
-    private fun worker(policy: PushEligibility, response: () -> Unit = {}): DeliveryWorker {
+    private fun fcmError(code: String) =
+        """{"error":{"details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"$code"}]}}"""
+
+    private fun worker(policy: PushEligibility, responseStatus: Int = 200,
+                       responseBody: String = """{"name":"test-message"}""", response: () -> Unit = {}): DeliveryWorker {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).also(servers::add)
         server.createContext("/") { exchange ->
             exchange.requestBody.readAllBytes()
             requests.incrementAndGet()
             response()
-            val bytes = """{"name":"test-message"}""".toByteArray()
-            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            val bytes = responseBody.toByteArray()
+            exchange.sendResponseHeaders(responseStatus, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }
         }
         server.start()
@@ -264,7 +302,6 @@ class PushSubmissionIntegrationTest {
         val clock = Clock.systemUTC()
         return DeliveryWorker(deliveries, mock(VerificationPayloadDecryptor::class.java),
             VerificationSender { _, _ -> error("Only push is expected") },
-            ApnsPushSender(ApnsProperties(), http, mapper, templates, clock),
             FcmPushSender(FcmProperties(true, "unused", "cookie-test", URI.create("http://127.0.0.1:${server.address.port}")),
                 FcmAccessToken { "test-token" }, http, mapper, templates, clock),
             policy, clock, DeliveryProperties(), DeliveryMetrics(jdbc, meters)).also(workers::add)

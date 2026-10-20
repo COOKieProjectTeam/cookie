@@ -45,7 +45,8 @@ class JdbcNotificationRepository(
 
     override fun registerDevice(userId: UUID, command: RegisterDevice): DeviceRegistration = transaction(userId) {
         ensureSettings(userId)
-        val token = command.canonicalToken
+        // FCM registration tokens are opaque and case-sensitive on both platforms.
+        val token = command.token
         // Serialize token movement across accounts; a token belongs to one active installation.
         jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Any::class.java, "notification:token:${command.platform}:$token")
         // Compare the complete token as well: a digest collision must never transfer another token.

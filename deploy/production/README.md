@@ -27,7 +27,7 @@ is removed. `/healthz` and `/readyz` remain private. Keep the existing gateway
 resource/issuer when adding Notification; a new public origin is not required.
 
 Both services join the ordinary `edge` bridge. Notification uses it for outbound
-HTTPS (JWKS, APNs, FCM) and SMTP with STARTTLS. PostgreSQL, NATS and Redis join only
+HTTPS (JWKS and FCM) and SMTP with STARTTLS. PostgreSQL, NATS and Redis join only
 the internal `backend` bridge, with no host ports. Redis is authenticated and has
 no volume, snapshots or AOF: it can be rebuilt from Notification's PostgreSQL
 state. The application falls back to its PostgreSQL deadline query during Redis
@@ -73,9 +73,9 @@ bind IPs to `0.0.0.0` behind the Terraform gateway, set the exact HTTPS Identity
 issuer, and use `<issuer>/v1/auth/jwks` for `COOKIE_IDENTITY_JWKS_URL`. Configure a
 real application verification-page URL; the email link must not target Identity's
 JSON POST confirmation operation. Configure the SMTP sender and Message-ID
-domain. Configure APNs team/key/topic and FCM project identifiers when enabling
-those channels. Never put raw
-passwords, keys or credential JSON in this file, Git or Terraform state.
+domain. Configure the Firebase project ID when enabling push for Android and
+iOS. Never put raw passwords, keys or credential JSON in this file, Git or
+Terraform state.
 
 Provision the following files out of band. Private files use mode `0400`; every
 path in the table is relative to `/srv/cookie/secrets`.
@@ -97,7 +97,7 @@ path in the table is relative to `/srv/cookie/secrets`.
 | `redis/password` | `999:999` | Random Redis ACL password |
 | `notification/spring.data.redis.password` | `10001:10001` | Exact copy of Redis password |
 | `notification/cookie.notification.delivery.smtp.password` | `10001:10001` | SMTP password |
-| `notification/apns-key.p8`, `notification/fcm-credentials.json` | `10001:10001` | Provider authentication material |
+| `notification/fcm-credentials.json` | `10001:10001` | Firebase service-account credentials for Android and iOS push |
 | `nats/auth.conf`, `nats/server.key`, `nats/stream-admin.creds` | `1000:1000` | Operator/account config, server TLS key and deployment credential |
 | `nats/ca.crt`, `nats/server.crt` | `root:root`, `0444` | CA and server certificate with DNS SAN `nats` |
 
@@ -108,14 +108,25 @@ private and owner UIDs match. Spring reads scalar secrets through
 variable. Each JKS contains the NATS CA, and hostname verification remains on.
 Recheck image UID assumptions when changing pinned images.
 
-APNs/FCM are disabled by default and need no provider credential files while
-disabled. To enable a channel, install its credential file, set its required
-fields and `COOKIE_APNS_ENABLED=true` or `COOKIE_FCM_ENABLED=true`. The deploy
-script automatically adds `compose.apns.yaml` and/or `compose.fcm.yaml` so only
-enabled provider secrets are mounted. Manual Compose commands must pass the
-same overlays when enabling providers. Disabled channels do not report a fake
-successful delivery. Production startup validates enabled-provider settings;
-local development uses Mailpit and disabled push adapters.
+FCM is the sole push provider called by Notification for both Android and iOS.
+Upload the Apple APNs authentication key to the Firebase project's Apple app
+configuration; Firebase delivers iOS messages through APNs. Notification does
+not mount an Apple key or connect directly to APNs.
+
+Push is disabled by default and needs no Firebase credential file while
+disabled. To enable both platforms, install `notification/fcm-credentials.json`,
+set `COOKIE_FCM_PROJECT_ID` and `COOKIE_FCM_ENABLED=true`. The deploy script
+automatically adds `compose.fcm.yaml` to mount the credential file. Manual
+Compose commands must pass the same overlay when enabling push. Disabled push
+does not report a fake successful delivery. Production startup validates the
+enabled FCM settings; local development uses Mailpit and disabled push.
+
+The mobile apps must register their Firebase Messaging registration token,
+including on iOS. Tokens are opaque and case-sensitive; a native APNs device
+token cannot be converted into an FCM token. Migration V006 disables all existing
+iOS device registrations and cancels their pending or claimed push jobs. Users
+must open the updated iOS app and re-register its FCM token before iOS push can
+resume. The migration preserves terminal delivery history and email jobs.
 
 ### Key rotation
 
@@ -230,7 +241,6 @@ sudo docker compose \
   --cookie.notification.consumer-enabled=false \
   --cookie.notification.scheduler-enabled=false \
   --cookie.notification.delivery.enabled=false \
-  --cookie.notification.delivery.apns.enabled=false \
   --cookie.notification.delivery.fcm.enabled=false \
   --cookie.notification.operator-nats-credentials-path=/run/secrets/operator.creds \
   --notification-replay-id='<quarantine-UUID>'
@@ -264,7 +274,12 @@ recorded.
 Deployment serializes with `/run/lock/cookie-production-deploy.lock`, gets a
 short-lived registry token, validates/pulls immutable artifacts, starts shared
 infrastructure, provisions Notification's DB and durable consumer, then starts
-only requested services. Container and published-port readiness must pass.
+only requested services. Notification is explicitly stopped before its replacement
+starts, including recovery and rollback; Flyway then runs inside the new process.
+This coordinated restart prevents old APNs workers from overlapping migration
+V006 or new FCM token registration. Do not run extra old Notification replicas
+or a separate migrator alongside this rollout. Container and published-port
+readiness must pass.
 Redis failure permits PostgreSQL scheduling fallback. No deploy step sends a
 real email or push as a health check.
 
@@ -280,7 +295,12 @@ It never sources release/journal text as shell code.
 An image rollback does **not** roll back Flyway, provider requests, Redis state,
 NATS stream configuration, secrets, or deployment-bundle changes. Keep migrations
 forward-compatible with the previous image and review bundle/secret compatibility
-before rollout. An incompatible migration is a restore/incident operation.
+before rollout. Rolling back the image after V006 does not reactivate old iOS
+tokens or restore the old token format. Recover with an FCM-capable image; if an
+older image is temporarily required for incident recovery, keep push disabled
+until the FCM-capable service is restored. Never send newly registered FCM tokens
+through the old direct APNs adapter. An incompatible migration is a
+restore/incident operation.
 
 Before real traffic, verify gateway header/client-IP behavior, actual SMTP and
 push credentials in a controlled test, external HTTPS monitoring, snapshot/restore,
@@ -289,7 +309,7 @@ themselves.
 
 ## Disposable production rehearsal in CI
 
-The `Production container rehearsal` job builds both real service Dockerfiles
+The `Production deployment rehearsal` job builds both real service Dockerfiles
 and runs `.github/scripts/test-production-containers.py` as root on a fresh
 Linux GitHub runner. It refuses an existing `/srv/cookie` or deployment lock.
 The test generates short-lived JWKs, a CA and certificates, JKS truststores,
@@ -306,8 +326,10 @@ accepts email only after STARTTLS and authentication.
 
 The rehearsal covers a fresh two-service installation, invalid secret-mode
 rejection, and registration → encrypted event → SMTP → confirmation → JWT
-authenticated Notification API. A second run first starts only the actual
-Identity image and populates its real schema through registration, then adds
+authenticated Notification API, including opaque 4096-character Android and
+mixed-case iOS FCM token registration through the runtime database role. A second
+run first starts only the actual Identity image and populates its real schema
+through registration, then adds
 Notification to that same PostgreSQL directory. It verifies data preservation
 and that Identity's container ID does not change during Notification installation,
 independent rollout, failed-image rollback and recovery after a SIGKILL leaves

@@ -161,11 +161,6 @@ validate_secret_layout() {
     || die "PostgreSQL and Notification runtime-password copies do not match"
   cmp -s "${secret_root}/postgres/notification-migration-password" "${secret_root}/notification/spring.flyway.password" \
     || die "PostgreSQL and Notification migration-password copies do not match"
-  if [[ "${COOKIE_APNS_ENABLED:-false}" == true ]]; then
-    [[ -n "${COOKIE_APNS_KEY_ID:-}" && -n "${COOKIE_APNS_TEAM_ID:-}" && -n "${COOKIE_APNS_TOPIC:-}" ]] || die "enabled APNs requires key ID, team ID and topic"
-    [[ -s "${secret_root}/notification/apns-key.p8" ]] || die "enabled APNs requires its private key file"
-    require_private_file "${secret_root}/notification/apns-key.p8" 10001
-  fi
   if [[ "${COOKIE_FCM_ENABLED:-false}" == true ]]; then
     [[ -n "${COOKIE_FCM_PROJECT_ID:-}" ]] || die "enabled FCM requires its project ID"
     [[ -s "${secret_root}/notification/fcm-credentials.json" ]] || die "enabled FCM requires its credentials file"
@@ -236,9 +231,16 @@ read_pending() {
 }
 compose() {
   local files=(--file "$COMPOSE_FILE")
-  [[ "${COOKIE_APNS_ENABLED:-false}" != true ]] || files+=(--file "${BUNDLE_DIR}/compose.apns.yaml")
   [[ "${COOKIE_FCM_ENABLED:-false}" != true ]] || files+=(--file "${BUNDLE_DIR}/compose.fcm.yaml")
   docker compose --project-directory "$BUNDLE_DIR" --env-file "$CONFIG_ENV" "${files[@]}" "$@"
+}
+recreate_service() {
+  local service="$1"
+  # Flyway runs in the new JVM. Stop old push workers before a token migration.
+  if [[ "$service" == notification ]]; then
+    compose stop "$service" || return 1
+  fi
+  compose up --detach --no-deps --force-recreate --pull never "$service"
 }
 wait_for_healthy() {
   local service="$1" deadline=$((SECONDS + $2)) status='' container_id
@@ -287,7 +289,7 @@ recover_pending() {
     fi
     printf 'deploy: restoring previous %s image %s\n' "$service" "$previous" >&2
     if ! docker image inspect "$previous" >/dev/null 2>&1 && ! docker pull "$previous"; then failed=true; continue; fi
-    if ! compose up --detach --no-deps --force-recreate --pull never "$service" \
+    if ! recreate_service "$service" \
       || ! wait_for_healthy "$service" "$HEALTH_TIMEOUT_SECONDS" || ! wait_for_published "$service"; then
       printf 'deploy: %s rollback failed; check forward-compatible migrations before manual recovery\n' "$service" >&2
       failed=true
@@ -345,9 +347,10 @@ main() {
   [[ -z "$requested_notification" ]] || validate_image notification "$requested_notification"
   require_protected_directory "${COOKIE_DATA_ROOT}/postgres" 70
   require_protected_directory "${COOKIE_DATA_ROOT}/nats" 1000
-  for service in "${COOKIE_APNS_ENABLED:-false}" "${COOKIE_FCM_ENABLED:-false}"; do
-    [[ "$service" == true || "$service" == false ]] || die "provider enabled flags must be true or false"
-  done
+  case "${COOKIE_FCM_ENABLED:-false}" in
+    true|false) ;;
+    *) die "COOKIE_FCM_ENABLED must be true or false" ;;
+  esac
   validate_secret_layout "$COOKIE_SECRET_ROOT"
   mkdir -p -- "$(dirname "$LOCK_FILE")"
   exec 9>"$LOCK_FILE"
@@ -396,7 +399,7 @@ main() {
     if [[ "$service" == notification && "$notification_changed" == false ]]; then continue; fi
     PENDING_ATTEMPTED="${PENDING_ATTEMPTED:+${PENDING_ATTEMPTED},}${service}"
     write_pending
-    compose up --detach --no-deps --force-recreate --pull never "$service" || die "$service failed to start"
+    recreate_service "$service" || die "$service failed to start"
     wait_for_healthy "$service" "$HEALTH_TIMEOUT_SECONDS" || die "$service failed readiness"
     wait_for_published "$service" || die "$service published port failed readiness"
   done

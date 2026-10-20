@@ -1,6 +1,6 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-09-17
+updated_at: 2026-10-20
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
   authority: docs/architecture/README.md
@@ -229,7 +229,7 @@ services:
       - keyspace: reminder_deadlines
         data: ephemeral queue/index of due reminder deadlines
     synchronous_dependencies: [identity]
-    external_dependencies: [apns, fcm, smtp]
+    external_dependencies: [fcm, smtp]
 
   - id: media
     name: Media Service
@@ -264,6 +264,7 @@ external_systems:
     name: Android Health Connect
   - id: apns
     name: Apple Push Notification service
+    purpose: downstream iOS delivery managed by FCM, not a direct Notification dependency
   - id: fcm
     name: Firebase Cloud Messaging
   - id: smtp

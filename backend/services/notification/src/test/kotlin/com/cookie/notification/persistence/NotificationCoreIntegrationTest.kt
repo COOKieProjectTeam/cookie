@@ -1,6 +1,7 @@
 package com.cookie.notification.persistence
 
 import com.cookie.notification.delivery.JdbcDeliveryRepository
+import com.cookie.notification.delivery.PushTarget
 import com.cookie.notification.application.ports.DeliveryQueue
 import com.cookie.notification.application.ports.ReminderDeadlineIndex
 import com.cookie.notification.messaging.NotificationRetention
@@ -13,6 +14,8 @@ import org.assertj.core.api.Assertions.*
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.MigrationVersion
 import org.junit.jupiter.api.*
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
 import org.mockito.Mockito.*
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration
@@ -136,44 +139,60 @@ class NotificationCoreIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT row_to_json(q)::text FROM message_quarantine q",String::class.java)).doesNotContain("sensitive-payload")
         assertThat(jdbc.queryForObject("SELECT stream_sequence FROM message_quarantine",Long::class.java)).isEqualTo(42)
     }
-    @Test fun `push token can move accounts but only current owner has an active device`() {
+    @ParameterizedTest
+    @EnumSource(DevicePlatform::class)
+    fun `push token can move accounts but only current owner has an active device`(platform: DevicePlatform) {
         val first=UUID.randomUUID();val second=UUID.randomUUID()
-        repository.registerDevice(first,RegisterDevice(DevicePlatform.IOS,"a","token"))
-        repository.registerDevice(second,RegisterDevice(DevicePlatform.IOS,"b","token"))
+        repository.registerDevice(first,RegisterDevice(platform,"a","token"))
+        repository.registerDevice(second,RegisterDevice(platform,"b","token"))
         assertThat(jdbc.queryForObject("SELECT user_id FROM push_devices WHERE enabled",UUID::class.java)).isEqualTo(second)
     }
-    @Test fun `maximum length incompressible token registers and transfers with a fixed size index key`() {
+    @ParameterizedTest
+    @EnumSource(DevicePlatform::class)
+    fun `maximum length incompressible token registers and transfers with a fixed size index key`(platform: DevicePlatform) {
         val random=kotlin.random.Random(29814)
         val alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
         val token=buildString { repeat(4096) { append(alphabet[random.nextInt(alphabet.length)]) } }
         val first=UUID.randomUUID();val second=UUID.randomUUID()
-        val registered=repository.registerDevice(first,RegisterDevice(DevicePlatform.ANDROID,"first",token))
-        val transferred=repository.registerDevice(second,RegisterDevice(DevicePlatform.ANDROID,"second",token))
+        val registered=repository.registerDevice(first,RegisterDevice(platform,"first",token))
+        val transferred=repository.registerDevice(second,RegisterDevice(platform,"second",token))
         assertThat(registered.device.token).isEqualTo(token)
         assertThat(transferred.device.token).isEqualTo(token)
         assertThat(jdbc.queryForObject("SELECT user_id FROM push_devices WHERE enabled",UUID::class.java)).isEqualTo(second)
         assertThat(jdbc.queryForObject("SELECT octet_length(push_token_hash) FROM push_devices WHERE enabled",Int::class.java)).isEqualTo(32)
         assertThat(repository.devices(first)).isEmpty()
     }
-    @Test fun `APNs case aliases transfer one canonical token between accounts`() {
+    @ParameterizedTest
+    @EnumSource(DevicePlatform::class)
+    fun `FCM token case is significant even when the token looks hexadecimal`(platform: DevicePlatform) {
         val first=UUID.randomUUID();val second=UUID.randomUUID()
         val upper="AB12".repeat(16);val lower=upper.lowercase()
-        assertThat(repository.registerDevice(first,RegisterDevice(DevicePlatform.IOS,"iphone-a",upper)).device.token).isEqualTo(lower)
-        assertThat(repository.registerDevice(second,RegisterDevice(DevicePlatform.IOS,"iphone-b",lower)).device.token).isEqualTo(lower)
-        assertThat(jdbc.queryForList("SELECT push_token FROM push_devices",String::class.java)).containsOnly(lower)
-        assertThat(jdbc.queryForObject("SELECT user_id FROM push_devices WHERE enabled",UUID::class.java)).isEqualTo(second)
-        assertThat(repository.devices(first)).isEmpty()
-    }
-    @Test fun `FCM token case is significant even when the token looks hexadecimal`() {
-        val first=UUID.randomUUID();val second=UUID.randomUUID()
-        val upper="AB12".repeat(16);val lower=upper.lowercase()
-        repository.registerDevice(first,RegisterDevice(DevicePlatform.ANDROID,"android-a",upper))
-        repository.registerDevice(second,RegisterDevice(DevicePlatform.ANDROID,"android-b",lower))
+        repository.registerDevice(first,RegisterDevice(platform,"phone-a",upper))
+        repository.registerDevice(second,RegisterDevice(platform,"phone-b",lower))
         assertThat(repository.devices(first).single().token).isEqualTo(upper)
         assertThat(repository.devices(second).single().token).isEqualTo(lower)
         assertThat(jdbc.queryForObject("SELECT count(DISTINCT push_token_hash) FROM push_devices WHERE enabled",Int::class.java)).isEqualTo(2)
     }
-    @Test fun `V4 upgrades V3 token aliases preserving the latest active owner and SQL inserts`() {
+    @Test fun `concurrent iOS FCM token transfers preserve one owner and stale responses cannot disable re-registration`() {
+        val token="AB12".repeat(16)
+        val originalUser=UUID.randomUUID()
+        val original=repository.registerDevice(originalUser,RegisterDevice(DevicePlatform.IOS,"iphone",token)).device
+        val originalRevision=jdbc.queryForObject("SELECT updated_at FROM push_devices WHERE id=?",Timestamp::class.java,original.id)!!.toInstant()
+        val stale=PushTarget(original.id,"IOS",token,originalRevision)
+        val users=(1..6).map { UUID.randomUUID() }
+        users.map { user -> CompletableFuture.runAsync {
+            repository.registerDevice(user,RegisterDevice(DevicePlatform.IOS,"iphone",token))
+        } }.forEach { it.join() }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM push_devices WHERE enabled",Int::class.java)).isEqualTo(1)
+        assertThat(repository.devices(originalUser)).isEmpty()
+
+        // Even an identical token refreshed on the original installation is a new revision.
+        repository.registerDevice(originalUser,RegisterDevice(DevicePlatform.IOS,"iphone",token))
+        deliveries.invalidateDevice(stale)
+        assertThat(repository.devices(originalUser).single().token).isEqualTo(token)
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM push_devices WHERE enabled",Int::class.java)).isEqualTo(1)
+    }
+    @Test fun `historical V4 upgrades V3 APNs aliases preserving the latest active owner and SQL inserts`() {
         val schema="notification_upgrade_${UUID.randomUUID().toString().replace("-","")}"
         jdbc.execute("CREATE SCHEMA $schema")
         try {
@@ -213,6 +232,97 @@ class NotificationCoreIntegrationTest {
                 VALUES (?,?,'IOS','new-iphone',?,clock_timestamp(),clock_timestamp())""",added,UUID.randomUUID(),"EF12".repeat(16))
             assertThat(jdbc.queryForObject("SELECT push_token FROM $schema.push_devices WHERE id=?",String::class.java,added)).isEqualTo("ef12".repeat(16))
             assertThat(jdbc.queryForObject("SELECT octet_length(push_token_hash) FROM $schema.push_devices WHERE id=?",Int::class.java,added)).isEqualTo(32)
+        } finally {
+            jdbc.execute("DROP SCHEMA $schema CASCADE")
+        }
+    }
+    @Test fun `V6 disables legacy iOS tokens and cancels active jobs while preserving Android terminal and email state`() {
+        val schema="notification_fcm_upgrade_${UUID.randomUUID().toString().replace("-","")}"
+        jdbc.execute("CREATE SCHEMA $schema")
+        try {
+            Flyway.configure().dataSource(source).schemas(schema).defaultSchema(schema)
+                .target(MigrationVersion.fromVersion("5")).load().migrate()
+            val upgradeSource=DriverManagerDataSource(postgres.jdbcUrl,postgres.username,postgres.password).apply {
+                setConnectionProperties(java.util.Properties().apply { setProperty("currentSchema",schema) })
+            }
+            val previous=JdbcTemplate(upgradeSource)
+            val manager=DataSourceTransactionManager(upgradeSource)
+            val upgradedRepository=JdbcNotificationRepository(previous,TransactionTemplate(manager))
+            val upgradedDeliveries=JdbcDeliveryRepository(previous,manager)
+            val user=UUID.randomUUID()
+            val ios=upgradedRepository.registerDevice(user,RegisterDevice(DevicePlatform.IOS,"iphone","ab12".repeat(16))).device
+            val disabledIos=upgradedRepository.registerDevice(user,RegisterDevice(DevicePlatform.IOS,"old-iphone","cd34".repeat(16))).device
+            previous.update("UPDATE push_devices SET enabled=false WHERE id=?",disabledIos.id)
+            val android=upgradedRepository.registerDevice(user,RegisterDevice(DevicePlatform.ANDROID,"android","Opaque-FCM-Token")).device
+            val oldRevision=previous.queryForObject("SELECT updated_at FROM push_devices WHERE id=?",Timestamp::class.java,ios.id)!!.toInstant()
+            val androidBefore=previous.queryForObject("SELECT row_to_json(d)::text FROM push_devices d WHERE id=?",String::class.java,android.id)
+            val allStates=listOf("PENDING","CLAIMED","ACCEPTED","FAILED","UNKNOWN","CANCELLED","EXPIRED")
+            val iosJobs=mutableMapOf<String,UUID>()
+            val unchangedJobs=mutableListOf<UUID>()
+            fun pushJob(device: PushDevice,status: String): UUID {
+                val id=UUID.randomUUID()
+                val lease=if(status=="CLAIMED") UUID.randomUUID() else null
+                previous.update("""INSERT INTO delivery_jobs(id,dedup_key,channel,user_id,device_id,kind,expires_at,status,
+                    lease_token,lease_until,finished_at) VALUES (?,?,'PUSH',?,?,'FOOD',clock_timestamp()+interval '1 hour',?,
+                    ?,?,?)""",id,"push:$id",user,device.id,status,lease,
+                    lease?.let { Timestamp.from(Instant.now().plusSeconds(120)) },
+                    if(status in setOf("PENDING","CLAIMED")) null else Timestamp.from(Instant.now()))
+                if(lease!=null) previous.update("INSERT INTO delivery_attempts(id,delivery_id) VALUES (?,?)",lease,id)
+                return id
+            }
+            allStates.forEach { status ->
+                val iosJob=pushJob(ios,status)
+                iosJobs[status]=iosJob
+                if(status !in setOf("PENDING","CLAIMED")) unchangedJobs+=iosJob
+                unchangedJobs+=pushJob(android,status)
+            }
+            val disabledIosJob=pushJob(disabledIos,"PENDING")
+            listOf("PENDING","SMTP_SUBMITTING","UNKNOWN").forEach { status ->
+                val id=UUID.randomUUID()
+                val lease=if(status=="SMTP_SUBMITTING") UUID.randomUUID() else null
+                previous.update("""INSERT INTO delivery_jobs(id,dedup_key,channel,registration_attempt_id,kind,
+                    encrypted_payload,expires_at,status,lease_token,lease_until,finished_at)
+                    VALUES (?,?,'EMAIL',?,'EMAIL_VERIFICATION',?,clock_timestamp()+interval '1 hour',?,?,?,?)""",
+                    id,"email:$id",UUID.randomUUID(),if(status=="UNKNOWN") null else "opaque-jwe",status,lease,
+                    lease?.let { Timestamp.from(Instant.now().plusSeconds(120)) },
+                    if(status=="UNKNOWN") Timestamp.from(Instant.now()) else null)
+                unchangedJobs+=id
+            }
+            val snapshots=unchangedJobs.associateWith { id ->
+                previous.queryForObject("SELECT row_to_json(j)::text FROM delivery_jobs j WHERE id=?",String::class.java,id)
+            }
+
+            Flyway.configure().dataSource(source).schemas(schema).defaultSchema(schema)
+                .target(MigrationVersion.fromVersion("6")).load().migrate()
+
+            assertThat(previous.queryForObject("SELECT count(*) FROM push_devices WHERE platform='IOS' AND enabled",Int::class.java)).isZero()
+            assertThat(previous.queryForObject("SELECT updated_at FROM push_devices WHERE id=?",Timestamp::class.java,ios.id)!!.toInstant()).isAfter(oldRevision)
+            assertThat(previous.queryForObject("SELECT row_to_json(d)::text FROM push_devices d WHERE id=?",String::class.java,android.id)).isEqualTo(androidBefore)
+            (listOf(iosJobs.getValue("PENDING"),iosJobs.getValue("CLAIMED"),disabledIosJob)).forEach { id ->
+                val row=previous.queryForMap("SELECT status,last_code,lease_token,lease_until,finished_at FROM delivery_jobs WHERE id=?",id)
+                assertThat(row["status"]).isEqualTo("CANCELLED")
+                assertThat(row["last_code"]).isEqualTo("IOS_FCM_REREGISTRATION_REQUIRED")
+                assertThat(row["lease_token"]).isNull()
+                assertThat(row["lease_until"]).isNull()
+                assertThat(row["finished_at"]).isNotNull()
+            }
+            assertThat(previous.queryForObject("SELECT outcome FROM delivery_attempts WHERE delivery_id=?",String::class.java,iosJobs.getValue("CLAIMED"))).isEqualTo("CANCELLED")
+            assertThat(previous.queryForObject("SELECT finished_at FROM delivery_attempts WHERE delivery_id=?",Timestamp::class.java,iosJobs.getValue("CLAIMED"))).isNotNull()
+            snapshots.forEach { (id,snapshot) ->
+                assertThat(previous.queryForObject("SELECT row_to_json(j)::text FROM delivery_jobs j WHERE id=?",String::class.java,id)).isEqualTo(snapshot)
+            }
+
+            // A current client can refresh the same installation using its exact FCM token.
+            val fcm="EF56".repeat(16)
+            val refreshed=upgradedRepository.registerDevice(user,RegisterDevice(DevicePlatform.IOS,"iphone",fcm))
+            assertThat(refreshed.created).isFalse()
+            assertThat(refreshed.device.id).isEqualTo(ios.id)
+            assertThat(refreshed.device.token).isEqualTo(fcm)
+            upgradedDeliveries.invalidateDevice(PushTarget(ios.id,"IOS",ios.token,oldRevision))
+            assertThat(upgradedRepository.devices(user).map { it.token }).containsExactlyInAnyOrder(fcm,android.token)
+            assertThat(previous.queryForObject("SELECT push_token FROM push_devices WHERE id=?",String::class.java,ios.id)).isEqualTo(fcm)
+            assertThat(previous.queryForObject("SELECT push_token_hash=sha256(convert_to(push_token,'UTF8')) FROM push_devices WHERE id=?",Boolean::class.java,ios.id)).isTrue()
+            assertThat(previous.queryForObject("SELECT status FROM delivery_jobs WHERE id=?",String::class.java,iosJobs.getValue("PENDING"))).isEqualTo("CANCELLED")
         } finally {
             jdbc.execute("DROP SCHEMA $schema CASCADE")
         }

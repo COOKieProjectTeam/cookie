@@ -44,7 +44,6 @@ class DeliveryWorker(
     private val repository: DeliveryRepository,
     private val decryptor: VerificationPayloadDecryptor,
     sender: VerificationSender,
-    private val apns: ApnsPushSender,
     private val fcm: FcmPushSender,
     private val eligibility: PushEligibility,
     private val clock: Clock,
@@ -112,15 +111,17 @@ class DeliveryWorker(
                     repository.retry(job, "QUIET_HOURS", Duration.between(clock.instant(), target.quietUntil).coerceAtLeast(Duration.ofSeconds(1)))
                     return@withPushSubmission
                 }
-                if (deferUnavailable(job, target.platform)) return@withPushSubmission
+                if (deferUnavailable(job, "FCM") || deferUnavailable(job, "FCM:${target.platform}")) return@withPushSubmission
                 val beforeSubmission = { repository.markPushSubmission(job) }
                 val result = when (target.platform) {
-                    "IOS" -> apns.send(job, target, beforeSubmission)
-                    "ANDROID" -> fcm.send(job, target, beforeSubmission)
+                    "IOS", "ANDROID" -> fcm.send(job, target, beforeSubmission)
                     else -> ProviderResult.Failed("UNSUPPORTED_PLATFORM")
                 }
                 if (result is ProviderResult.Failed && result.invalidDevice) repository.invalidateDevice(target)
-                applyResult(job, result, target.platform)
+                // Apple credentials belong to the iOS transport behind FCM; Android can still send.
+                val unavailableChannel = if (result is ProviderResult.Unavailable && result.code == "FCM_THIRD_PARTY_AUTH")
+                    "FCM:${target.platform}" else "FCM"
+                applyResult(job, result, "FCM", unavailableChannel)
             }
             if (!handled) repository.finish(job, "CANCELLED", "NO_LONGER_ELIGIBLE")
         }
@@ -134,13 +135,13 @@ class DeliveryWorker(
         return true
     }
 
-    private fun applyResult(job: DeliveryJob, result: ProviderResult, channel: String) {
+    private fun applyResult(job: DeliveryJob, result: ProviderResult, channel: String, unavailableChannel: String = channel) {
         when (result) {
             is ProviderResult.Accepted -> repository.finish(job, "ACCEPTED", "PROVIDER_ACCEPTED", result.messageId)
             is ProviderResult.Failed -> repository.finish(job, "FAILED", result.code)
             ProviderResult.Unknown -> repository.finish(job, "UNKNOWN", "SMTP_AMBIGUOUS")
             is ProviderResult.Unavailable -> {
-                unavailableUntil[channel] = clock.instant().plusSeconds(60)
+                unavailableUntil[unavailableChannel] = clock.instant().plusSeconds(60)
                 repository.retry(job, result.code, Duration.ofSeconds(60))
             }
             is ProviderResult.Retry -> {

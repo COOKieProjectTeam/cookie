@@ -69,13 +69,6 @@ cookie:
         from: ${COOKIE_SMTP_FROM:noreply@cookie.invalid}
         message-id-domain: ${COOKIE_SMTP_MESSAGE_ID_DOMAIN:notification.cookie.invalid}
         starttls-required: ${COOKIE_SMTP_STARTTLS_REQUIRED:true}
-      apns:
-        enabled: ${COOKIE_APNS_ENABLED:false}
-        key-path: ${COOKIE_APNS_KEY_PATH:}
-        key-id: ${COOKIE_APNS_KEY_ID:}
-        team-id: ${COOKIE_APNS_TEAM_ID:}
-        topic: ${COOKIE_APNS_TOPIC:}
-        base-url: ${COOKIE_APNS_BASE_URL:https://api.push.apple.com}
       fcm:
         enabled: ${COOKIE_FCM_ENABLED:false}
         project-id: ${COOKIE_FCM_PROJECT_ID:}

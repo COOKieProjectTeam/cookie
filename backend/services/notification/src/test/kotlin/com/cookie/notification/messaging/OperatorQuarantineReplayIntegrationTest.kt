@@ -293,7 +293,7 @@ class OperatorQuarantineReplayIntegrationTest {
                 "COOKIE_NATS_URL" to "nats://${nats.host}:${nats.getMappedPort(4222)}",
                 "COOKIE_NATS_CREDENTIALS_PATH" to credentials.runtime.toString(),
                 "COOKIE_IDENTITY_JWKS_URL" to "http://127.0.0.1:1/v1/auth/jwks",
-                "COOKIE_APNS_ENABLED" to "false", "COOKIE_FCM_ENABLED" to "false",
+                "COOKIE_FCM_ENABLED" to "false",
             ))
             redirectErrorStream(true)
             redirectOutput(log.toFile())

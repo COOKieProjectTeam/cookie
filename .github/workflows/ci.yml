@@ -320,10 +320,9 @@ jobs:
             --env-file deploy/production/.env.example \
             --file deploy/production/compose.yaml \
             config
-          COOKIE_APNS_ENABLED=true COOKIE_FCM_ENABLED=true docker compose \
+          COOKIE_FCM_ENABLED=true docker compose \
             --env-file deploy/production/.env.example \
             --file deploy/production/compose.yaml \
-            --file deploy/production/compose.apns.yaml \
             --file deploy/production/compose.fcm.yaml config
           for script in \
             deploy/production/deploy.sh \

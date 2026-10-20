@@ -70,3 +70,10 @@ index, public settings/devices and SMTP/APNs/FCM. Future event snapshots were
 clarified, and effective goals now come only through Progress. The live board
 could not be read due to authentication; these accepted Git changes supersede
 its older target depiction and await visual mirroring.
+
+## Push provider update (2026-10-20)
+
+The user selected FCM for both Android and iOS. ADR 0013 and the Git model now
+show Notification → FCM, with APNs only as Firebase's downstream iOS delivery.
+The live board has not been changed; its direct Notification → APNs edge is
+superseded. Both mobile platforms register opaque FCM tokens.

@@ -116,8 +116,8 @@
     {id:"notification_db",x:770,y:420,w:190,sub:"PostgreSQL · inbox / jobs",kind:"store"},
     {id:"redis",x:770,y:582,w:190,sub:"Индекс сроков · sorted set",kind:"store"},
     {id:"smtp",x:1047,y:35,w:165,sub:"Письма · TLS",kind:"external"},
-    {id:"apns",x:1047,y:184,w:165,sub:"Push · iOS",kind:"external"},
-    {id:"fcm",x:1047,y:333,w:165,sub:"Push · Android",kind:"external"}
+    {id:"fcm",x:1047,y:184,w:165,sub:"Push · Android / iOS",kind:"external"},
+    {id:"apns",x:1047,y:333,w:165,sub:"iOS · через Firebase",kind:"external"}
   ];
   const baseEdges = [
     {id:"client-gateway",from:"mobile_client",to:"gateway",kind:"http",label:"HTTPS",path:"M106 154V258",lx:118,ly:210},
@@ -130,8 +130,8 @@
     {id:"notification-db",from:"notification",to:"notification_db",kind:"store",label:"Inbox · расписание · jobs",path:"M885 228V420",lx:902,ly:389},
     {id:"notification-redis",from:"notification",to:"redis",kind:"store",label:"После commit",path:"M938 210H996V619H960",lx:1006,ly:550},
     {id:"notification-smtp",from:"notification",to:"smtp",kind:"http",label:"SMTP",path:"M938 174H1008V72H1047",lx:976,ly:115},
-    {id:"notification-apns",from:"notification",to:"apns",kind:"http",label:"HTTP/2",path:"M938 192H1023V221H1047",lx:962,ly:181},
-    {id:"notification-fcm",from:"notification",to:"fcm",kind:"http",label:"HTTPS",path:"M938 228H976V370H1047",lx:987,ly:359}
+    {id:"notification-fcm",from:"notification",to:"fcm",kind:"http",label:"FCM HTTP v1",path:"M938 192H1023V221H1047",lx:951,ly:181},
+    {id:"fcm-apns",from:"fcm",to:"apns",kind:"http",label:"Доставка iOS",path:"M1129 258V333",lx:1018,ly:300}
   ];
   function topology() {
     const nodes = baseNodes.map(n => ({...n, h:74}));
@@ -206,8 +206,8 @@
       nats:"Durable stream COOKIE_EVENTS, at-least-once. Реальный producer — Identity. Notification использует durable pull consumer; будущие producers пока представлены контрактами и fixtures.",
       redis:"Эфемерный индекс сроков Notification: только идентификаторы, версии и timestamps. Потеря Redis компенсируется PostgreSQL sweep и восстановлением индекса.",
       smtp:"Email provider. Сохраняется исходный JWE; адрес и одноразовый токен расшифровываются только в памяти. Неопределённый результат после SMTP_SUBMITTING заканчивается UNKNOWN без повторов.",
-      apns:"Apple Push Notification service. Адаптер реализован; production-канал требует credentials и включения. Подтверждение означает ACCEPTED, а не прочтение.",
-      fcm:"Firebase Cloud Messaging. Адаптер реализован; production-канал требует credentials и включения. Ответ об устаревшем токене отключает только отправленную версию."
+      apns:"Apple Push Notification service получает iOS-сообщения от Firebase. Ключ Apple загружается в Firebase; Notification не подключается к APNs напрямую. Подтверждение FCM означает ACCEPTED, а не прочтение.",
+      fcm:"Единый push-провайдер для Android и iOS: FCM HTTP v1. Оба клиента регистрируют непрозрачные FCM-токены. Для iOS Firebase пересылает сообщение в APNs. Требуются credentials и включение; устаревший токен отключается только для отправленной revision."
     };
     const relevantFacts = facts.filter(f=> f.service===owner || (["gateway","nats","redis"].includes(id) && f.service==="infrastructure") || (["smtp","apns","fcm"].includes(id)&&new RegExp(id,"i").test(JSON.stringify(f)))).slice(0,4);
     return `<div class="eyeline">${service ? statusPill(service.status) : '<span class="pill">Компонент</span>'}</div><h2>${esc(title(id))}</h2><p class="muted">${esc(infraDesc[id]||service?.purpose||"Внешняя зависимость целевой модели. Реализация и параметры уточняются вместе с сервисом.")}</p>${service?sourceLink(service.source,"Модель и descriptor"):""}

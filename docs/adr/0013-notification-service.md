@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-17
+- Updated: 2026-10-20 — FCM is the sole push submission provider for Android and iOS.
 - Supersedes: Identity-only deployment scope of ADR 0012; Notification target-only details in the August Miro snapshot.
 
 ## Decision
@@ -38,9 +39,19 @@ preferences and projections, calls the bounded provider adapter and records the
 outcome before releasing those locks. This intentionally serializes a token
 transfer or deletion with an in-flight submission; it cannot recall a request
 already submitted to a provider. The ingestion transaction never calls providers.
-IOS hexadecimal token identity is canonical lowercase; ANDROID tokens stay opaque.
+Both IOS and ANDROID register opaque, case-sensitive FCM registration tokens.
 A trigger-maintained SHA-256 digest provides bounded unique index entries without
 reducing the public token length limit.
+
+FCM HTTP v1 handles push submission for both platforms. For iOS, FCM forwards the
+message to APNs using the Apple credentials configured in Firebase; Notification
+does not connect to APNs or hold its signing key. Platform-specific expiry and
+collapse identifiers remain in the FCM payload. This keeps one backend provider
+integration while preserving Apple delivery semantics. SMTP remains the email
+channel. Mobile clients must integrate Firebase Messaging and send refreshed FCM
+tokens through the existing device API. Migration V006 disables legacy iOS APNs
+registrations and cancels their active push jobs; those tokens cannot be converted.
+Android registrations and terminal delivery evidence remain unchanged.
 
 Inbox, delivery and quarantine metadata are retained for 30 days. Poison-message
 quarantine stores identifiers, safe reason codes and content hashes, never payloads.

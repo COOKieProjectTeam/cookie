@@ -9,7 +9,7 @@
 | `apps/api` | временный legacy Go health-check без продуктовой логики |
 | `apps/mobile` | общий iOS/Android-клиент на Kotlin Multiplatform |
 | `backend/services/identity` | Kotlin/JVM Identity Service v1 (email/password) |
-| `backend/services/notification` | Notification: SMTP/APNs/FCM, inbox, Redis reminders, devices/settings |
+| `backend/services/notification` | Notification: SMTP email, FCM push for Android/iOS, inbox, Redis reminders, devices/settings |
 | `backend/tools/service-template` | воспроизводимый Kotlin service scaffold |
 | `backend/platform` | тонкие Kotlin runtime/test starters |
 | `backend/tools/notification-sink` | отдельный legacy development sink, не используется по умолчанию |

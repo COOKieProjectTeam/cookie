@@ -1,6 +1,5 @@
 package com.cookie.notification.config
 
-import com.cookie.notification.delivery.ApnsPushSender
 import com.cookie.notification.delivery.FcmPushSender
 import com.cookie.notification.delivery.GoogleFcmAccessToken
 import com.cookie.notification.delivery.NotificationTemplates
@@ -21,7 +20,6 @@ class DeliveryProperties(
     val enabled: Boolean = true,
     val verificationLinkBaseUrl: URI = URI.create("https://cookie.invalid/verify-email"),
     val smtp: SmtpProperties = SmtpProperties(),
-    val apns: ApnsProperties = ApnsProperties(),
     val fcm: FcmProperties = FcmProperties(),
 )
 class SmtpProperties(val host: String = "localhost", val port: Int = 1025, val username: String = "",
@@ -29,9 +27,6 @@ class SmtpProperties(val host: String = "localhost", val port: Int = 1025, val u
                      val starttlsRequired: Boolean = true, val messageIdDomain: String = "notification.cookie.invalid") {
     override fun toString(): String = "SmtpProperties([redacted])"
 }
-class ApnsProperties(val enabled: Boolean = false, val keyPath: String = "", val keyId: String = "",
-                     val teamId: String = "", val topic: String = "",
-                     val baseUrl: URI = URI.create("https://api.push.apple.com"))
 class FcmProperties(val enabled: Boolean = false, val credentialsPath: String = "", val projectId: String = "",
                     val baseUrl: URI = URI.create("https://fcm.googleapis.com"))
 
@@ -49,7 +44,6 @@ class DeliveryConfiguration {
             require(!properties.verificationLinkBaseUrl.host.endsWith(".invalid")) { "Production verification URL is required" }
             require(!smtp.from.endsWith(".invalid")) { "Production sender address is required" }
             require(!smtp.messageIdDomain.endsWith(".invalid")) { "Production Message-ID domain is required" }
-            require(properties.apns.baseUrl == URI.create("https://api.push.apple.com"))
             require(properties.fcm.baseUrl == URI.create("https://fcm.googleapis.com"))
         }
         return NotificationTemplates(properties.verificationLinkBaseUrl)
@@ -57,10 +51,6 @@ class DeliveryConfiguration {
     @Bean
     fun verificationSender(properties: DeliveryProperties, templates: NotificationTemplates) =
         SmtpVerificationSender(properties.smtp, templates)
-    @Bean
-    fun apnsPushSender(properties: DeliveryProperties, http: BoundedHttpExchange, mapper: ObjectMapper,
-                       templates: NotificationTemplates, clock: Clock) =
-        ApnsPushSender(properties.apns, http, mapper, templates, clock)
     @Bean
     fun fcmPushSender(properties: DeliveryProperties, http: BoundedHttpExchange, mapper: ObjectMapper,
                       templates: NotificationTemplates, clock: Clock) =

@@ -19,7 +19,10 @@ make dev-up
 Compose starts Identity, Notification, independent databases/roles in PostgreSQL,
 JetStream, Redis and Mailpit. Notification is on `127.0.0.1:8082`, Mailpit on
 `127.0.0.1:8025`. An explicit timezone is required before scheduled push is enabled.
-Push channels require their platform credentials; local email uses Mailpit.
+Both Android and iOS push use FCM and require Firebase project/service-account
+credentials. For iOS, configure the APNs authentication key in Firebase, not in
+Notification. Both platforms register opaque FCM tokens; V006 disables legacy iOS
+APNs bindings until the client re-registers. Local email uses Mailpit.
 
 The integration task requires a working Docker-compatible daemon. It builds and
 starts the real Identity and Notification artifacts, then checks registration,

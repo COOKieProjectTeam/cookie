@@ -448,6 +448,22 @@ test("toggling planned components preserves the scenario being traced", () => {
   }
 });
 
+test("push path reaches APNs through FCM and remains navigable on the map", () => {
+  const ui = harness();
+  const pushCalls = ui.data.calls.filter(call => call.caller === "notification"
+    && ["fcm", "apns"].includes(call.callee));
+  assert.deepEqual(pushCalls.map(call => call.callee), ["fcm"]);
+  ui.navigate("#map?flow=notification-reminder-delivery");
+  assert.match(ui.markup(), /data-edge="notification-fcm"/);
+  assert.match(ui.markup(), /data-edge="fcm-apns"/);
+  assert.doesNotMatch(ui.markup(), /data-edge="notification-apns"/);
+  const steps = scenarioSnapshot(ui.data).find(flow => flow.id === "notification-reminder-delivery").steps;
+  const fcmIndex = steps.findIndex(step => step.node === "fcm");
+  assert.equal(steps[fcmIndex + 1].node, "apns");
+  ui.click('[data-edge="fcm-apns"]');
+  assert.ok(visibleText(ui.markup()).includes("FCM → APNs"));
+});
+
 test("opening a search result for the current URL restores its operation view", () => {
   const ui = harness();
   const operation = ui.data.operations.find(value => value.visibility !== "internal");
