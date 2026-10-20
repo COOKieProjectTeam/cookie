@@ -148,7 +148,8 @@ class ContainerBoundaryTest(unittest.TestCase):
 
     def test_runtime_grants_after_migration_and_repeated_provision(self):
         for migration in sorted((ROOT / "backend/services/notification/src/main/resources/db/migration").glob("*.sql")):
-            self.sql(migration.read_text(), database="notification",
+            # Match Flyway's per-migration transaction, including explicit table locks.
+            self.sql("BEGIN;\n" + migration.read_text() + "\nCOMMIT;", database="notification",
                 user="notification_migrator", password="synthetic-migration-password")
         def app(statement, check=True):
             return self.sql(statement, database="notification", user="notification_app",
