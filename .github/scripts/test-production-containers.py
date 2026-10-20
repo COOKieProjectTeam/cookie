@@ -207,11 +207,6 @@ class Rehearsal:
         # resolves the host-only fixture endpoints. Production TLS stays enabled.
         self.overlay.write_text(json.dumps({"services": {"notification": {
             "extra_hosts": ["fixture.cookie.test:host-gateway"],
-            "environment": {"JAVA_TOOL_OPTIONS": (
-                "-XX:InitialRAMPercentage=25 -XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError "
-                "-Djava.io.tmpdir=/tmp -Djavax.net.ssl.trustStore=/run/secrets/nats-truststore.jks "
-                "-Djavax.net.ssl.trustStorePassword=fixture-truststore"
-            )},
         }}}))
         mapping = work / "images.json"
         mapping.write_text(json.dumps(self.images))
@@ -296,6 +291,19 @@ else:
             "COOKIE_SMTP_MESSAGE_ID_DOMAIN=fixture.cookie.test", "COOKIE_APNS_ENABLED=false", "COOKIE_FCM_ENABLED=false",
         ]) + "\n")
         self.envfile.chmod(0o600)
+        # Read the original Compose model with the real CLI. Retain every
+        # production JVM option instead of maintaining a fixture copy.
+        baseline = json.loads(run(self.docker, "compose", "--project-directory", str(self.bundle),
+            "--env-file", str(self.envfile), "--file", str(self.bundle / "compose.yaml"),
+            "config", "--format", "json", env=self.environment).stdout)
+        options = baseline["services"]["notification"]["environment"]["JAVA_TOOL_OPTIONS"]
+        self.overlay.write_text(json.dumps({"services": {"notification": {
+            "extra_hosts": ["fixture.cookie.test:host-gateway"],
+            "environment": {"JAVA_TOOL_OPTIONS": options + (
+                " -Djavax.net.ssl.trustStore=/run/secrets/nats-truststore.jks"
+                " -Djavax.net.ssl.trustStorePassword=fixture-truststore"
+            )},
+        }}}))
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(DATA / "fixture/server.crt", DATA / "fixture/server.key")
         https = http.server.ThreadingHTTPServer(("0.0.0.0", 8443), JwksProxy)

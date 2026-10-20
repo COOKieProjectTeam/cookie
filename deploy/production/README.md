@@ -38,6 +38,16 @@ Container memory limits are Identity 1536 MiB, Notification 1536 MiB, PostgreSQL
 heap is bounded to 70% of its container. These are initial limits; observe actual
 usage before increasing concurrency or adding services.
 
+Notification reserves twelve database connections for up to eight push workers,
+leaving capacity for HTTP readiness, inbox ingestion and lease heartbeats while
+bounded provider calls hold their submission locks.
+
+The production JVM options select Bouncy Castle's pure Java implementation with
+`-Dorg.bouncycastle.native.cpu_variant=java`. The pinned LTS provider otherwise
+extracts a native CPU probe into `/tmp`, which cannot load on the intentionally
+`noexec` tmpfs. This preserves the container restriction and the same Argon2/JWE
+algorithms; benchmark password hashing with these production JVM options.
+
 ## Installation and secrets
 
 Install this directory as an immutable root-owned bundle, for example

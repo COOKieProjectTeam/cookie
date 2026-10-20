@@ -158,7 +158,7 @@
       "description": "Compose задаёт COOKIE_NOTIFICATION_DATABASE_POOL_SIZE=8, отдельные notification_app / notification_migrator и Flyway connection. Это переопределение application default 12.",
       "source": {
         "path": "deploy/production/compose.yaml",
-        "line": 294
+        "line": 296
       }
     },
     {

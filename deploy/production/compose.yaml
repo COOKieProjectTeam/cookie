@@ -153,6 +153,7 @@ services:
         -XX:MaxRAMPercentage=70
         -XX:+ExitOnOutOfMemoryError
         -Djava.io.tmpdir=/tmp
+        -Dorg.bouncycastle.native.cpu_variant=java
       COOKIE_IDENTITY_DATABASE_URL: jdbc:postgresql://postgres:5432/identity
       COOKIE_IDENTITY_DATABASE_USER: identity_app
       COOKIE_IDENTITY_DATABASE_POOL_SIZE: "8"
@@ -291,9 +292,10 @@ services:
       JAVA_TOOL_OPTIONS: >-
         -XX:InitialRAMPercentage=25 -XX:MaxRAMPercentage=70
         -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp
+        -Dorg.bouncycastle.native.cpu_variant=java
       COOKIE_NOTIFICATION_DATABASE_URL: jdbc:postgresql://postgres:5432/notification
       COOKIE_NOTIFICATION_DATABASE_USER: notification_app
-      COOKIE_NOTIFICATION_DATABASE_POOL_SIZE: "8"
+      COOKIE_NOTIFICATION_DATABASE_POOL_SIZE: "12"
       SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/notification
       SPRING_FLYWAY_USER: notification_migrator
       COOKIE_NATS_URL: tls://nats:4222

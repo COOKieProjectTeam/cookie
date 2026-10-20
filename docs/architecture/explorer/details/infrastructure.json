@@ -128,17 +128,17 @@
       "description": "CPU quota задана Compose отдельно для контейнеров; VM и службы разделяют физические ресурсы.",
       "source": {
         "path": "deploy/production/compose.yaml",
-        "line": 215
+        "line": 216
       }
     },
     {
       "id": "infra-jdbc",
       "label": "JDBC default → production",
-      "value": "Identity pool10→8; Notification pool12→8",
+      "value": "Identity pool10→8; Notification pool12→12",
       "description": "Оба runtime подключаются к своим БД собственными app roles; Flyway использует отдельные migrator roles. Acquire2с, validate1с, socket10с, statement5с, lock2с заданы service YAML.",
       "source": {
         "path": "deploy/production/compose.yaml",
-        "line": 296
+        "line": 298
       }
     },
     {
@@ -248,7 +248,7 @@
       "description": "Shell healthcheck обращается к /readyz внутри контейнера. PostgreSQL start20с; NATS start10с; их interval5с/timeout3с/retries24. Redis interval5с/timeout3с/retries12.",
       "source": {
         "path": "deploy/production/compose.yaml",
-        "line": 206
+        "line": 207
       }
     },
     {
@@ -268,7 +268,7 @@
       "description": "При включении deploy.sh добавляет отдельные compose overlays для credential mounts. Disabled channel не симулирует accepted delivery; real provider smoke не выполняется healthcheck.",
       "source": {
         "path": "deploy/production/README.md",
-        "line": 101
+        "line": 111
       }
     },
     {
@@ -278,7 +278,7 @@
       "description": "Host, username, from и Message-ID domain обязательны; password приходит из configtree secret. Local Mailpit/default1025 не является production provider.",
       "source": {
         "path": "deploy/production/compose.yaml",
-        "line": 311
+        "line": 313
       }
     },
     {
@@ -288,7 +288,7 @@
       "description": "Identity получает private JWT signing key и public Notification RSA key. Notification получает private JWE key и public JWT keys через HTTPS JWKS. Реальные secret values и cloud IDs здесь не приводятся.",
       "source": {
         "path": "deploy/production/README.md",
-        "line": 112
+        "line": 122
       }
     },
     {
@@ -298,7 +298,7 @@
       "description": "current.env обновляется только после readiness; pending.env записывается до restart. Rollback восстанавливает только затронутые приложения, не откатывает миграции/broker config/provider effects.",
       "source": {
         "path": "deploy/production/README.md",
-        "line": 261
+        "line": 271
       }
     },
     {
@@ -319,6 +319,16 @@
       "source": {
         "path": "docs/architecture/model/services.yaml",
         "line": 38
+      }
+    },
+    {
+      "id": "infra-java-crypto",
+      "label": "JVM crypto и noexec",
+      "value": "BouncyCastle CPU variant = java",
+      "description": "Production сохраняет /tmp noexec и использует поддерживаемый pure-Java backend BouncyCastle: native CPU probe иначе не может загрузиться из /tmp. Notification pool12 оставляет capacity вне8 push workers. Проверять стоимость Argon2 нагрузкой с этими JVM options.",
+      "source": {
+        "path": "deploy/production/README.md",
+        "line": 45
       }
     }
   ],
@@ -486,7 +496,7 @@
           "detail": "Readiness требует PostgreSQL, fresh JWKS cache и usable JWE keys. Новую private JWE key устанавливают у Notification до переключения public encryption key у Identity.",
           "source": {
             "path": "deploy/production/README.md",
-            "line": 117
+            "line": 127
           }
         }
       ]

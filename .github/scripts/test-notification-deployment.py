@@ -53,6 +53,21 @@ class DeploymentContractTest(unittest.TestCase):
         self.assertIn("networks: [backend]", redis)
         self.assertNotIn("/data", redis)
 
+    def test_java_crypto_works_with_non_executable_temporary_storage(self):
+        # BC LTS extracts its native probe into java.io.tmpdir by default.
+        # Keep the production hardening and select its supported Java path;
+        # the real-container rehearsal exercises Argon2 and JWT/JWE with it.
+        compose = (ROOT / "deploy/production/compose.yaml").read_text()
+        for service in ("identity", "notification"):
+            with self.subTest(service=service):
+                body = re.search(
+                    rf"^  {service}:\n(.*?)(?=^  [a-z][a-z-]*:\n|\Z)",
+                    compose, re.MULTILINE | re.DOTALL,
+                ).group(1)
+                self.assertIn("-Djava.io.tmpdir=/tmp", body)
+                self.assertIn("-Dorg.bouncycastle.native.cpu_variant=java", body)
+                self.assertIn("/tmp:rw,noexec,nosuid", body)
+
     def test_shell_entrypoints_parse(self):
         for directory in (ROOT / "deploy/production", ROOT / "deploy/production/scripts"):
             for path in directory.glob("*.sh"):
