@@ -365,6 +365,18 @@ else:
         login = request(8080, "/v1/auth/email/login", body={
             "email": registration["email"], "password": registration["password"]})
         request(8082, "/v1/notifications/settings", token=login["accessToken"])
+        # Exercise trigger/function permissions through the restricted app role,
+        # including the public token limit that a raw B-tree index cannot store.
+        android_token = base64.b64encode(os.urandom(3072)).decode("ascii")
+        android = request(8082, "/v1/notifications/devices", token=login["accessToken"],
+                          body={"platform": "ANDROID", "deviceId": str(uuid.uuid4()), "token": android_token},
+                          expected=201)
+        assert android["token"] == android_token
+        ios_token = "ABCD" * 16
+        ios = request(8082, "/v1/notifications/devices", token=login["accessToken"],
+                      body={"platform": "IOS", "deviceId": str(uuid.uuid4()), "token": ios_token},
+                      expected=201)
+        assert ios["token"] == ios_token.lower()
         eventually(lambda: self.sql("notification", "SELECT count(*) FROM delivery_jobs WHERE status='ACCEPTED'") != "0",
                    "provider acceptance recorded")
         return login

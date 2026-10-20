@@ -226,6 +226,10 @@ components:
           type: string
           minLength: 1
           maxLength: 4096
+          description: >-
+            IOS hexadecimal APNs tokens of 32–512 characters are case-insensitive and
+            stored in lowercase. ANDROID tokens are opaque and remain case-sensitive.
+            Registering an existing token transfers its active binding to this account and device.
         deviceId:
           type: string
           minLength: 1
@@ -242,6 +246,7 @@ components:
           type: string
           minLength: 1
           maxLength: 4096
+          description: Canonical stored token; valid hexadecimal IOS tokens are lowercase.
         deviceId:
           type: string
           minLength: 1

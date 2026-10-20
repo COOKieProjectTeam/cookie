@@ -72,7 +72,7 @@ internal class TestDeliveryRepository : DeliveryRepository {
     override fun withPushSubmission(job: DeliveryJob, submit: (PushTarget) -> Unit) = false
     override fun markPushSubmission(job: DeliveryJob) = Unit
     override fun invalidateDevice(target: PushTarget) = Unit
-    override fun finish(job: DeliveryJob, status: String, code: String, providerId: String?) = Unit
-    override fun retry(job: DeliveryJob, code: String, delay: Duration) { retries++ }
+    override fun finish(job: DeliveryJob, status: String, code: String, providerId: String?, providerFailure: Boolean) = Unit
+    override fun retry(job: DeliveryJob, code: String, delay: Duration, providerFailure: Boolean) { retries++ }
     override fun maintain() = Unit
 }

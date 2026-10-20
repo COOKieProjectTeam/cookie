@@ -1,4 +1,4 @@
-%% Notification PostgreSQL schema; derived from notification.dbml / V001 through V003.
+%% Notification PostgreSQL schema; derived from notification.dbml / V001 through V005.
 %% Only the actual service-local FK is drawn; logical identity/device references have no FK.
 erDiagram
   AccountTombstones {
@@ -33,6 +33,7 @@ erDiagram
     varchar platform
     varchar device_id
     varchar push_token
+    bytea push_token_hash
     boolean enabled
     timestamptz created_at
     timestamptz updated_at
@@ -94,6 +95,7 @@ erDiagram
     timestamptz next_attempt_at
     varchar status
     integer attempt_count
+    integer provider_failure_count
     uuid lease_token
     timestamptz lease_until
     varchar provider_message_id

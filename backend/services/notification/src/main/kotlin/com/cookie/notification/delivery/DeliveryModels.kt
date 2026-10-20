@@ -9,6 +9,8 @@ class DeliveryJob(
     val id: UUID, val channel: String, val userId: UUID?, val deviceId: UUID?, val registrationAttemptId: UUID?,
     val kind: String, val locale: String, val encryptedPayload: String?, val expiresAt: Instant, val occurrenceId: UUID?,
     val attemptCount: Int, val leaseToken: UUID,
+    /** Retryable provider failures only; queue claims and technical deferrals do not consume this budget. */
+    val providerFailureCount: Int = 0,
 ) { override fun toString(): String = "DeliveryJob(id=$id,channel=$channel,kind=$kind)" }
 
 class PushTarget(val deviceId: UUID, val platform: String, val token: String, val revision: Instant,
@@ -39,7 +41,8 @@ interface DeliveryRepository {
     fun withPushSubmission(job: DeliveryJob, submit: (PushTarget) -> Unit): Boolean
     fun markPushSubmission(job: DeliveryJob)
     fun invalidateDevice(target: PushTarget)
-    fun finish(job: DeliveryJob, status: String, code: String, providerId: String? = null)
-    fun retry(job: DeliveryJob, code: String, delay: Duration)
+    /** Records a provider failure atomically with the fenced outcome when [providerFailure] is true. */
+    fun finish(job: DeliveryJob, status: String, code: String, providerId: String? = null, providerFailure: Boolean = false)
+    fun retry(job: DeliveryJob, code: String, delay: Duration, providerFailure: Boolean = false)
     fun maintain()
 }

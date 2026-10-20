@@ -22,7 +22,9 @@ commit and index update cannot lose work.
 
 Provider calls happen outside ingestion transactions. The consumer acknowledges
 only committed local effects. Provider acceptance is recorded as `ACCEPTED`,
-not receipt/read confirmation. Retries are bounded by expiry and provider policy.
+not receipt/read confirmation. Retries are bounded by expiry and provider policy. A persistent retryable-provider-
+failure counter is separate from claim/audit counts; technical deferrals and
+unavailable channels do not consume the ten-failure budget or advance backoff.
 For SMTP, the explicit product decision is **no automatic retry after an ambiguous
 submission**: a persisted `SMTP_SUBMITTING` marker precedes `sendMessage`; a lost
 response, crashed process or expired submitting lease becomes terminal `UNKNOWN`.
@@ -36,6 +38,9 @@ preferences and projections, calls the bounded provider adapter and records the
 outcome before releasing those locks. This intentionally serializes a token
 transfer or deletion with an in-flight submission; it cannot recall a request
 already submitted to a provider. The ingestion transaction never calls providers.
+IOS hexadecimal token identity is canonical lowercase; ANDROID tokens stay opaque.
+A trigger-maintained SHA-256 digest provides bounded unique index entries without
+reducing the public token length limit.
 
 Inbox, delivery and quarantine metadata are retained for 30 days. Poison-message
 quarantine stores identifiers, safe reason codes and content hashes, never payloads.

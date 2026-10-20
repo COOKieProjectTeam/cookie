@@ -154,14 +154,15 @@ class JdbcDeliveryRepository(
             target.deviceId, Timestamp.from(target.revision), target.token)
     }
 
-    override fun finish(job: DeliveryJob, status: String, code: String, providerId: String?) {
+    override fun finish(job: DeliveryJob, status: String, code: String, providerId: String?, providerFailure: Boolean) {
         require(status in setOf("ACCEPTED","FAILED","UNKNOWN","CANCELLED","EXPIRED"))
         require(code.matches(Regex("[A-Z0-9_]{1,64}")))
         transactions.executeWithoutResult {
             val changed = jdbc.update("""UPDATE delivery_jobs SET status=?,last_code=?,provider_message_id=?,
+                provider_failure_count=provider_failure_count+?,
                 finished_at=clock_timestamp(),encrypted_payload=NULL,lease_token=NULL,lease_until=NULL
                 WHERE id=? AND lease_token=? AND status IN ('CLAIMED','SMTP_SUBMITTING') AND lease_until>clock_timestamp()""",
-                status, code, providerId?.take(512), job.id, job.leaseToken)
+                status, code, providerId?.take(512), if (providerFailure) 1 else 0, job.id, job.leaseToken)
             if (changed == 1) jdbc.update("""UPDATE delivery_attempts SET outcome=?,safe_code=?,finished_at=clock_timestamp()
                 WHERE id=? AND finished_at IS NULL""", status, code, job.leaseToken)
             if (changed == 1 && status == "CANCELLED" && code == "NO_LONGER_ELIGIBLE" && job.userId != null) {
@@ -170,13 +171,14 @@ class JdbcDeliveryRepository(
         }
     }
 
-    override fun retry(job: DeliveryJob, code: String, delay: Duration) {
+    override fun retry(job: DeliveryJob, code: String, delay: Duration, providerFailure: Boolean) {
         require(code.matches(Regex("[A-Z0-9_]{1,64}")) && !delay.isNegative)
         transactions.executeWithoutResult {
             val changed = jdbc.update("""UPDATE delivery_jobs SET status='PENDING',last_code=?,
+                provider_failure_count=provider_failure_count+?,
                 next_attempt_at=clock_timestamp()+(? * interval '1 millisecond'),lease_token=NULL,lease_until=NULL
                 WHERE id=? AND lease_token=? AND status IN ('CLAIMED','SMTP_SUBMITTING') AND lease_until>clock_timestamp()""",
-                code, delay.toMillis(), job.id, job.leaseToken)
+                code, if (providerFailure) 1 else 0, delay.toMillis(), job.id, job.leaseToken)
             if (changed == 1) jdbc.update("""UPDATE delivery_attempts SET outcome='RETRY',safe_code=?,finished_at=clock_timestamp()
                 WHERE id=? AND finished_at IS NULL""", code, job.leaseToken)
         }
@@ -209,7 +211,7 @@ class JdbcDeliveryRepository(
         row.getObject("user_id", UUID::class.java), row.getObject("device_id", UUID::class.java),
         row.getObject("registration_attempt_id", UUID::class.java), row.getString("kind"), row.getString("locale"),
         row.getString("encrypted_payload"), row.getTimestamp("expires_at").toInstant(), row.getObject("occurrence_id", UUID::class.java), row.getInt("attempt_count"),
-        row.getObject("lease_token", UUID::class.java))
+        row.getObject("lease_token", UUID::class.java), row.getInt("provider_failure_count"))
 
     private fun dirtyReminder(userId: UUID, at: Instant) {
         if (notificationRepository != null) notificationRepository.dirty(userId, at)

@@ -11,6 +11,7 @@ import com.cookie.notification.scheduler.*
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.*
 import org.flywaydb.core.Flyway
+import org.flywaydb.core.api.MigrationVersion
 import org.junit.jupiter.api.*
 import org.mockito.Mockito.*
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -34,6 +35,7 @@ import java.util.concurrent.CompletableFuture
 @Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NotificationCoreIntegrationTest {
+    private lateinit var source:DriverManagerDataSource
     private lateinit var jdbc:JdbcTemplate
     private lateinit var tx:TransactionTemplate
     private lateinit var deliveries:JdbcDeliveryRepository
@@ -46,7 +48,7 @@ class NotificationCoreIntegrationTest {
     private val registry=SimpleMeterRegistry()
 
     @BeforeAll fun migrate() {
-        val source=DriverManagerDataSource(postgres.jdbcUrl,postgres.username,postgres.password)
+        source=DriverManagerDataSource(postgres.jdbcUrl,postgres.username,postgres.password)
         Flyway.configure().dataSource(source).load().migrate()
         jdbc=JdbcTemplate(source)
         val manager=DataSourceTransactionManager(source)
@@ -139,6 +141,81 @@ class NotificationCoreIntegrationTest {
         repository.registerDevice(first,RegisterDevice(DevicePlatform.IOS,"a","token"))
         repository.registerDevice(second,RegisterDevice(DevicePlatform.IOS,"b","token"))
         assertThat(jdbc.queryForObject("SELECT user_id FROM push_devices WHERE enabled",UUID::class.java)).isEqualTo(second)
+    }
+    @Test fun `maximum length incompressible token registers and transfers with a fixed size index key`() {
+        val random=kotlin.random.Random(29814)
+        val alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        val token=buildString { repeat(4096) { append(alphabet[random.nextInt(alphabet.length)]) } }
+        val first=UUID.randomUUID();val second=UUID.randomUUID()
+        val registered=repository.registerDevice(first,RegisterDevice(DevicePlatform.ANDROID,"first",token))
+        val transferred=repository.registerDevice(second,RegisterDevice(DevicePlatform.ANDROID,"second",token))
+        assertThat(registered.device.token).isEqualTo(token)
+        assertThat(transferred.device.token).isEqualTo(token)
+        assertThat(jdbc.queryForObject("SELECT user_id FROM push_devices WHERE enabled",UUID::class.java)).isEqualTo(second)
+        assertThat(jdbc.queryForObject("SELECT octet_length(push_token_hash) FROM push_devices WHERE enabled",Int::class.java)).isEqualTo(32)
+        assertThat(repository.devices(first)).isEmpty()
+    }
+    @Test fun `APNs case aliases transfer one canonical token between accounts`() {
+        val first=UUID.randomUUID();val second=UUID.randomUUID()
+        val upper="AB12".repeat(16);val lower=upper.lowercase()
+        assertThat(repository.registerDevice(first,RegisterDevice(DevicePlatform.IOS,"iphone-a",upper)).device.token).isEqualTo(lower)
+        assertThat(repository.registerDevice(second,RegisterDevice(DevicePlatform.IOS,"iphone-b",lower)).device.token).isEqualTo(lower)
+        assertThat(jdbc.queryForList("SELECT push_token FROM push_devices",String::class.java)).containsOnly(lower)
+        assertThat(jdbc.queryForObject("SELECT user_id FROM push_devices WHERE enabled",UUID::class.java)).isEqualTo(second)
+        assertThat(repository.devices(first)).isEmpty()
+    }
+    @Test fun `FCM token case is significant even when the token looks hexadecimal`() {
+        val first=UUID.randomUUID();val second=UUID.randomUUID()
+        val upper="AB12".repeat(16);val lower=upper.lowercase()
+        repository.registerDevice(first,RegisterDevice(DevicePlatform.ANDROID,"android-a",upper))
+        repository.registerDevice(second,RegisterDevice(DevicePlatform.ANDROID,"android-b",lower))
+        assertThat(repository.devices(first).single().token).isEqualTo(upper)
+        assertThat(repository.devices(second).single().token).isEqualTo(lower)
+        assertThat(jdbc.queryForObject("SELECT count(DISTINCT push_token_hash) FROM push_devices WHERE enabled",Int::class.java)).isEqualTo(2)
+    }
+    @Test fun `V4 upgrades V3 token aliases preserving the latest active owner and SQL inserts`() {
+        val schema="notification_upgrade_${UUID.randomUUID().toString().replace("-","")}"
+        jdbc.execute("CREATE SCHEMA $schema")
+        try {
+            Flyway.configure().dataSource(source).schemas(schema).defaultSchema(schema)
+                .target(MigrationVersion.fromVersion("3")).load().migrate()
+            val ids=(1..4).map { UUID.fromString("00000000-0000-0000-0000-${it.toString().padStart(12,'0')}") }
+            val older=Instant.parse("2026-01-01T00:00:00Z")
+            val latestActive=older.plusSeconds(60)
+            val newerDisabled=latestActive.plusSeconds(60)
+            val tokens=listOf("abcd".repeat(16),"ABCD".repeat(16),"AbCd".repeat(16),"aBcD".repeat(16))
+            ids.forEachIndexed { i,id ->
+                jdbc.update("""INSERT INTO $schema.push_devices(id,user_id,platform,device_id,push_token,enabled,created_at,updated_at)
+                    VALUES (?,?,'IOS',?,?,?,? ,?)""",
+                    id,UUID.randomUUID(),"iphone-$i",tokens[i],i!=3,Timestamp.from(older),
+                    Timestamp.from(when(i) { 0->older;3->newerDisabled;else->latestActive }))
+            }
+            listOf("ABCD".repeat(16),"abcd".repeat(16)).forEachIndexed { i,token ->
+                jdbc.update("""INSERT INTO $schema.push_devices(id,user_id,platform,device_id,push_token,created_at,updated_at)
+                    VALUES (?,?,'ANDROID',?,?,?,?)""",UUID.randomUUID(),UUID.randomUUID(),"android-$i",token,
+                    Timestamp.from(older),Timestamp.from(older))
+            }
+
+            Flyway.configure().dataSource(source).schemas(schema).defaultSchema(schema)
+                .target(MigrationVersion.fromVersion("4")).load().migrate()
+
+            assertThat(jdbc.queryForList("SELECT id FROM $schema.push_devices WHERE platform='IOS' AND enabled",UUID::class.java)).containsExactly(ids[2])
+            assertThat(jdbc.queryForList("SELECT push_token FROM $schema.push_devices WHERE platform='IOS'",String::class.java)).containsOnly(tokens.first())
+            assertThat(jdbc.queryForObject("SELECT updated_at FROM $schema.push_devices WHERE id=?",Timestamp::class.java,ids[2])!!.toInstant())
+                .isAfter(latestActive)
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM $schema.push_devices WHERE platform='ANDROID' AND enabled",Int::class.java)).isEqualTo(2)
+            assertThat(jdbc.queryForObject("""SELECT count(*) FROM $schema.push_devices
+                WHERE push_token_hash<>sha256(convert_to(push_token,'UTF8')) OR octet_length(push_token_hash)<>32""",Int::class.java)).isZero()
+
+            // The migration must support existing SQL insert shapes without a caller-supplied hash.
+            val added=UUID.randomUUID()
+            jdbc.update("""INSERT INTO $schema.push_devices(id,user_id,platform,device_id,push_token,created_at,updated_at)
+                VALUES (?,?,'IOS','new-iphone',?,clock_timestamp(),clock_timestamp())""",added,UUID.randomUUID(),"EF12".repeat(16))
+            assertThat(jdbc.queryForObject("SELECT push_token FROM $schema.push_devices WHERE id=?",String::class.java,added)).isEqualTo("ef12".repeat(16))
+            assertThat(jdbc.queryForObject("SELECT octet_length(push_token_hash) FROM $schema.push_devices WHERE id=?",Int::class.java,added)).isEqualTo(32)
+        } finally {
+            jdbc.execute("DROP SCHEMA $schema CASCADE")
+        }
     }
     @Test fun `scheduler replicas share one durable occurrence and rollback cannot consume it`() {
         val user=readyUser()

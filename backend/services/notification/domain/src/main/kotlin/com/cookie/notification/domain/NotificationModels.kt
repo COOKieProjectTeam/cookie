@@ -70,6 +70,9 @@ data class RegisterDevice(val platform: DevicePlatform, val deviceId: String, va
             throw InvalidNotificationInput("Invalid push device")
         }
     }
+    // APNs uses hexadecimal bytes; FCM tokens are opaque and case-sensitive.
+    val canonicalToken: String
+        get() = if (platform == DevicePlatform.IOS && token.matches(Regex("[0-9a-fA-F]{32,512}"))) token.lowercase() else token
     override fun toString() = "RegisterDevice(platform=$platform,token=[redacted])"
 }
 data class DeviceRegistration(val device: PushDevice, val created: Boolean)

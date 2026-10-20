@@ -63,18 +63,20 @@ class ReminderScheduler(
             if(devices.isNotEmpty()) plan.due.forEach { candidate ->
                 val id=jdbc.query("""INSERT INTO reminder_occurrences(id,user_id,kind,cycle_key,scheduled_at)
                     VALUES (?,?,?,?,?) ON CONFLICT(user_id,kind,cycle_key) DO UPDATE SET scheduled_at=EXCLUDED.scheduled_at
-                    WHERE reminder_occurrences.kind='FOOD' AND reminder_occurrences.last_submitted_at IS NULL
+                    WHERE reminder_occurrences.kind IN ('FOOD','WEIGH','CALORIES_EXCEEDED','CALORIES_UNDER_TARGET')
+                    AND reminder_occurrences.last_submitted_at IS NULL
                     AND NOT EXISTS (SELECT 1 FROM delivery_jobs j WHERE j.occurrence_id=reminder_occurrences.id
-                        AND j.status NOT IN ('CANCELLED','EXPIRED')) RETURNING id""",
+                        AND NOT (j.status='CANCELLED' OR (reminder_occurrences.kind='FOOD' AND j.status='EXPIRED'))) RETURNING id""",
                     {rs,_->rs.getObject(1,UUID::class.java)},UUID.randomUUID(),userId,candidate.kind.name,candidate.cycle,
                     Timestamp.from(candidate.scheduledAt)).singleOrNull()
                 if(id!=null) {
                     devices.forEach { device ->
-                        // Keep the same occurrence/provider dedup identity when corrected FOOD becomes due again.
-                        if(candidate.kind==ReminderKind.FOOD) jdbc.update("""UPDATE delivery_jobs
+                        // Keep occurrence/provider dedup identity when corrected diary data makes it due again.
+                        if(candidate.kind!=ReminderKind.WATER) jdbc.update("""UPDATE delivery_jobs
                             SET status='PENDING',expires_at=?,next_attempt_at=clock_timestamp(),finished_at=NULL,
-                                last_code=NULL,locale=? WHERE occurrence_id=? AND device_id=? AND status IN ('CANCELLED','EXPIRED')""",
-                            Timestamp.from(candidate.expiresAt),state.settings.locale,id,device.id)
+                                last_code=NULL,locale=? WHERE occurrence_id=? AND device_id=?
+                                AND (status='CANCELLED' OR (?='FOOD' AND status='EXPIRED'))""",
+                            Timestamp.from(candidate.expiresAt),state.settings.locale,id,device.id,candidate.kind.name)
                         queue.enqueuePush(id,userId,device.id,candidate.kind.name,state.settings.locale,candidate.expiresAt)
                     }
                     if(candidate.kind==ReminderKind.WATER) jdbc.update("UPDATE settings SET last_water_reminder_at=? WHERE user_id=?",Timestamp.from(now),userId)

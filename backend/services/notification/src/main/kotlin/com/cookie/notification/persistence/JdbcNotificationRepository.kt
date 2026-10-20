@@ -45,17 +45,22 @@ class JdbcNotificationRepository(
 
     override fun registerDevice(userId: UUID, command: RegisterDevice): DeviceRegistration = transaction(userId) {
         ensureSettings(userId)
+        val token = command.canonicalToken
         // Serialize token movement across accounts; a token belongs to one active installation.
-        jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Any::class.java, "notification:token:${command.platform}:${command.token}")
-        jdbc.update("UPDATE push_devices SET enabled=false,updated_at=clock_timestamp() WHERE platform=? AND push_token=? AND NOT(user_id=? AND device_id=?)", command.platform.name,command.token,userId,command.deviceId)
+        jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Any::class.java, "notification:token:${command.platform}:$token")
+        // Compare the complete token as well: a digest collision must never transfer another token.
+        // The unique digest index rejects a colliding registration atomically instead.
+        jdbc.update("""UPDATE push_devices SET enabled=false,updated_at=clock_timestamp()
+            WHERE platform=? AND push_token_hash=sha256(convert_to(?,'UTF8')) AND push_token=?
+            AND NOT(user_id=? AND device_id=?)""", command.platform.name,token,token,userId,command.deviceId)
         val existing = jdbc.query("SELECT * FROM push_devices WHERE user_id=? AND device_id=?", ::mapDevice,userId,command.deviceId).singleOrNull()
         val id = existing?.id ?: UUID.randomUUID()
         jdbc.update("""INSERT INTO push_devices(id,user_id,platform,device_id,push_token,enabled,created_at,updated_at)
             VALUES (?,?,?,?,?,true,clock_timestamp(),clock_timestamp()) ON CONFLICT(user_id,device_id) DO UPDATE
             SET platform=EXCLUDED.platform,push_token=EXCLUDED.push_token,enabled=true,updated_at=clock_timestamp()""",
-            id,userId,command.platform.name,command.deviceId,command.token)
+            id,userId,command.platform.name,command.deviceId,token)
         dirty(userId,now())
-        DeviceRegistration(PushDevice(id,userId,command.platform,command.deviceId,command.token),existing == null)
+        DeviceRegistration(PushDevice(id,userId,command.platform,command.deviceId,token),existing == null)
     }
 
     override fun unregisterDevice(userId: UUID, deviceId: String): Unit = transaction(userId) {

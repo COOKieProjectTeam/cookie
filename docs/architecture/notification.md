@@ -19,7 +19,11 @@ IANA timezones, invalid `HH:mm` times and food intervals outside 1..10080 minute
 Timezone is absent until explicitly set; all scheduled push remains paused until
 then. Locale supports `ru` and `en`, with Russian fallback. Devices are scoped to
 their account, and an enabled platform/token is bound to only one account at a
-time. Invalid-token provider responses are conditional on the submitted token
+time. IOS hexadecimal tokens are normalized to lowercase before locking and ownership
+transfer; ANDROID tokens remain case-sensitive opaque strings. A trigger-maintained
+SHA-256 digest bounds the unique index entry while preserving the 4096-character
+API limit. Existing IOS aliases migrate to one active owner, choosing the latest
+registration by revision and a stable ID tie-breaker. Invalid-token provider responses are conditional on the submitted token
 revision, so a delayed response cannot disable a newly registered token.
 
 ## Reminder rules
@@ -54,7 +58,10 @@ uses its first occurrence. Timezone changes recalculate future local deadlines
 without resetting inactivity; daily deduplication does not include timezone.
 Delivery rechecks current preferences, quiet hours, token ownership/revision,
 deletion and relevant projections. Invalidated diary data cancels pending pushes.
-Daily reminders never cross into another local date.
+Fully unsent cancelled daily occurrences can resume when a correction makes them
+eligible again on the same local date, reusing their occurrence and delivery IDs.
+Submission evidence prevents rearming after provider submission. Daily reminders
+never cross into another local date.
 
 ## Event contracts
 
@@ -109,6 +116,9 @@ it. APNs and FCM have separate bounded adapters and provider-aware retry policie
 APNs honors `Retry-After` as seconds or an HTTP date, with a one-minute minimum
 for throttling, fifteen minutes for server errors and a one-day maximum. FCM
 uses the same parsing, with its own one-minute/ten-second minimums.
+Only retryable provider failures consume the persistent ten-failure budget and
+advance exponential backoff. Queue claims, unavailable channels, authentication or
+key outages, quiet hours and water-interval deferrals do not consume that budget.
 Provider acceptance does not prove display or reading. Templates never put diary
 details into push payloads, logs or broker headers.
 

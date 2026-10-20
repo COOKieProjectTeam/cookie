@@ -94,8 +94,8 @@
     {
       "id": "notification-devices",
       "label": "Устройства",
-      "value": "(user_id,device_id) + уникальный активный (platform,token)",
-      "description": "deviceId — непустой ≤255; token — непустой ≤4096 без control chars; IOS/ANDROID. Повторная регистрация обновляет существующую запись, новый владелец platform/token отключает старую привязку.",
+      "value": "(user_id,device_id) + уникальный активный (platform,SHA-256(token))",
+      "description": "deviceId — непустой ≤255; token — непустой ≤4096 без control chars. IOS hex приводится к lowercase до lock/переноса; ANDROID остаётся opaque и case-sensitive. Trigger хранит digest32 bytes для bounded unique index; перенос проверяет также полный token. Повторная регистрация обновляет запись и отключает прежнего владельца.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
         "line": 46
@@ -168,7 +168,7 @@
       "description": "dirty() увеличивает generation и ставит due_at=min(old,new). Redis вызывается только после commit; ошибка индекса не превращает успешную мутацию в HTTP 500.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-        "line": 71
+        "line": 76
       }
     },
     {
@@ -215,7 +215,7 @@
       "id": "notification-scheduler-transaction",
       "label": "Атомарный выпуск reminder",
       "value": "per-user advisory lock + unique occurrence",
-      "description": "В одной PostgreSQL transaction сохраняются occurrence, задания на активные устройства, время резервирования воды и следующий deadline. Unique(user_id,kind,cycle_key) предотвращает дубли; полностью неотправленный FOOD можно возобновить с прежними ID. Providers вызываются отдельно от scheduler/ingestion transaction.",
+      "description": "В одной PostgreSQL transaction сохраняются occurrence, задания на активные устройства, время резервирования воды и следующий deadline. Unique(user_id,kind,cycle_key) предотвращает дубли; полностью неотправленный FOOD и отменённые дневные reminders текущей даты можно возобновить с прежними ID; submission evidence запрещает повтор. Providers вызываются отдельно от scheduler/ingestion transaction.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
         "line": 49
@@ -448,14 +448,14 @@
       "description": "Maintenance обрабатывает до500 leases, затем до500 просроченных PENDING и до500 старых terminal jobs. UNKNOWN никогда автоматически не сбрасывается; ciphertext удаляется.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
-        "line": 185
+        "line": 187
       }
     },
     {
       "id": "notification-retry",
       "label": "Provider retry",
-      "value": "10 counted attempts; jitter 10..300 s + provider minimum",
-      "description": "Retry uses exponential cap300 s и jitter, минимум10 s. Provider minimum может быть больше300 s; next attempt после expiry завершает EXPIRED. Unavailable канал ставится на60 s pause; эта ветка отдельно от лимита Retry attempts.",
+      "value": "10 retryable provider failures; jitter 10..300 s + provider minimum",
+      "description": "Persistent provider_failure_count увеличивается только при Retry; claim attempt_count остаётся аудитом. Unavailable/auth/key, CHANNEL_PAUSED, quiet hours и water interval не расходуют бюджет и backoff. Exponential cap300 s, jitter, минимум10 s; provider minimum может быть больше300 s. Retry после expiry завершает EXPIRED; unavailable канал ставится на60 s pause.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
         "line": 137
@@ -659,7 +659,7 @@
         {
           "node": "notification_db",
           "label": "Account transaction и token lock",
-          "detail": "Advisory lock account, запрет tombstone, lazy settings. Отдельный lock platform/token отключает прежнего active owner и upsert(user_id,device_id) устанавливает новый token/revision.",
+          "detail": "Advisory lock account, запрет tombstone, lazy settings. IOS hex сначала canonical lowercase, ANDROID opaque; lock platform/canonical token отключает прежнего active owner и upsert(user_id,device_id) устанавливает новый token/revision. Trigger-maintained SHA-256 даёт bounded unique index; полная строка тоже проверяется при переносе.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
             "line": 46
@@ -671,7 +671,7 @@
           "detail": "due_at становится не позднее текущего времени, generation увеличивается; commit сохраняет device и deadline атомарно.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 71
+            "line": 76
           }
         },
         {
@@ -680,7 +680,7 @@
           "detail": "ZADD userId:generation только после commit; ошибка Redis переносится на PostgreSQL fallback/rebuild и не меняет успешный HTTP результат.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 75
+            "line": 80
           }
         },
         {
@@ -744,7 +744,7 @@
           "detail": "Advisory lock и deletion tombstone check; DELETE WHERE user_id=JWT sub AND device_id=path. 0 deleted rows →404; при успехе204. Redis deadline здесь не меняется.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 61
+            "line": 66
           }
         },
         {
@@ -908,7 +908,7 @@
           "detail": "ZSET ускоряет пересчёт; падение Redis компенсируется PG sweep30 s и bounded rebuild60 s.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 75
+            "line": 80
           }
         },
         {
@@ -1033,7 +1033,7 @@
           "detail": "Terminal finish очищает ciphertext. Expired SMTP_SUBMITTING lease также UNKNOWN; automatic retry и operator replay его не сбрасывают.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
-            "line": 185
+            "line": 187
           }
         }
       ]
@@ -1175,7 +1175,7 @@
           "detail": "PostgreSQL commit предшествует обновлению ZSET; периодический/reconnect rebuild восстановит индекс при потерянной записи.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/scheduler/ReminderScheduler.kt",
-            "line": 84
+            "line": 86
           }
         },
         {
@@ -1217,7 +1217,7 @@
         {
           "node": "notification_db",
           "label": "Fenced outcome",
-          "detail": "ACCEPTED/FAILED/CANCELLED/EXPIRED или scheduled retry; provider unavailable pause60 s, transient max10 counted attempts, jitter и expiry ограничивают повтор.",
+          "detail": "ACCEPTED/FAILED/CANCELLED/EXPIRED или scheduled retry; provider unavailable pause60 s, transient max10 persistent provider failures, технические отсрочки вне бюджета, jitter и expiry ограничивают повтор.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
             "line": 137
@@ -1326,7 +1326,7 @@
           "detail": "Handler записывает dedup и игнорирует mutation для tombstoned account; repository transactions отвечают ACCOUNT_DELETED403. Tombstone не истекает.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 85
+            "line": 90
           }
         },
         {
@@ -1354,7 +1354,7 @@
     "registerDevice": {
       "notes": [
         "POST /v1/notifications/devices; body≤16 KiB: {platform: IOS|ANDROID,deviceId,token}.",
-        "201 новый logical device;200 upsert того же (JWT sub,deviceId). Enabled platform/token переносится с прежнего владельца.",
+        "201 новый logical device;200 upsert того же (JWT sub,deviceId). Enabled platform/canonical token переносится с прежнего владельца; IOS hex lowercase, ANDROID без изменения.",
         "JWT sub — единственный источник account ownership. PostgreSQL account/token locks и unique active token; Redis hint только after commit.",
         "Invalid JSON400; invalid JWT401; deleted account403; body413; dependency503 с Retry-After:1."
       ],

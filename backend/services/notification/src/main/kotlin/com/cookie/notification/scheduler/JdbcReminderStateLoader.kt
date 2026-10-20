@@ -20,11 +20,14 @@ class JdbcReminderStateLoader(private val jdbc:JdbcTemplate,private val reposito
             {rs,_->rs.getTimestamp(1)?.toInstant()},userId).single()
         val projections=jdbc.query("SELECT kind,entity_id,payload FROM event_projections WHERE user_id=? AND NOT deleted",{rs,_->
             Triple(rs.getString(1),rs.getString(2),mapper.readTree(rs.getString(3)))},userId)
-        // A completely unsent FOOD occurrence cancelled by a corrected diary can be rearmed.
+        // A completely unsent occurrence cancelled by a corrected diary can be rearmed.
+        // Daily cycles still expire with their local date; only FOOD can resume an expired job.
         // Actual submission evidence survives delivery-job metadata retention.
         val emitted=if(includeOccurrences) jdbc.query("""SELECT kind,cycle_key FROM reminder_occurrences o WHERE user_id=?
-            AND NOT (kind='FOOD' AND last_submitted_at IS NULL AND NOT EXISTS (
-                SELECT 1 FROM delivery_jobs j WHERE j.occurrence_id=o.id AND j.status NOT IN ('CANCELLED','EXPIRED')))""",{rs,_->
+            AND NOT (kind IN ('FOOD','WEIGH','CALORIES_EXCEEDED','CALORIES_UNDER_TARGET')
+                AND last_submitted_at IS NULL AND NOT EXISTS (
+                    SELECT 1 FROM delivery_jobs j WHERE j.occurrence_id=o.id
+                    AND NOT (j.status='CANCELLED' OR (o.kind='FOOD' AND j.status='EXPIRED'))))""",{rs,_->
             OccurrenceKey(ReminderKind.valueOf(rs.getString(1)),rs.getString(2))},userId).toSet() else emptySet()
         return ReminderPlanningState(settings,baselines.first,baselines.second,baselines.third,
             meals=projections.filter { it.first=="MEAL" }.map { MealSnapshot(it.second,requireNotNull(it.third.instantOrNull("eatenAt"))) },

@@ -144,11 +144,13 @@ class DeliveryWorker(
                 repository.retry(job, result.code, Duration.ofSeconds(60))
             }
             is ProviderResult.Retry -> {
-                val delay = retryDelay(job.attemptCount, result.minimumDelay)
+                val failures = job.providerFailureCount + 1
+                val delay = retryDelay(failures, result.minimumDelay)
                 when {
-                    job.attemptCount >= 10 -> repository.finish(job, "FAILED", "RETRIES_EXHAUSTED")
-                    !clock.instant().plus(delay).isBefore(job.expiresAt) -> repository.finish(job, "EXPIRED", "RETRY_AFTER_EXPIRY")
-                    else -> repository.retry(job, result.code, delay)
+                    failures >= 10 -> repository.finish(job, "FAILED", "RETRIES_EXHAUSTED", providerFailure = true)
+                    !clock.instant().plus(delay).isBefore(job.expiresAt) ->
+                        repository.finish(job, "EXPIRED", "RETRY_AFTER_EXPIRY", providerFailure = true)
+                    else -> repository.retry(job, result.code, delay, providerFailure = true)
                 }
             }
         }
