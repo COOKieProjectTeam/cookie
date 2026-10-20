@@ -1,6 +1,6 @@
 [versions]
 angus-mail = "2.0.5"
-bouncycastle-lts = "2.73.12.1"
+bouncycastle-lts = "2.73.13"
 icu4j = "78.3"
 jnats = "2.26.2"
 kotlin = "2.4.10"
