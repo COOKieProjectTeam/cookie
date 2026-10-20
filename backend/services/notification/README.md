@@ -23,6 +23,17 @@ Both Android and iOS push use FCM and require Firebase project/service-account
 credentials. For iOS, configure the APNs authentication key in Firebase, not in
 Notification. Both platforms register opaque FCM tokens; V006 disables legacy iOS
 APNs bindings until the client re-registers. Local email uses Mailpit.
+V007 enforces one active FCM-token owner across platforms. V008 grants runtime
+only named application tables, append-only account tombstones and age-bounded
+quarantine retention; privileged replay uses a separate database role.
+
+Review regressions cover cross-platform ownership and concurrent transfer,
+key-specific email failure isolation, timezone changes for queued/expired daily
+jobs, and actual runtime permissions after migration and permission reconvergence.
+`NotificationReviewRegressionIntegrationTest` normally starts disposable PostgreSQL.
+For a test-owned local PostgreSQL only, `COOKIE_NOTIFICATION_TEST_DATABASE_URL`
+can point to a database accessed as `postgres` with no password; the fixture creates
+roles and temporary schemas. Never point it at a shared or production database.
 
 The integration task requires a working Docker-compatible daemon. It builds and
 starts the real Identity and Notification artifacts, then checks registration,

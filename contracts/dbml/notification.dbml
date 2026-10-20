@@ -44,7 +44,7 @@ Table push_devices as PushDevices {
   updated_at timestamptz [not null, note: 'Revision guard for conditional provider token invalidation']
   indexes {
     (user_id, device_id) [unique]
-    (platform, push_token_hash) [unique, name: 'push_devices_active_token', note: 'Partial index WHERE enabled; bounded index entries support the full 4096-character token contract']
+    push_token_hash [unique, name: 'push_devices_active_token', note: 'Partial index WHERE enabled; one FCM token owner across platforms; bounded entries support the full 4096-character token contract']
     user_id [name: 'push_devices_user']
   }
   Note: 'Service: Notification'

@@ -160,7 +160,14 @@ It preserves existing Identity/Notification rows and fails if an existing
 Notification database has an unexpected owner.
 
 `notification_migrator` owns Notification's database/schema and runs Flyway;
-`notification_app` has CONNECT/USAGE/DML and sequence grants only. Neither role
+`notification_app` has CONNECT/USAGE and explicit grants on application tables.
+V008 removes historical blanket/default grants. It allows only SELECT/INSERT on
+account tombstones, no access to Flyway history or future tables, and immutable
+quarantine evidence with RLS-limited deletion after 30 days. Replay bookkeeping
+updates belong to the separate NOLOGIN `notification_replay` role, which inherits
+normal application permissions. Repeated provisioning calls the owner-only
+`notification_apply_runtime_grants()` function after that migration exists.
+Neither runtime nor replay credentials can invoke that function. Neither login role
 is superuser, can create databases/roles, bypass RLS, or read Identity tables.
 The administrative credential is mounted only into PostgreSQL and its provisioning
 job. This job runs before Notification starts, including upgrades over a
@@ -227,6 +234,15 @@ the normal Notification secret mounts. Its only broker grants are publish
 `_INBOX.cookie.notification_operator.>`. The operator can thereby retrieve a
 stored quarantined stream sequence; it cannot republish an event.
 
+Provision a separate operator PostgreSQL LOGIN (for example `notification_operator`)
+through the administrator, with `NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`
+and membership in `notification_replay`. Set its password securely, for example
+using interactive `psql` `\\password`; never grant this role to `notification_app`.
+Store the operator password as `operators/notification-db-password`, owned by
+`10001:10001` with mode `0400`. The operator login inherits application data access
+plus updates to `replay_requested_at`, `replayed_at` and `replay_attempts`; it cannot
+change quarantine evidence, tombstones or migration history.
+
 ```bash
 sudo docker compose \
   --project-directory /opt/cookie/production \
@@ -235,8 +251,11 @@ sudo docker compose \
   --file /opt/cookie/production/compose.yaml \
   run --rm --no-deps \
   --volume /srv/cookie/secrets/operators/notification-replay.creds:/run/secrets/operator.creds:ro \
+  --volume /srv/cookie/secrets/operators/notification-db-password:/run/operator-db/spring.datasource.password:ro \
   notification \
   --spring.profiles.active=notification-replay \
+  --spring.config.import=optional:configtree:/run/secrets/,configtree:/run/operator-db/ \
+  --spring.datasource.username=notification_operator \
   --spring.main.web-application-type=none \
   --cookie.notification.consumer-enabled=false \
   --cookie.notification.scheduler-enabled=false \

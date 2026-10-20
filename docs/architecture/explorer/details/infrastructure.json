@@ -298,7 +298,7 @@
       "description": "current.env обновляется только после readiness; pending.env записывается до restart. Rollback восстанавливает только затронутые приложения, не откатывает миграции/broker config/provider effects.",
       "source": {
         "path": "deploy/production/README.md",
-        "line": 286
+        "line": 305
       }
     },
     {

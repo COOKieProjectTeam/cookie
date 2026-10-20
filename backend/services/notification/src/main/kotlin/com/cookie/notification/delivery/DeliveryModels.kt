@@ -11,11 +11,15 @@ class DeliveryJob(
     val attemptCount: Int, val leaseToken: UUID,
     /** Retryable provider failures only; queue claims and technical deferrals do not consume this budget. */
     val providerFailureCount: Int = 0,
-) { override fun toString(): String = "DeliveryJob(id=$id,channel=$channel,kind=$kind)" }
+) {
+    fun withExpiry(expiry: Instant) = DeliveryJob(id,channel,userId,deviceId,registrationAttemptId,kind,locale,
+        encryptedPayload,expiry,occurrenceId,attemptCount,leaseToken,providerFailureCount)
+    override fun toString(): String = "DeliveryJob(id=$id,channel=$channel,kind=$kind)"
+}
 
 class PushTarget(val deviceId: UUID, val platform: String, val token: String, val revision: Instant,
                  val locale: String = "ru", val quietUntil: Instant? = null,
-                 val nextWaterSubmissionAt: Instant? = null) {
+                 val nextWaterSubmissionAt: Instant? = null, val deliveryExpiresAt: Instant? = null) {
     override fun toString(): String = "PushTarget(deviceId=$deviceId,platform=$platform,token=[redacted])"
 }
 

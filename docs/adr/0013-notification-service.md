@@ -40,6 +40,9 @@ outcome before releasing those locks. This intentionally serializes a token
 transfer or deletion with an in-flight submission; it cannot recall a request
 already submitted to a provider. The ingestion transaction never calls providers.
 Both IOS and ANDROID register opaque, case-sensitive FCM registration tokens.
+Their ownership locks and unique digest index share the same FCM namespace,
+independent of the caller-supplied platform. V007 preserves the latest active
+registration when consolidating historical cross-platform duplicates.
 A trigger-maintained SHA-256 digest provides bounded unique index entries without
 reducing the public token length limit.
 
@@ -88,6 +91,10 @@ configuration adds Notification and Redis to the existing single non-HA Yandex V
 isolated database roles, scoped broker/Redis ACLs, independent images and a
 two-service release manifest. Initial capacity is configured at 4 vCPU / 8 GiB;
 load testing and operational monitoring must validate this budget.
+V008 narrows runtime grants to known application tables, makes account tombstones
+append-only, protects Flyway history, and separates quarantine replay bookkeeping
+from runtime ingestion/retention. Repeat provisioning reapplies that policy;
+new tables require an explicit grant migration.
 
 Provider credentials and a trusted verification HTTPS URL are deployment inputs.
 The email contains only the verification token in the URL fragment, never the

@@ -79,7 +79,7 @@ class DeliveryWorker(
     fun maintain() { if (properties.enabled) repository.maintain() }
 
     internal fun process(job: DeliveryJob) {
-        if (!job.expiresAt.isAfter(clock.instant())) {
+        if (job.channel == "EMAIL" && !job.expiresAt.isAfter(clock.instant())) {
             repository.finish(job, "EXPIRED", "EXPIRED")
             return
         }
@@ -88,7 +88,8 @@ class DeliveryWorker(
             val email = try {
                 decryptor.decrypt(requireNotNull(job.encryptedPayload), requireNotNull(job.registrationAttemptId), job.expiresAt)
             } catch (_: DecryptionKeyUnavailableException) {
-                applyResult(job, ProviderResult.Unavailable("DECRYPTION_KEY_UNAVAILABLE"), "SMTP")
+                // A missing kid belongs to this payload, not to the SMTP provider.
+                repository.retry(job, "DECRYPTION_KEY_UNAVAILABLE", Duration.ofSeconds(60))
                 return
             } catch (_: InvalidVerificationPayloadException) {
                 repository.finish(job, "FAILED", "INVALID_VERIFICATION_PAYLOAD")
@@ -97,6 +98,9 @@ class DeliveryWorker(
             smtp.execute(job, email)?.let { applyResult(job, it, "SMTP") }
         } else {
             val handled = repository.withPushSubmission(job) { target ->
+                // Settings may have changed after the claim. Read expiry under the same
+                // account lock as timezone changes, before provider TTL and retry decisions.
+                val job = job.withExpiry(target.deliveryExpiresAt ?: job.expiresAt)
                 if (target.nextWaterSubmissionAt != null) {
                     repository.retry(job, "WATER_INTERVAL",
                         Duration.between(clock.instant(), target.nextWaterSubmissionAt).coerceAtLeast(Duration.ofSeconds(1)))

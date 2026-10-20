@@ -10,7 +10,7 @@ import argparse
 import datetime
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Any
@@ -160,7 +160,7 @@ class Repository:
         parsed = urlsplit(reference)
         if parsed.scheme or parsed.netloc or parsed.query:
             raise BuildError(f"Only local $refs are supported: {reference}")
-        target_path = self.path(Path(document_path).parent / unquote(parsed.path)) if parsed.path else self.path(document_path)
+        target_path = self.path((PurePosixPath(document_path).parent / unquote(parsed.path)).as_posix()) if parsed.path else self.path(document_path)
         target_name = self.relative(target_path)
         if not target_name.startswith("contracts/openapi/") or target_path.suffix not in {".yaml", ".yml", ".json"}:
             raise BuildError(f"$ref must target an OpenAPI source: {reference}")

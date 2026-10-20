@@ -1,12 +1,13 @@
 """Behavioral checks for explorer discovery, contract fidelity and offline safety."""
 import importlib.util
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 BUILD_PATH = Path(__file__).resolve().parents[1] / "build.py"
 SPEC = importlib.util.spec_from_file_location("explorer_build", BUILD_PATH)
@@ -71,6 +72,18 @@ class ExplorerBuildTest(unittest.TestCase):
         self.assertEqual(changed["events"][0]["status"], "implemented")
         self.assertEqual([call["status"] for call in changed["calls"]], ["planned", "implemented"])
         self.assertEqual(changed["externalSystems"][0]["id"], "smtp")
+
+    def test_relative_ref_uses_uri_paths_even_with_windows_native_paths(self):
+        self.write("contracts/openapi/common.yaml", {"Id": {"type": "string", "format": "uuid"}})
+        repository = build.Repository(self.root)
+        document = "contracts/openapi/public/alpha.yaml"
+        # Simulate Windows only at the URI/native-path boundary; filesystem I/O
+        # continues on the test host. The same fixture also runs on Windows.
+        with patch.object(build, "Path", side_effect=lambda value:
+                          PureWindowsPath(value) if str(value) == document else Path(value)):
+            resolved = repository.resolve({"$ref": "../common.yaml#/Id"}, document)
+        self.assertEqual((resolved["type"], resolved["format"]), ("string", "uuid"))
+        self.assertEqual(resolved["x-explorer-source"]["path"], "contracts/openapi/common.yaml")
 
     def test_local_refs_parameters_security_and_schema_constraints_survive(self):
         self.write("contracts/openapi/common.yaml", {

@@ -97,6 +97,28 @@ class VerificationPayloadDecryptorTest {
         assertThat(decryptor.ready()).isTrue()
     }
 
+    @Test fun `lost retiring key does not block jobs encrypted for a healthy active key`() {
+        val active = key("current"); val retiring = key("retiring")
+        val activePath = Files.writeString(directory.resolve("current.jwk"), active.toJSONString())
+        val retiringPath = Files.writeString(directory.resolve("retiring.jwk"), retiring.toJSONString())
+        var current = now
+        val clock = object : Clock() {
+            override fun instant() = current
+            override fun getZone() = ZoneOffset.UTC
+            override fun withZone(zone: ZoneId): Clock = this
+        }
+        val decryptor = VerificationPayloadDecryptor(listOf(activePath, retiringPath), mapper, clock, true)
+        Files.delete(retiringPath)
+        current = now.plusSeconds(6)
+        assertThat(decryptor.ready()).isFalse()
+        assertThatThrownBy { decryptor.decrypt(encrypt(retiring), attempt, now.plusSeconds(300)) }
+            .isInstanceOf(DecryptionKeyUnavailableException::class.java)
+        assertThat(decryptor.decrypt(encrypt(active), attempt, now.plusSeconds(300)).token).isEqualTo(token)
+        Files.writeString(retiringPath, retiring.toJSONString())
+        assertThat(decryptor.ready()).isTrue()
+        assertThat(decryptor.decrypt(encrypt(retiring), attempt, now.plusSeconds(300)).token).isEqualTo(token)
+    }
+
     private fun key(kid: String) = RSAKeyGenerator(2048).keyID(kid).keyUse(KeyUse.ENCRYPTION)
         .algorithm(JWEAlgorithm.RSA_OAEP_256).generate()
     private fun decryptor(vararg keys: RSAKey): VerificationPayloadDecryptor = VerificationPayloadDecryptor(

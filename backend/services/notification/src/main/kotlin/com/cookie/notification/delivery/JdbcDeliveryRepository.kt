@@ -92,7 +92,7 @@ class JdbcDeliveryRepository(
                 "notification:user:${requireNotNull(job.userId)}")
             val initial = currentPushTarget(job) ?: return@execute false
             jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Any::class.java,
-                "notification:token:${initial.platform}:${initial.token}")
+                "notification:token:FCM:${initial.token}")
             // A transfer can finish while this transaction waits for the token lock.
             val current = currentPushTarget(job) ?: return@execute false
             check(current.platform == initial.platform && current.token == initial.token)
@@ -118,7 +118,7 @@ class JdbcDeliveryRepository(
 
     override fun currentPushTarget(job: DeliveryJob): PushTarget? = jdbc.query("""SELECT d.id,d.platform,d.push_token,d.updated_at,
         s.water_enabled,s.food_enabled,s.weigh_enabled,s.goal_warning_enabled,s.quiet_start,s.quiet_end,s.timezone,s.locale,
-        s.last_water_submission_at,s.last_water_submission_occurrence_id,
+        s.last_water_submission_at,s.last_water_submission_occurrence_id,j.expires_at,
         clock_timestamp() AS current_time FROM push_devices d JOIN settings s ON s.user_id=d.user_id
         JOIN delivery_jobs j ON j.device_id=d.id WHERE j.id=? AND j.lease_token=? AND j.status='CLAIMED'
         AND d.user_id=j.user_id
@@ -146,7 +146,8 @@ class JdbcDeliveryRepository(
         } else null
         if (!enabled || zone == null) null
         else PushTarget(row.getObject("id", UUID::class.java), row.getString("platform"), row.getString("push_token"),
-            row.getTimestamp("updated_at").toInstant(), row.getString("locale"), quietUntil, nextWaterSubmissionAt)
+            row.getTimestamp("updated_at").toInstant(), row.getString("locale"), quietUntil, nextWaterSubmissionAt,
+            row.getTimestamp("expires_at").toInstant())
     }, job.id, job.leaseToken).firstOrNull()
 
     override fun invalidateDevice(target: PushTarget) {
@@ -200,8 +201,9 @@ class JdbcDeliveryRepository(
                   safe_code='LEASE_EXPIRED',finished_at=clock_timestamp() FROM reclaimed r
                 WHERE a.id=r.old_token AND a.finished_at IS NULL""")
             jdbc.update("""UPDATE delivery_jobs SET status='EXPIRED',last_code='EXPIRED',finished_at=clock_timestamp(),encrypted_payload=NULL
-                WHERE id IN (SELECT id FROM delivery_jobs WHERE status='PENDING'
-                  AND expires_at<=clock_timestamp() ORDER BY expires_at LIMIT 500)""")
+                WHERE status='PENDING' AND expires_at<=clock_timestamp()
+                AND id IN (SELECT id FROM delivery_jobs WHERE status='PENDING'
+                  AND expires_at<=clock_timestamp() ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED)""")
             jdbc.update("""DELETE FROM delivery_jobs WHERE id IN (SELECT id FROM delivery_jobs
                 WHERE finished_at<clock_timestamp()-interval '30 days' ORDER BY finished_at LIMIT 500)""")
         }

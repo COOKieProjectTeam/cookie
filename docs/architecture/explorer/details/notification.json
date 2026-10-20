@@ -94,11 +94,11 @@
     {
       "id": "notification-devices",
       "label": "Устройства",
-      "value": "(user_id,device_id) + уникальный активный (platform,SHA-256(token))",
+      "value": "(user_id,device_id) + уникальный активный SHA-256(FCM token) для обеих платформ",
       "description": "deviceId — непустой ≤255; token — непрозрачный регистрозависимый FCM registration token ≤4096 без control chars для IOS и ANDROID. Trigger хранит digest32 bytes для bounded unique index; перенос проверяет также полный token. Повторная регистрация обновляет revision и отключает прежнего владельца. V006 отключает старые IOS APNs-привязки до регистрации FCM-токена.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-        "line": 46
+        "line": 74
       }
     },
     {
@@ -128,7 +128,7 @@
       "description": "Первое timezone и повторное включение food/water начинают соответствующий inactivity baseline с текущего времени БД. Смена уже заданной timezone не сбрасывает elapsed inactivity.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-        "line": 28
+        "line": 30
       }
     },
     {
@@ -154,11 +154,11 @@
     {
       "id": "notification-database-production",
       "label": "Production pool",
-      "value": "8 connections",
-      "description": "Compose задаёт COOKIE_NOTIFICATION_DATABASE_POOL_SIZE=8, отдельные notification_app / notification_migrator и Flyway connection. Это переопределение application default 12.",
+      "value": "12 connections",
+      "description": "Compose задаёт COOKIE_NOTIFICATION_DATABASE_POOL_SIZE=12, отдельные notification_app / notification_migrator и Flyway connection. Значение совпадает с application default 12.",
       "source": {
         "path": "deploy/production/compose.yaml",
-        "line": 296
+        "line": 298
       }
     },
     {
@@ -168,7 +168,7 @@
       "description": "dirty() увеличивает generation и ставит due_at=min(old,new). Redis вызывается только после commit; ошибка индекса не превращает успешную мутацию в HTTP 500.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-        "line": 77
+        "line": 105
       }
     },
     {
@@ -368,7 +368,7 @@
       "description": "Будущие profile/meal/water/weight/progress события покрыты synthetic contract fixtures. Их production producers и замены producers сейчас не развёрнуты.",
       "source": {
         "path": "backend/services/notification/README.md",
-        "line": 33
+        "line": 44
       }
     },
     {
@@ -378,14 +378,14 @@
       "description": "Расшифровка только в worker memory; matching registrationAttemptId и expiresAt, contentType application/json, без compression/crit/token-controlled key URLs. Compact ≤32768 chars, plaintext ≤16384 bytes; locale ru/en с ru fallback.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/VerificationPayloadDecryptor.kt",
-        "line": 43
+        "line": 44
       }
     },
     {
       "id": "notification-email-keys",
       "label": "JWE key ring",
       "value": "до 16 active/retiring key paths",
-      "description": "COOKIE_NOTIFICATION_PRIVATE_KEY_PATH и COOKIE_NOTIFICATION_RETIRING_PRIVATE_KEY_PATHS; production проверяет mounts и key material при старте. Отсутствующий kid/key временно ставит канал на паузу, неправильный payload завершает FAILED.",
+      "description": "COOKIE_NOTIFICATION_PRIVATE_KEY_PATH и COOKIE_NOTIFICATION_RETIRING_PRIVATE_KEY_PATHS; production проверяет mounts и key material при старте. Отсутствующий kid/key откладывает только затронутую job на60 s; исправные ключи продолжают работать, неполный keyring даёт not-ready, неправильный payload завершает FAILED.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/config/SecurityConfiguration.kt",
         "line": 52
@@ -448,17 +448,17 @@
       "description": "Maintenance обрабатывает до500 leases, затем до500 просроченных PENDING и до500 старых terminal jobs. UNKNOWN никогда автоматически не сбрасывается; ciphertext удаляется.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
-        "line": 187
+        "line": 188
       }
     },
     {
       "id": "notification-retry",
       "label": "Provider retry",
       "value": "10 retryable provider failures; jitter 10..300 s + provider minimum",
-      "description": "Persistent provider_failure_count увеличивается только при Retry; claim attempt_count остаётся аудитом. Unavailable/auth/key, CHANNEL_PAUSED, quiet hours и water interval не расходуют бюджет и backoff. Exponential cap300 s, jitter, минимум10 s; provider minimum может быть больше300 s. Retry после expiry завершает EXPIRED; unavailable канал ставится на60 s pause; Apple credentials — только IOS, общая FCM авторизация — обе платформы.",
+      "description": "Persistent provider_failure_count увеличивается только при Retry; claim attempt_count остаётся аудитом. Unavailable/auth, key-specific retry, CHANNEL_PAUSED, quiet hours и water interval не расходуют бюджет и backoff. Exponential cap300 s, jitter, минимум10 s; provider minimum может быть больше300 s. Retry после expiry завершает EXPIRED; unavailable канал ставится на60 s pause; Apple credentials — только IOS, общая FCM авторизация — обе платформы.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
-        "line": 138
+        "line": 142
       }
     },
     {
@@ -508,7 +508,7 @@
       "description": "Перед provider проверяются lease/expiry, ownership, enabled, deletion, timezone, locale, quiet и актуальные domain snapshots. Устаревший reminder → CANCELLED; quiet → retry до quiet end. Изменение после preflight не позволяет отозвать уже отправленный запрос.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
-        "line": 99
+        "line": 100
       }
     },
     {
@@ -525,7 +525,7 @@
       "id": "notification-replay",
       "label": "Operator replay",
       "value": "profile notification-replay + --notification-replay-id",
-      "description": "Отдельный cookie.notification.operator-nats-credentials-path; runtime ACL запрещает stream message GET. Replay проверяет subject/hash оригинала, вызывает тот же handler без republish. Нет HTTP endpoint и нет reset UNKNOWN; отсутствие original — явная ошибка. Ошибки JDBC/broker выводятся безопасным сообщением без исходных данных; контекст CLI закрывается при любом исходе. Lookup использует только STREAM.MSG.GET с timeout2 s, без STREAM.INFO discovery.",
+      "description": "Отдельные cookie.notification.operator-nats-credentials-path и PostgreSQL LOGIN с ролью notification_replay; runtime ACL запрещает stream message GET. Replay проверяет subject/hash оригинала, вызывает тот же handler без republish. Нет HTTP endpoint и нет reset UNKNOWN; отсутствие original — явная ошибка. Ошибки JDBC/broker выводятся безопасным сообщением без исходных данных; контекст CLI закрывается при любом исходе. Lookup использует только STREAM.MSG.GET с timeout2 s, без STREAM.INFO discovery.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/OperatorQuarantineReplay.kt",
         "line": 21
@@ -588,7 +588,7 @@
       "description": "decrypt перечитывает active/retiring paths, если последняя загрузка старше 5 s; readiness также проверяет ring через этот интервал. Отсутствие ключа не разрешает расшифровку другим способом.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/VerificationPayloadDecryptor.kt",
-        "line": 43
+        "line": 44
       }
     },
     {
@@ -608,6 +608,16 @@
       "description": "Старые IOS APNs-привязки отключаются, активные PUSH jobs отменяются, leases и attempts закрываются. Android, terminal outcomes и SMTP сохраняются. До Flyway deploy останавливает старый Notification. Новый IOS FCM token хранится без изменения регистра.",
       "source": {
         "path": "backend/services/notification/src/main/resources/db/migration/V006__fcm_only_push.sql",
+        "line": 14
+      }
+    },
+    {
+      "id": "notification-runtime-grants",
+      "label": "Runtime PostgreSQL privileges",
+      "value": "explicit tables; append-only tombstones; separate replay role",
+      "description": "V008 снимает blanket/default grants, закрывает Flyway history и будущие таблицы. Runtime не меняет tombstones или quarantine evidence; RLS разрешает retention только старше30 days. notification_replay обновляет только replay bookkeeping. Повторный provisioning применяет ту же политику.",
+      "source": {
+        "path": "backend/services/notification/src/main/resources/db/migration/V008__runtime_privileges.sql",
         "line": 14
       }
     }
@@ -669,10 +679,10 @@
         {
           "node": "notification_db",
           "label": "Account transaction и token lock",
-          "detail": "Advisory lock account, запрет tombstone, lazy settings. IOS и ANDROID передают opaque case-sensitive FCM token; lock platform/token отключает прежнего active owner и upsert(user_id,device_id) устанавливает новый token/revision. Trigger-maintained SHA-256 даёт bounded unique index; полная строка тоже проверяется при переносе.",
+          "detail": "Advisory lock account, запрет tombstone, lazy settings. IOS и ANDROID передают opaque case-sensitive FCM token; общий lock FCM/token отключает прежнего active owner и upsert(user_id,device_id) устанавливает новый token/revision. Trigger-maintained SHA-256 даёт bounded unique index; полная строка тоже проверяется при переносе.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 46
+            "line": 74
           }
         },
         {
@@ -681,7 +691,7 @@
           "detail": "due_at становится не позднее текущего времени, generation увеличивается; commit сохраняет device и deadline атомарно.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 77
+            "line": 105
           }
         },
         {
@@ -690,7 +700,7 @@
           "detail": "ZADD userId:generation только после commit; ошибка Redis переносится на PostgreSQL fallback/rebuild и не меняет успешный HTTP результат.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 81
+            "line": 109
           }
         },
         {
@@ -754,7 +764,7 @@
           "detail": "Advisory lock и deletion tombstone check; DELETE WHERE user_id=JWT sub AND device_id=path. 0 deleted rows →404; при успехе204. Redis deadline здесь не меняется.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 67
+            "line": 95
           }
         },
         {
@@ -763,7 +773,7 @@
           "detail": "currentPushTarget больше не находит device, поэтому worker завершает job CANCELLED. Уже начатый provider request отозвать нельзя.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
-            "line": 99
+            "line": 100
           }
         },
         {
@@ -827,7 +837,7 @@
           "detail": "Account advisory lock; tombstone→403; INSERT settings ON CONFLICT DO NOTHING и SELECT settings. GET не создаёт deadline и не пишет Redis.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 23
+            "line": 25
           }
         },
         {
@@ -900,16 +910,16 @@
           "detail": "Под account lock: merge, первое timezone устанавливает schedulingStartedAt и food/water baselines; re-enable сбрасывает свой baseline; explicit locale помечается overridden.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 28
+            "line": 30
           }
         },
         {
           "node": "notification_db",
           "label": "Поставить немедленный пересчёт",
-          "detail": "В той же transaction dirty(deadline,generation); изменения timezone/quiet/interval будут оценены по текущим snapshots.",
+          "detail": "В той же transaction пересчитывается expiry daily jobs до полуночи новой timezone и dirty(deadline,generation). Естественно истёкшая unsent job возобновляется только для текущей даты; terminal submission evidence сохраняется.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 42
+            "line": 47
           }
         },
         {
@@ -918,7 +928,7 @@
           "detail": "ZSET ускоряет пересчёт; падение Redis компенсируется PG sweep30 s и bounded rebuild60 s.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 81
+            "line": 109
           }
         },
         {
@@ -1004,10 +1014,10 @@
         {
           "node": "notification",
           "label": "Расшифровать и проверить JWE",
-          "detail": "Только память worker; RSA-OAEP-256/A256GCM; inner attemptId/expiry должны совпасть с queued metadata; key missing→channel unavailable, malformed→FAILED.",
+          "detail": "Только память worker; RSA-OAEP-256/A256GCM; inner attemptId/expiry должны совпасть с queued metadata; key missing→retry только этой job без SMTP pause, malformed→FAILED.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/VerificationPayloadDecryptor.kt",
-            "line": 43
+            "line": 44
           }
         },
         {
@@ -1043,7 +1053,7 @@
           "detail": "Terminal finish очищает ciphertext. Expired SMTP_SUBMITTING lease также UNKNOWN; automatic retry и operator replay его не сбрасывают.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/JdbcDeliveryRepository.kt",
-            "line": 187
+            "line": 188
           }
         }
       ]
@@ -1221,7 +1231,7 @@
           "detail": "Внешний участок доставки, управляемый Firebase. Ключ Apple настроен в Firebase; Notification не делает отдельный HTTP-запрос в APNs. ACCEPTED — подтверждение FCM, не показ и не прочтение.",
           "source": {
             "path": "docs/architecture/notification.md",
-            "line": 35
+            "line": 36
           }
         },
         {
@@ -1230,7 +1240,7 @@
           "detail": "ACCEPTED/FAILED/CANCELLED/EXPIRED или scheduled retry; provider unavailable pause60 s, transient max10 persistent provider failures, технические отсрочки вне бюджета, jitter и expiry ограничивают повтор.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
-            "line": 138
+            "line": 142
           }
         }
       ]
@@ -1271,7 +1281,7 @@
         {
           "node": "notification",
           "label": "Одноразовый operator process",
-          "detail": "Profile notification-replay отключает web/consumer/scheduler/delivery. --notification-replay-id выбирает запись, отдельный operator credentials path обязателен.",
+          "detail": "Profile notification-replay отключает web/consumer/scheduler/delivery. --notification-replay-id выбирает запись; отдельные operator NATS credentials и PostgreSQL LOGIN с notification_replay обязательны.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/OperatorQuarantineReplay.kt",
             "line": 31
@@ -1336,7 +1346,7 @@
           "detail": "Handler записывает dedup и игнорирует mutation для tombstoned account; repository transactions отвечают ACCOUNT_DELETED403. Tombstone не истекает.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/persistence/JdbcNotificationRepository.kt",
-            "line": 91
+            "line": 119
           }
         },
         {
@@ -1354,7 +1364,7 @@
           "detail": "Worker проверяет current target и projections перед submit; если account удалён, CANCELLED/отсутствующая job не допускает отправку.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/delivery/DeliveryWorker.kt",
-            "line": 99
+            "line": 100
           }
         }
       ]
@@ -1364,7 +1374,7 @@
     "registerDevice": {
       "notes": [
         "POST /v1/notifications/devices; body≤16 KiB: {platform: IOS|ANDROID,deviceId,token}.",
-        "201 новый logical device;200 upsert того же (JWT sub,deviceId). Enabled platform/token переносится с прежнего владельца; FCM-токен регистрозависимый и сохраняется без изменения для IOS и ANDROID.",
+        "201 новый logical device;200 upsert того же (JWT sub,deviceId). Активный FCM-токен переносится с прежнего владельца независимо от платформы; регистр токена сохраняется для IOS и ANDROID.",
         "JWT sub — единственный источник account ownership. PostgreSQL account/token locks и unique active token; Redis hint только after commit.",
         "Invalid JSON400; invalid JWT401; deleted account403; body413; dependency503 с Retry-After:1.",
         "После V006 старые IOS APNs-привязки отключены: приложение должно передать FCM registration token, сырой APNs token не подходит."

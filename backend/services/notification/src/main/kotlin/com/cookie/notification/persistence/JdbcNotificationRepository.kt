@@ -11,7 +11,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZoneId
 import java.util.UUID
 
 @Repository
@@ -39,8 +41,34 @@ class JdbcNotificationRepository(
             updated.schedulingStartedAt?.let(Timestamp::from),
             (!old.foodEnabled && updated.foodEnabled) || (old.timezone == null && updated.timezone != null), Timestamp.from(now),
             (!old.waterEnabled && updated.waterEnabled) || (old.timezone == null && updated.timezone != null), Timestamp.from(now),Timestamp.from(now),userId)
+        if (old.timezone != updated.timezone && updated.timezone != null) {
+            reconcileDailyExpiry(userId, ZoneId.of(updated.timezone), now)
+        }
         dirty(userId,now)
         updated
+    }
+
+    private fun reconcileDailyExpiry(userId: UUID, zone: ZoneId, now: Instant) {
+        val today = now.atZone(zone).toLocalDate()
+        val occurrences = jdbc.query("""SELECT DISTINCT o.id,o.cycle_key FROM reminder_occurrences o
+            JOIN delivery_jobs j ON j.occurrence_id=o.id WHERE o.user_id=?
+            AND o.kind IN ('WEIGH','CALORIES_EXCEEDED','CALORIES_UNDER_TARGET')
+            AND (j.status IN ('PENDING','CLAIMED') OR
+                (j.status='EXPIRED' AND j.last_code='EXPIRED' AND o.last_submitted_at IS NULL))""",
+            { row, _ -> row.getObject("id", UUID::class.java) to LocalDate.parse(row.getString("cycle_key")) }, userId)
+        occurrences.forEach { (id, date) ->
+            val expiry = date.plusDays(1).atStartOfDay(zone).toInstant()
+            // Active work keeps its lease/backoff. Only an entirely unsent, naturally expired
+            // occurrence can reopen, and only while its date is current in the new timezone.
+            jdbc.update("""UPDATE delivery_jobs SET expires_at=?,
+                status=CASE WHEN status='EXPIRED' THEN 'PENDING' ELSE status END,
+                finished_at=CASE WHEN status='EXPIRED' THEN NULL ELSE finished_at END,
+                last_code=CASE WHEN status='EXPIRED' THEN NULL ELSE last_code END
+                WHERE occurrence_id=? AND (status IN ('PENDING','CLAIMED') OR
+                    (status='EXPIRED' AND last_code='EXPIRED' AND ? AND EXISTS (
+                        SELECT 1 FROM reminder_occurrences o WHERE o.id=occurrence_id AND o.last_submitted_at IS NULL)))""",
+                Timestamp.from(expiry), id, date == today)
+        }
     }
 
     override fun registerDevice(userId: UUID, command: RegisterDevice): DeviceRegistration = transaction(userId) {
@@ -48,12 +76,12 @@ class JdbcNotificationRepository(
         // FCM registration tokens are opaque and case-sensitive on both platforms.
         val token = command.token
         // Serialize token movement across accounts; a token belongs to one active installation.
-        jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Any::class.java, "notification:token:${command.platform}:$token")
+        jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Any::class.java, "notification:token:FCM:$token")
         // Compare the complete token as well: a digest collision must never transfer another token.
         // The unique digest index rejects a colliding registration atomically instead.
         jdbc.update("""UPDATE push_devices SET enabled=false,updated_at=clock_timestamp()
-            WHERE platform=? AND push_token_hash=sha256(convert_to(?,'UTF8')) AND push_token=?
-            AND NOT(user_id=? AND device_id=?)""", command.platform.name,token,token,userId,command.deviceId)
+            WHERE push_token_hash=sha256(convert_to(?,'UTF8')) AND push_token=?
+            AND NOT(user_id=? AND device_id=?)""", token,token,userId,command.deviceId)
         val existing = jdbc.query("SELECT * FROM push_devices WHERE user_id=? AND device_id=?", ::mapDevice,userId,command.deviceId).singleOrNull()
         val id = existing?.id ?: UUID.randomUUID()
         jdbc.update("""INSERT INTO push_devices(id,user_id,platform,device_id,push_token,enabled,created_at,updated_at)

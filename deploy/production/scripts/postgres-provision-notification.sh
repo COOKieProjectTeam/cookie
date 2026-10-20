@@ -37,8 +37,12 @@ SELECT 'CREATE ROLE notification_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATER
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'notification_migrator') \gexec
 SELECT 'CREATE ROLE notification_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION'
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'notification_app') \gexec
+SELECT 'CREATE ROLE notification_replay NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'notification_replay') \gexec
 ALTER ROLE notification_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'migration_password';
 ALTER ROLE notification_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'app_password';
+ALTER ROLE notification_replay NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT notification_app TO notification_replay;
 SELECT 'CREATE DATABASE notification OWNER notification_migrator'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'notification') \gexec
 DO $$ BEGIN
@@ -54,12 +58,14 @@ BEGIN;
 ALTER SCHEMA public OWNER TO notification_migrator;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO notification_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO notification_app;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO notification_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE notification_migrator IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO notification_app;
+  REVOKE ALL ON TABLES FROM notification_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE notification_migrator IN SCHEMA public
-  GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO notification_app;
+  REVOKE ALL ON SEQUENCES FROM notification_app;
+-- Fresh/older databases acquire explicit grants when V008 runs. Never grant
+-- future tables (including Flyway history) to runtime by default.
+SELECT 'SELECT public.notification_apply_runtime_grants()'
+WHERE to_regprocedure('public.notification_apply_runtime_grants()') IS NOT NULL \gexec
 COMMIT;
 SQL
 unset PGPASSWORD

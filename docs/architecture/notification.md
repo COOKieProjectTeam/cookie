@@ -18,7 +18,8 @@ empty sections, explicit nulls, invalid
 IANA timezones, invalid `HH:mm` times and food intervals outside 1..10080 minutes.
 Timezone is absent until explicitly set; all scheduled push remains paused until
 then. Locale supports `ru` and `en`, with Russian fallback. Devices are scoped to
-their account, and an enabled platform/token is bound to only one account at a
+their account, and an enabled FCM token is bound to only one account across both
+platforms at a
 time. Both IOS and ANDROID register opaque, case-sensitive FCM registration tokens;
 tokens are never lowercased, including hexadecimal-looking strings. A trigger-maintained
 SHA-256 digest bounds the unique index entry while preserving the 4096-character
@@ -64,6 +65,10 @@ Food/water use elapsed UTC durations; daily schedules and quiet hours use the
 chosen IANA zone. A DST gap uses the first valid instant after the gap, an overlap
 uses its first occurrence. Timezone changes recalculate future local deadlines
 without resetting inactivity; daily deduplication does not include timezone.
+The settings transaction also recalculates queued daily job expiry at midnight
+in the new zone. Naturally expired, entirely unsent daily jobs may resume only
+while their occurrence date is current; submitted/accepted work is never reopened.
+Workers read the current expiry under the account lock before submission/retry.
 Delivery rechecks current preferences, quiet hours, token ownership/revision,
 deletion and relevant projections. Invalidated diary data cancels pending pushes.
 Fully unsent cancelled daily occurrences can resume when a correction makes them
@@ -135,6 +140,8 @@ details into push payloads, logs or broker headers.
 
 JWE decrypts only in memory, requires the Identity RSA-OAEP-256/A256GCM profile,
 matching attempt/expiry metadata, and accepts active/retiring keys by `kid`.
+An unavailable decryption key defers only the affected job for 60 seconds and
+does not pause the SMTP channel or consume the provider retry budget.
 Terminal email jobs erase ciphertext. Secret mounts and key rotation procedures
 are documented in the production runbook. JWKS retrieval uses a configured origin,
 no redirects/token-controlled key URLs, a five-minute cache and bounded refresh.
@@ -158,3 +165,10 @@ Scheduler backlog/age is exposed as `cookie.notification.scheduler.overdue` and
 gauge makes the associated last known backlog value stale, not an empty queue.
 The real Identity flow is integration-tested; future domain producers are covered
 by contract fixtures until their implementation exists.
+
+Runtime database permissions use explicit table grants. Account tombstones are
+append-only; Flyway history and future tables receive no runtime grants.
+Quarantine payload metadata is immutable to runtime: it can insert the allowlisted
+columns and delete only records older than 30 days, enforced by row-level security.
+The separately authorized `notification_replay` role may update only replay
+bookkeeping columns. Provisioning reapplies the V008 permission policy.

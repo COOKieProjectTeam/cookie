@@ -32,11 +32,12 @@ class VerificationPayloadDecryptor(
 ) {
     private var loadedAt: Instant? = null
     private var keys: Map<String, RSAKey> = emptyMap()
+    private var completeKeyRing = false
     init {
         if (requireAtStartup) {
             require(paths.isNotEmpty() && paths.all(Files::isRegularFile)) { "All Notification decryption keys must be mounted" }
             try { reload() } catch (_: Exception) { throw IllegalArgumentException("Invalid Notification decryption key material") }
-            require(keys.isNotEmpty()) { "Notification private key is required" }
+            require(completeKeyRing) { "All configured decryption keys must be valid and have distinct ids" }
         }
     }
 
@@ -77,14 +78,14 @@ class VerificationPayloadDecryptor(
 
     @Synchronized
     fun ready(): Boolean {
-        if (loadedAt == null || !loadedAt!!.plusSeconds(5).isAfter(clock.instant())) {
+        if (!completeKeyRing || loadedAt == null || !loadedAt!!.plusSeconds(5).isAfter(clock.instant())) {
             try { reload() } catch (_: Exception) { return false }
         }
-        return keys.isNotEmpty()
+        return completeKeyRing
     }
 
     private fun reload() {
-        val loaded = paths.map { path ->
+        val loaded = paths.map { path -> runCatching {
             require(Files.isRegularFile(path)) { "All Notification decryption keys must be mounted" }
             require(Files.size(path) <= 65_536) { "Notification key file is too large" }
             RSAKey.parse(Files.readString(path)).also {
@@ -97,9 +98,12 @@ class VerificationPayloadDecryptor(
                 probe.decrypt(RSADecrypter(it))
                 require(probe.payload.toString() == "key-self-test")
             }
-        }
-        require(loaded.map { it.keyID }.distinct().size == loaded.size) { "Duplicate decryption key id" }
-        keys = loaded.associateBy { it.keyID }
+        } }
+        val byId = loaded.mapNotNull { it.getOrNull() }.groupBy { it.keyID }
+        // Never keep stale material for a lost mount, or choose between duplicate
+        // key ids. A broken retiring key must not suppress healthy independent keys.
+        keys = byId.filterValues { it.size == 1 }.mapValues { it.value.single() }
+        completeKeyRing = paths.isNotEmpty() && loaded.all { it.isSuccess } && keys.size == paths.size
         loadedAt = clock.instant()
     }
 }

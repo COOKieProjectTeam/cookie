@@ -141,8 +141,28 @@ class ContainerBoundaryTest(unittest.TestCase):
         self.sql("CREATE TABLE provision_probe (id integer primary key); INSERT INTO provision_probe VALUES (42);",
             database="notification", user="notification_migrator", password="synthetic-migration-password")
         docker("exec", self.postgres, "/bin/sh", "/tmp/provision.sh")
-        self.assertIn("42", self.sql("SELECT id FROM provision_probe", database="notification", user="notification_app", password="synthetic-app-password").stdout)
+        self.assertIn("42", self.sql("SELECT id FROM provision_probe", database="notification", user="notification_migrator", password="synthetic-migration-password").stdout)
+        self.assertNotEqual(self.sql("SELECT id FROM provision_probe", database="notification",
+            user="notification_app", password="synthetic-app-password", check=False).returncode, 0)
         self.assertIn("preserve-me", self.sql("SELECT value FROM identity_marker", database="identity").stdout)
+
+    def test_runtime_grants_after_migration_and_repeated_provision(self):
+        for migration in sorted((ROOT / "backend/services/notification/src/main/resources/db/migration").glob("*.sql")):
+            self.sql(migration.read_text(), database="notification",
+                user="notification_migrator", password="synthetic-migration-password")
+        def app(statement, check=True):
+            return self.sql(statement, database="notification", user="notification_app",
+                password="synthetic-app-password", check=check)
+        user = str(uuid.uuid4())
+        app(f"INSERT INTO account_tombstones VALUES ('{user}','{uuid.uuid4()}',now())")
+        for _ in range(2):
+            self.assertNotEqual(app("DELETE FROM account_tombstones", check=False).returncode, 0)
+            self.assertNotEqual(app("UPDATE account_tombstones SET deleted_at=now()", check=False).returncode, 0)
+            self.assertNotEqual(app("UPDATE message_quarantine SET replayed_at=now()", check=False).returncode, 0)
+            self.assertNotEqual(app("SELECT notification_apply_runtime_grants()", check=False).returncode, 0)
+            app(f"INSERT INTO settings(user_id) VALUES ('{uuid.uuid4()}')")
+            docker("exec", self.postgres, "/bin/sh", "/tmp/provision.sh")
+        self.assertIn(user, app("SELECT user_id FROM account_tombstones").stdout)
 
     def test_application_cannot_create_tables_or_access_identity_data(self):
         ddl = self.sql("CREATE TABLE forbidden (id integer)", database="notification", user="notification_app", password="synthetic-app-password", check=False)

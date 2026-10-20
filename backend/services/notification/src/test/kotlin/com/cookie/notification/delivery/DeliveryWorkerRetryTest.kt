@@ -6,6 +6,7 @@ import com.cookie.notification.config.FcmProperties
 import com.cookie.notification.security.BoundedHttpExchange
 import com.cookie.notification.security.DecryptionKeyUnavailableException
 import com.cookie.notification.security.VerificationPayloadDecryptor
+import com.cookie.notification.security.VerificationEmail
 import com.sun.net.httpserver.HttpServer
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
@@ -173,6 +174,42 @@ class DeliveryWorkerRetryTest {
         assertThat(repository.providerFailures).isEqualTo(10)
         assertThat(repository.claim(1)).isEmpty()
         assertThat(requests.get()).isEqualTo(10)
+    }
+
+    @Test fun `unavailable payload key does not pause an independent healthy email`() {
+        repository.channel = "EMAIL"
+        val bad = repository.claim(1).single()
+        val good = DeliveryJob(UUID.randomUUID(), "EMAIL", null, null, UUID.randomUUID(),
+            "EMAIL_VERIFICATION", "ru", "healthy-ciphertext", repository.expiresAt, null, 1, UUID.randomUUID())
+        `when`(decryptor.decrypt("ciphertext", repository.registration, repository.expiresAt))
+            .thenThrow(DecryptionKeyUnavailableException())
+        `when`(decryptor.decrypt("healthy-ciphertext", good.registrationAttemptId!!, good.expiresAt))
+            .thenReturn(VerificationEmail("healthy@example.test", "synthetic", "ru", good.expiresAt))
+        val submissions = AtomicInteger()
+        val sender = VerificationSender { _, _ -> object : PreparedEmail {
+            override fun submit(): ProviderResult { submissions.incrementAndGet(); return ProviderResult.Accepted() }
+            override fun close() = Unit
+        } }
+        val worker = DeliveryWorker(repository, decryptor, sender, mock(FcmPushSender::class.java),
+            PushEligibility { _, _, _, _ -> true }, clock, DeliveryProperties(), mock(DeliveryMetrics::class.java))
+            .also(workers::add)
+        worker.process(bad)
+        assertThat(repository.code).isEqualTo("DECRYPTION_KEY_UNAVAILABLE")
+        assertThat(repository.providerFailures).isZero()
+        worker.process(good)
+        assertThat(submissions.get()).isEqualTo(1)
+        assertThat(repository.status).isEqualTo("ACCEPTED")
+    }
+
+    @Test fun `push claimed before expiry update uses the current expiry under submission lock`() {
+        val claimed = repository.claim(1).single()
+        clock.advance(Duration.ofDays(1).plusSeconds(1))
+        repository.target = PushTarget(repository.device, "ANDROID", "test-token", clock.instant(),
+            deliveryExpiresAt = clock.instant().plusSeconds(3600))
+        responseStatus.set(200)
+        worker().process(claimed)
+        assertThat(requests.get()).isEqualTo(1)
+        assertThat(repository.status).isEqualTo("ACCEPTED")
     }
 
     @Test fun `retry that cannot fit before expiry records its failure and terminates`() {
