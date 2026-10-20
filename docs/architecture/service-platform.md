@@ -18,34 +18,34 @@ COOKie. Она не заменяет доменную архитектуру и 
 Целевой build layout:
 
 ```text
-build-logic/                 # Gradle convention plugins
-platform/
-  starter-web/               # HTTP runtime, errors, request context, probes
-  starter-http-client/       # timeouts, identity, tracing and safe telemetry
-  starter-security/          # workload and user context enforcement
-  starter-observability/     # logs, metrics and tracing conventions
-  starter-postgres/          # datasource, migrations and transaction support
-  starter-messaging/         # NATS, event envelope, outbox and inbox runtime
-  starter-testing/           # reusable test fixtures and mandatory suites
-service-template/            # generator/template inputs
-clients/
-  <callee>/                  # generated shared Kotlin/JVM internal client
-services/
-  <service-id>/
+build-logic/                         # Gradle convention plugins
+backend/services/<service-id>/       # independently deployable domain service
+backend/services/<service-id>/domain/ # framework-free aggregates and value objects
+backend/services/<service-id>/application/ # use cases and ports
+backend/platform/starter-web/        # HTTP runtime, errors, request context, probes
+backend/platform/starter-http-client/ # timeouts, identity, tracing and safe telemetry
+backend/platform/starter-security/   # workload and user context enforcement
+backend/platform/starter-observability/ # logs, metrics and tracing conventions
+backend/platform/starter-postgres/   # datasource, migrations and transaction support
+backend/platform/starter-messaging/  # NATS primitives and the common event envelope
+backend/platform/starter-testing/    # reusable test fixtures and mandatory suites
+backend/tools/                       # backend development and operations applications
+backend/clients/<callee>/            # created only with the first real consumer
 contracts/
 deploy/
 infra/
 ```
 
-Точное физическое размещение модулей может быть уточнено при создании Gradle
-bootstrap, но роли и направления зависимостей сохраняются.
+Пилотный Gradle bootstrap реализует `starter-web`, `starter-postgres`,
+`starter-messaging` и `starter-testing`. Остальные starters добавляются только
+при появлении реального потребителя.
 
 ## Standard service shape
 
 Минимальная структура domain service:
 
 ```text
-services/<service-id>/
+backend/services/<service-id>/
   build.gradle.kts
   service.yaml
   src/main/kotlin/<package>/
@@ -105,10 +105,13 @@ database access layer и не разрешает читать таблицы д�
 
 ### Messaging starter
 
-Messaging starter реализует общий event envelope и инфраструктурную часть
-outbox/inbox protocol из `messaging.md`. Domain event payloads и handlers
-принадлежат сервисам. Broker acknowledgement выполняется только после commit
-consumer transaction.
+Сейчас Messaging starter реализует общий event envelope, subject mapping и
+NATS client primitives. Первая outbox-реализация остаётся локальным adapter
+Identity; переносить её в platform до второго реального publisher нельзя.
+Аналогично inbox runtime появится вместе с первым реальным consumer, а станет
+общим только после проверки повторным потребителем. Domain event payloads и
+handlers всегда принадлежат сервисам. Broker acknowledgement consumer выполняет
+только после commit consumer transaction.
 
 ### Testing starter
 
@@ -123,32 +126,41 @@ end-to-end tests.
 ```yaml
 schema_version: 1
 id: user
-owner: backend
-tier: B
 runtime: kotlin_jvm
 stateful: true
 database: user
-openapi_tags: [profile]
-publishes:
-  - user.profile.updated
-consumes:
-  - account.created
+public_openapi:
+  source: contracts/openapi/public/user.yaml
+runtime_openapi: contracts/openapi/runtime.yaml
+messaging:
+  publishes:
+    - type: user.profile.updated
+      version: 1
+  consumes:
+    - type: account.activated
+      version: 1
 synchronous_dependencies: []
-external_dependencies: []
+infrastructure_dependencies: [postgresql, nats_jetstream]
+probes:
+  liveness: /healthz
+  readiness: /readyz
 ```
 
-JSON Schema descriptor и точные поля создаются вместе с Gradle bootstrap.
-Descriptor не дублирует `model/services.yaml`: архитектурная модель определяет
-целевую систему, descriptor описывает конкретный deployable component. CI
-проверяет их согласованность.
+Gradle task `validateServiceDescriptors` уже проверяет разрешённые поля и
+согласованность descriptor с service/event models, active OpenAPI, runtime
+contract, dependencies и event ownership. Отдельная JSON Schema и generator
+service template ещё не реализованы; архитектурная модель в
+`model/services.yaml` остаётся источником целевых service boundaries.
 
-Для deployable service descriptor также содержит callee-owned `access.http` и
-`access.messaging` policies. Полная схема и default-deny semantics описаны в
-`service-access-control.md`.
+Для deployable service descriptor также содержит callee-owned `access.http`
+policies. Messaging allowlist выводится непосредственно из проверенных
+`messaging.publishes/consumes`, без второй копии тех же subjects. Полная схема и
+default-deny semantics описаны в `service-access-control.md`.
 
-## Mandatory verification
+## Target verification
 
-Для каждого сервиса CI выполняет применимые проверки:
+CI выполняет реализованные проверки для каждого сервиса; пункты без runtime
+implementation остаются rollout requirements:
 
 1. Валидация `service.yaml` и соответствия `model/services.yaml`.
 2. Валидация OpenAPI, стабильных `operationId` и generated transport compilation.
@@ -156,19 +168,21 @@ Descriptor не дублирует `model/services.yaml`: архитектурн
 4. Проверка migrations на чистой PostgreSQL через disposable test instance.
 5. Проверка `/healthz` и `/readyz`, включая поведение при недоступности critical
    dependencies.
-6. Проверка event envelope, duplicate delivery и transactional outbox/inbox.
+6. Проверка event envelope и transactional outbox у publishers; duplicate
+   delivery и idempotent inbox у consumers.
 7. Проверка допустимых module и synchronous service dependencies.
 8. Unit, integration и contract tests конкретного сервиса.
-9. Проверка workload identity, caller permissions и отсутствия internal routes в
-   public gateway.
+9. Проверка workload identity, caller permissions и отсутствия internal/runtime
+   routes в public gateway.
 
 ## Rollout
 
-1. Принять отдельный ADR по framework и build stack.
+1. Принять отдельный ADR по framework и build stack (ADR 0008).
 2. Создать `build-logic` и минимальный набор platform starters.
-3. Создать service descriptor schema и generator/template.
-4. Реализовать `user` как пилотный vertical slice: generated HTTP transport,
-   PostgreSQL, одно исходящее событие, один входящий consumer и telemetry.
+3. Дополнить semantic descriptor validator JSON Schema и generator/template
+   (ещё не реализованы).
+4. Реализовать `identity` как пилотный vertical slice: generated HTTP transport,
+   PostgreSQL, transactional outbox, JetStream и runtime probes.
 5. Исправить platform API по результатам пилота.
 6. Создавать остальные сервисы только через проверенный template.
 

@@ -1,0 +1,27 @@
+schema_version: 1
+id: identity
+runtime: kotlin_jvm
+stateful: true
+database: identity
+public_openapi:
+  source: contracts/openapi/public/identity.yaml
+runtime_openapi: contracts/openapi/runtime.yaml
+messaging:
+  publishes:
+    - type: account.activated
+      version: 1
+    - type: account.deletion.requested
+      version: 1
+    - type: notification.email.requested
+      version: 1
+  consumes: []
+synchronous_dependencies: []
+infrastructure_dependencies:
+  - postgresql
+  - nats_jetstream
+  - signing_key
+  - notification_encryption_key
+  - rate_limit_hmac_key
+probes:
+  liveness: /healthz
+  readiness: /readyz

@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: dev-notification-sink
+  main:
+    web-application-type: none
+
+cookie:
+  notification-sink:
+    nats-url: ${COOKIE_NATS_URL:nats://localhost:4222}
+    private-key-path: ${COOKIE_NOTIFICATION_PRIVATE_KEY_PATH:/keys/notification-private.jwk}
+    smtp-host: ${COOKIE_SMTP_HOST:localhost}
+    smtp-port: ${COOKIE_SMTP_PORT:1025}

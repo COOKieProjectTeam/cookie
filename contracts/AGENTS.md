@@ -1,6 +1,12 @@
 # Agent instructions — API contracts
 
 - Keep OpenAPI valid and reviewable; avoid generated noise.
+- Every implemented public service owns exactly one source contract at
+  `openapi/public/<service-id>.yaml`. Add a contract to that directory only with
+  a compiling handler implementation. `openapi/planned.yaml` is non-active
+  roadmap material and must not be used for server or client generation.
+- Generate the mobile/gateway bundle from active per-service contracts. Never
+  maintain a second handwritten aggregate public contract.
 - Operation IDs and schema names are stable public identifiers.
 - Generate Kotlin server transport interfaces/models and HTTP clients from
   OpenAPI according to `openapi/generation.yaml`.
@@ -19,5 +25,6 @@
   migration in the same change when possible.
 - Examples must contain synthetic data only.
 - Update the server implementation and contract tests together.
-- CI must validate OpenAPI, require unique `operationId` values, ensure every
-  public tag has an owner and fail when regeneration produces a diff.
+- CI must validate every active service contract and the generated bundle,
+  require globally unique `operationId` values, ensure every public tag has an
+  owner and fail when regeneration produces a diff.

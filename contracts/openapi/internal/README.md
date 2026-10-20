@@ -2,7 +2,7 @@
 
 Каждый файл `contracts/openapi/internal/<service-id>.yaml` принадлежит вызываемому
 сервису и является источником generated Kotlin/JVM server transport и отдельного
-`clients/<service-id>` module.
+`backend/clients/<service-id>` module.
 
 Internal operations должны:
 

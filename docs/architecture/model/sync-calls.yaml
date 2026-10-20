@@ -63,6 +63,3 @@ calls:
   - caller: notification
     callees: [apns, fcm]
     purpose: send push notification
-  - caller: identity
-    callees: [yandex_id, vk_id]
-    purpose: exchange OAuth authorization code and resolve external identity

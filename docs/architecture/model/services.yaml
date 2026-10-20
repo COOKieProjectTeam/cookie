@@ -1,19 +1,19 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-08-19
+updated_at: 2026-09-04
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
   authority: docs/architecture/README.md
 
 defaults:
   backend_runtime: kotlin_jvm
-  backend_framework: TBD
-  jdk_version: TBD
+  backend_framework: spring_boot_mvc
+  jdk_version: 25
   state_store: postgresql
   event_bus: nats_jetstream
   delivery_semantics: at_least_once
-  transactional_outbox: required
-  idempotent_inbox: required
+  transactional_outbox: required_for_event_publishers
+  idempotent_inbox: required_for_event_consumers
   database_access: owner_only
   operational_http_contract: contracts/openapi/runtime.yaml
   operational_endpoint_owner: each_deployable_component
@@ -21,13 +21,17 @@ defaults:
 infrastructure:
   edge_gateway:
     product: caddy
+    initial_production_ingress: yandex_api_gateway_default_https_domain
+    initial_production_ingress_scope: identity /v1/auth/* only; temporary until a custom domain and Caddy TLS edge exist
   relational_database:
     product: postgresql
     rule: each stateful domain service owns an isolated database or schema
-    deployment_topology: TBD
+    initial_production_topology: one non-HA instance on the production VM; Identity database only
+    target_deployment_topology: TBD after the single-VM bootstrap
   event_bus:
     product: nats_jetstream
-    stream_topology: TBD
+    stream_topology: COOKIE_EVENTS captures cookie.events.> for v1 domain events
+    initial_production_topology: one non-HA node on the production VM
   ephemeral_store:
     product: redis
     rule: not a system of record; only declared uses are allowed
@@ -40,6 +44,16 @@ infrastructure:
     protocol: s3_compatible
     product: TBD
 
+deployment:
+  active_environments: [local_dev, production]
+  persistent_test_environment: disabled
+  production:
+    cloud: yandex_cloud
+    topology: single_vm_non_ha
+    deployed_services: [identity]
+    artifact_source: yandex_container_registry
+    artifact_identity: immutable_digest
+
 services:
   - id: api_gateway
     name: Caddy API Gateway
@@ -47,7 +61,7 @@ services:
     runtime: caddy
     stateful: false
     purpose: TLS termination, routing and edge rate limiting
-    openapi_tags: [system]
+    openapi_tags: []
     redis:
       - keyspace: rate_limit
         data: short-lived counters by IP, account and route
@@ -77,16 +91,14 @@ services:
     name: Identity Service
     kind: domain_service
     stateful: true
-    purpose: accounts, credentials, access/refresh sessions and OAuth identities
+    purpose: email/password account lifecycle, credentials and access/refresh sessions
     openapi_tags: [auth]
     dbml: contracts/dbml/identity.dbml
     publishes:
-      - account.created
+      - account.activated
       - account.deletion.requested
       - notification.email.requested
-    consumes:
-      - account.deletion.completed
-    external_dependencies: [yandex_id, vk_id]
+    consumes: []
 
   - id: user
     name: User Service
@@ -100,10 +112,7 @@ services:
       - user.goal.changed
       - user.goal_override.changed
       - user.hydration_goal.changed
-      - account.deletion.completed
-    consumes:
-      - account.created
-      - account.deletion.requested
+    consumes: [account.activated, account.deletion.requested]
 
   - id: food_catalog
     name: Food Catalog Service
@@ -112,7 +121,6 @@ services:
     purpose: custom foods and proxy search/barcode lookup in Open Food Facts
     openapi_tags: [food]
     dbml: contracts/dbml/food-catalog.dbml
-    publishes: [account.deletion.completed]
     consumes: [account.deletion.requested]
     synchronous_dependencies: [open_food_facts]
     redis:
@@ -136,7 +144,6 @@ services:
       - nutrition.meal.deleted
       - nutrition.day.changed
       - nutrition.water.changed
-      - account.deletion.completed
     consumes: [account.deletion.requested]
     synchronous_dependencies: [recipe, media]
 
@@ -150,7 +157,6 @@ services:
     publishes:
       - recipe.customization.updated
       - recipe.customization.deleted
-      - account.deletion.completed
     consumes: [account.deletion.requested]
     synchronous_dependencies: [media]
 
@@ -161,11 +167,10 @@ services:
     purpose: recipe cart, ingredient snapshots and shopping list
     openapi_tags: [shopping]
     dbml: contracts/dbml/shopping.dbml
-    publishes: [account.deletion.completed]
     consumes:
+      - account.deletion.requested
       - recipe.customization.updated
       - recipe.customization.deleted
-      - account.deletion.requested
     synchronous_dependencies: [recipe]
 
   - id: health
@@ -178,7 +183,6 @@ services:
     publishes:
       - health.activity.changed
       - health.weight.changed
-      - account.deletion.completed
     consumes: [account.deletion.requested]
     external_dependencies: [apple_healthkit, android_health_connect]
 
@@ -191,7 +195,6 @@ services:
     dbml: contracts/dbml/progress.dbml
     publishes:
       - progress.day.updated
-      - account.deletion.completed
     consumes:
       - account.deletion.requested
       - nutrition.day.changed
@@ -210,11 +213,10 @@ services:
     purpose: push, email, reminder scheduling and delivery state
     openapi_tags: [notifications]
     dbml: contracts/dbml/notification.dbml
-    publishes: [account.deletion.completed]
     consumes:
-      - notification.email.requested
-      - account.created
       - account.deletion.requested
+      - notification.email.requested
+      - account.activated
       - nutrition.meal.created
       - nutrition.meal.updated
       - nutrition.meal.deleted
@@ -236,7 +238,6 @@ services:
     purpose: media metadata, ownership, lifecycle and pre-signed object access
     openapi_tags: [media]
     dbml: contracts/dbml/media.dbml
-    publishes: [account.deletion.completed]
     consumes: [account.deletion.requested]
     synchronous_dependencies: [object_storage]
 
@@ -247,7 +248,6 @@ services:
     purpose: asynchronous generation and execution of 14-day meal plans
     openapi_tags: [meal-plan]
     dbml: contracts/dbml/meal-planner.dbml
-    publishes: [account.deletion.completed]
     consumes: [account.deletion.requested]
     synchronous_dependencies: [user, recipe, shopping]
 
@@ -258,10 +258,6 @@ external_systems:
     name: Open Food Facts
   - id: object_storage
     name: S3-compatible object storage
-  - id: yandex_id
-    name: Yandex ID
-  - id: vk_id
-    name: VK ID
   - id: apple_healthkit
     name: Apple HealthKit
   - id: android_health_connect

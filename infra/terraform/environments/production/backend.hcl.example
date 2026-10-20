@@ -1,0 +1,5 @@
+# Copy to backend.hcl (ignored by Git) and replace the placeholder.
+# Credentials are never stored here; supply S3-compatible credentials to the
+# Terraform process through environment variables. Use AWS_SESSION_TOKEN only
+# when the selected temporary credential mechanism issues one.
+bucket = "replace-with-private-kms-encrypted-state-bucket"

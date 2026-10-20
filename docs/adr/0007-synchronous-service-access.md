@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
+- Amended: 2026-08-20
 
 ## Context
 
@@ -19,7 +20,7 @@ authentication, timeouts, telemetry и обработки ошибок. При �
 ### Per-callee clients
 
 Для каждого синхронно вызываемого сервиса создаётся отдельный Kotlin/JVM client
-module в `clients/<callee>`. Client и server transport генерируются из одного
+module в `backend/clients/<callee>`. Client и server transport генерируются из одного
 internal OpenAPI contract, которым владеет callee.
 
 Caller зависит только от нужного client module. Единый `cookie-all-clients`
@@ -31,7 +32,7 @@ caller преобразует их в собственные модели чер
 `docs/architecture/model/sync-calls.yaml` остаётся coarse-grained архитектурным
 allowlist: `caller -> callee`, purpose и требования к деградации.
 
-`services/<callee>/service.yaml` содержит callee-owned operation policy:
+`backend/services/<callee>/service.yaml` содержит callee-owned operation policy:
 
 - internal OpenAPI operations;
 - semantic permission;
@@ -82,8 +83,9 @@ User identity не используется как service identity. Опера�
   client и затронутых consumers.
 - Добавление нового caller требует изменения `sync-calls.yaml`, callee policy,
   caller dependency и security/degradation tests в одном pull request.
-- CI сопоставляет service graph, internal OpenAPI, client dependencies и callee
-  grants; расхождения блокируют merge.
+- После реализации policy validator CI сопоставляет service graph, internal
+  OpenAPI, client dependencies и callee grants; в текущем bootstrap без
+  internal contracts этот gate ещё не реализован.
 - Common client содержит transport behavior, но не orchestration, caller-specific
   fallback или business rules.
 - Retry не включается глобально для всех requests. Он разрешён только для

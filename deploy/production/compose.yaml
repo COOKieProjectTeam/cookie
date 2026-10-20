@@ -1,0 +1,261 @@
+name: cookie-production
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_DB: identity
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-admin-password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --data-checksums
+    secrets:
+      - source: postgres_admin_password
+        target: postgres-admin-password
+      - source: postgres_identity_password
+        target: postgres-identity-password
+      - source: postgres_identity_migration_password
+        target: postgres-identity-migration-password
+    volumes:
+      - type: bind
+        source: ${COOKIE_DATA_ROOT:-/srv/cookie}/postgres
+        target: /var/lib/postgresql
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./scripts/postgres-init-identity.sh
+        target: /docker-entrypoint-initdb.d/10-identity-roles.sh
+        read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=postgres --dbname=identity"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 20s
+    shm_size: "128m"
+    mem_limit: "1024m"
+    cpus: "1.0"
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - backend
+
+  nats:
+    image: nats:2.14.6-alpine3.22@sha256:ad7a43eb7e3337c3c38ce5d784d1461791f95f730f252d2b25eee699752a0ca3
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "1000:1000"
+    command: ["--config", "/etc/nats/nats-server.conf"]
+    secrets:
+      - source: nats_auth_config
+        target: nats-auth.conf
+      - source: nats_ca_certificate
+        target: nats-ca.crt
+      - source: nats_server_certificate
+        target: nats-server.crt
+      - source: nats_server_private_key
+        target: nats-server.key
+    volumes:
+      - type: bind
+        source: ${COOKIE_DATA_ROOT:-/srv/cookie}/nats
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./config/nats-server.conf
+        target: /etc/nats/nats-server.conf
+        read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://127.0.0.1:8222/healthz?js-enabled-only=true' >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    mem_limit: "512m"
+    cpus: "0.5"
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging: *default-logging
+    networks:
+      - backend
+
+  nats-init:
+    image: natsio/nats-box:0.19.7-nonroot@sha256:e86b9681f330ab1aa45744dd5cb367d44205b28fac2519a2f74ca0255803161a
+    restart: "no"
+    user: "1000:1000"
+    working_dir: /tmp
+    entrypoint: ["/bin/sh", "/config/nats-init.sh"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    secrets:
+      - source: nats_stream_admin_credentials
+        target: nats-stream-admin.creds
+      - source: nats_ca_certificate
+        target: nats-ca.crt
+    volumes:
+      - type: bind
+        source: ./config/cookie-events.json
+        target: /config/cookie-events.json
+        read_only: true
+      - type: bind
+        source: ./scripts/nats-init.sh
+        target: /config/nats-init.sh
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    mem_limit: "256m"
+    cpus: "0.25"
+    pids_limit: 64
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - backend
+
+  identity:
+    image: ${IDENTITY_IMAGE:?IDENTITY_IMAGE must be an immutable cr.yandex digest reference}
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      SERVER_SHUTDOWN: graceful
+      SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: 20s
+      JAVA_TOOL_OPTIONS: >-
+        -XX:InitialRAMPercentage=25
+        -XX:MaxRAMPercentage=70
+        -XX:+ExitOnOutOfMemoryError
+        -Djava.io.tmpdir=/tmp
+      COOKIE_IDENTITY_DATABASE_URL: jdbc:postgresql://postgres:5432/identity
+      COOKIE_IDENTITY_DATABASE_USER: identity_app
+      COOKIE_IDENTITY_DATABASE_POOL_SIZE: "8"
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/identity
+      SPRING_FLYWAY_USER: identity_migrator
+      COOKIE_IDENTITY_JWT_PRIVATE_KEY_PATH: /run/secrets/identity-jwt-private.jwk
+      COOKIE_IDENTITY_JWT_RETIRING_PUBLIC_KEY_PATHS: ${COOKIE_IDENTITY_JWT_RETIRING_PUBLIC_KEY_PATHS:-}
+      COOKIE_NOTIFICATION_PUBLIC_KEY_PATH: /run/secrets/notification-public.jwk
+      COOKIE_NATS_URL: tls://nats:4222
+      COOKIE_NATS_CREDENTIALS_PATH: /run/secrets/nats-identity.creds
+      COOKIE_NATS_TRUSTSTORE_PATH: /run/secrets/nats-truststore.jks
+      COOKIE_IDENTITY_ISSUER: ${COOKIE_IDENTITY_ISSUER:?COOKIE_IDENTITY_ISSUER must be an HTTPS URL}
+      COOKIE_IDENTITY_AUDIENCE: ${COOKIE_IDENTITY_AUDIENCE:-cookie-api}
+      COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS: ${COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS:-}
+    secrets:
+      - source: identity_database_password
+        target: spring.datasource.password
+      - source: identity_flyway_password
+        target: spring.flyway.password
+      - source: identity_rate_limit_hmac_key
+        target: cookie.identity.rate-limit-hmac-key
+      - source: identity_nats_truststore_password
+        target: cookie.identity.nats-truststore-password
+      - source: identity_jwt_private_key
+        target: identity-jwt-private.jwk
+      - source: notification_public_key
+        target: notification-public.jwk
+      - source: nats_identity_credentials
+        target: nats-identity.creds
+      - source: identity_nats_truststore
+        target: nats-truststore.jks
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      nats-init:
+        condition: service_completed_successfully
+    ports:
+      - "${COOKIE_IDENTITY_BIND_IP:-127.0.0.1}:8080:8080/tcp"
+    volumes:
+      - type: bind
+        source: ./scripts/identity-healthcheck.sh
+        target: /opt/cookie/identity-healthcheck.sh
+        read_only: true
+      - type: bind
+        source: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/retiring
+        target: /run/identity-retiring
+        read_only: true
+    healthcheck:
+      test: ["CMD", "/bin/bash", "/opt/cookie/identity-healthcheck.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    mem_limit: "1536m"
+    cpus: "1.5"
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - backend
+      - edge
+
+networks:
+  # Port 8080 is published through this ordinary bridge for API Gateway.
+  # Database and messaging stay isolated on the internal backend network.
+  edge:
+  backend:
+    internal: true
+
+secrets:
+  postgres_admin_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/postgres/admin-password
+  postgres_identity_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/postgres/identity-password
+  postgres_identity_migration_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/postgres/identity-migration-password
+  identity_database_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/spring.datasource.password
+  identity_flyway_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/spring.flyway.password
+  identity_rate_limit_hmac_key:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/cookie.identity.rate-limit-hmac-key
+  identity_nats_truststore_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/cookie.identity.nats-truststore-password
+  identity_jwt_private_key:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/identity-jwt-private.jwk
+  notification_public_key:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/notification-public.jwk
+  nats_identity_credentials:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/nats-identity.creds
+  identity_nats_truststore:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/identity/nats-truststore.jks
+  nats_auth_config:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/nats/auth.conf
+  nats_ca_certificate:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/nats/ca.crt
+  nats_server_certificate:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/nats/server.crt
+  nats_server_private_key:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/nats/server.key
+  nats_stream_admin_credentials:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/nats/stream-admin.creds
