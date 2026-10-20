@@ -383,7 +383,7 @@ services:
       - source: notification_flyway_password
         target: spring.flyway.password
     read_only: true
-    tmpfs: [/tmp:rw,noexec,nosuid,size=32m]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
     mem_limit: "512m"
     cpus: "0.5"
     pids_limit: 128
@@ -419,7 +419,7 @@ services:
       - source: notification_nats_truststore
         target: nats-truststore.jks
     read_only: true
-    tmpfs: [/tmp:rw,noexec,nosuid,size=32m]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
     mem_limit: "512m"
     cpus: "0.5"
     pids_limit: 128

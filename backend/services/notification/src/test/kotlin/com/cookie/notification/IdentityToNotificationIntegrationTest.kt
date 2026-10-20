@@ -219,6 +219,8 @@ class IdentityToNotificationIntegrationTest {
             processes += migration
             assertThat(migration.waitFor(60, TimeUnit.SECONDS)).withFailMessage("Migration did not terminate").isTrue()
             assertThat(migration.exitValue()).withFailMessage("%s", Files.readString(migrationLog)).isZero()
+            // Only long-running services participate in the readiness liveness check.
+            processes.remove(migration)
             notificationPort = freePort()
             start("notification", common + mapOf("PORT" to notificationPort.toString(),
                 "COOKIE_NOTIFICATION_DATABASE_URL" to postgres.jdbcUrl.replace("/identity", "/notification"),

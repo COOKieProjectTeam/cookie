@@ -41,6 +41,10 @@ class DeploymentContractTest(unittest.TestCase):
             capture_output=True, text=True, check=True, timeout=30)
         model = json.loads(result.stdout)
         services = model["services"]
+        for name in ("notification-migrate", "notification-replay"):
+            with self.subTest(service=name):
+                # Commas in an unquoted YAML flow list become separate mounts.
+                self.assertEqual(services[name]["tmpfs"], ["/tmp:rw,noexec,nosuid,size=32m"])
         for name in ("notification", "notification-replay"):
             with self.subTest(service=name):
                 service = services[name]
