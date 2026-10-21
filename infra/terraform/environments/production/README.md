@@ -1,7 +1,7 @@
 # Production infrastructure
 
 Этот каталог описывает минимальный **production-only** контур COOKie в Yandex
-Cloud. Он создаёт одну обычную (не preemptible) VM (2 vCPU, 4 GiB RAM, 50%
+Cloud. Он создаёт одну обычную (не preemptible) VM (4 vCPU, 8 GiB RAM, 50%
 baseline), отдельный persistent data disk, VPC с subnet в каждой действующей
 regular-зоне (`a`, `b`, `d`, `e`), статический IPv4, Container Registry,
 раздельные service account для push/pull образов и временный API Gateway с
@@ -14,10 +14,10 @@ plan, стратегия резервного копирования/восст�
 ## Безопасность по умолчанию
 
 - Security Group принимает TCP/22 только из обязательного узкого allowlist
-  (`/24` или уже; обычно один адрес VPN/оператора как `/32`). TCP/8080 принимает
+  (`/24` или уже; обычно один адрес VPN/оператора как `/32`). TCP/8080 (Identity) и TCP/8082 (Notification) принимают
   только внутренний source CIDR API Gateway `198.19.0.0/16`; других ingress rules
   для приложения, PostgreSQL или NATS нет.
-- API Gateway публикует только `/v1/auth/{path+}` и передаёт Identity все headers
+- API Gateway публикует только `/v1/auth/{path+}` и `/v1/notifications/{path+}` и передаёт Identity все headers
   и query parameters, кроме присланного клиентом `X-Forwarded-For`: он явно
   удаляется до HTTP integration. `/healthz`, `/readyz`, PostgreSQL и NATS
   отсутствуют в его OpenAPI specification. До появления собственного домена и
@@ -29,7 +29,7 @@ plan, стратегия резервного копирования/восст�
   операторский доступ к 8080 остаётся возможен только через SSH tunnel из
   output `ssh_tunnel_command`.
 - VM получает `container-registry.images.puller`, а GitHub Actions —
-  `container-registry.images.pusher` только на repository `identity`, не на весь
+  `container-registry.images.pusher` отдельными bindings на repositories `identity` и `notification`, не на весь
   registry. Роль pusher также позволяет изменять и удалять образы внутри этого
   repository, поэтому каждый будущий сервис должен получить отдельный repository
   и отдельную IAM-привязку.
@@ -110,7 +110,7 @@ OIDC token со следующими значениями из outputs:
 До включения credential защитите ветку `main`: запретите force-push/delete и
 direct push, потребуйте pull request, review и все CI checks. Иначе любой, кто
 может напрямую изменить workflow в `main`, сможет запросить тот же разрешённый
-OIDC subject и управлять образами в Identity repository.
+OIDC subject и управлять образами в Identity/Notification repositories.
 
 JWT обменивается на короткоживущий IAM token через
 `https://auth.yandex.cloud/oauth/token`. Credential для tag, pull request,
@@ -195,7 +195,7 @@ terraform output -raw identity_issuer_url
 terraform output -raw identity_auth_base_url
 ```
 
-Проверяйте через gateway только публичные `/v1/auth/*` операции. Отсутствие
+Проверяйте через gateway только публичные `/v1/auth/*` и `/v1/notifications/*` операции. Отсутствие
 gateway-маршрутов для `/healthz` и `/readyz` является намеренной границей, а не
 ошибкой конфигурации.
 
@@ -211,3 +211,21 @@ integration документирует удаление исходного за�
 обновление boot disk выполняется как отдельная maintenance-операция. Изменение
 SSH-ключа в Terraform metadata также следует сопровождать явной ротацией ключа
 на хосте или контролируемым rebuild VM.
+
+## Notification expansion
+
+Новая конфигурация сохраняет Terraform resource addresses существующих Identity
+repository, VM и gateway. Она добавляет отдельный Notification repository/IAM
+bindings, маршрут `/v1/notifications/*` на private TCP/8082 и увеличивает floor
+VM до 4 vCPU / 8 GiB. Изменение capacity существующей VM требует reviewed plan и
+может потребовать остановки; этот PR не выполняет apply или live deploy.
+
+PostgreSQL остаётся одним instance с отдельными ownership/credentials на каждую
+БД. Notification provisioning — повторяемый одноразовый Compose job, работающий
+и поверх существующего data volume. Redis не имеет persistent volume. Секреты,
+provider credentials, DB provisioning, digest manifests и восстановление после
+прерванного deployment описаны в `deploy/production/README.md`.
+
+Установите `COOKIE_NOTIFICATION_BIND_IP=0.0.0.0`,
+`COOKIE_IDENTITY_JWKS_URL=<identity_api_gateway_url>/v1/auth/jwks` и используйте
+`notification_base_url` для клиента. Runtime probes не добавляются в gateway.

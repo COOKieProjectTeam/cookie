@@ -58,12 +58,10 @@ Missing proof is not silently replaced and does not fall back to a different
 attempt. The UI explains that verification must continue in the app installation
 that owns the attempt, or offers an explicit restart which sends a new email.
 
-The development Notification sink currently displays the raw token in Mailpit.
-That is a development handoff, not a production deep link. After mobile IDs and
-a verified HTTPS domain exist, Notification will render a universal/app link
-containing only the verification token. The OS association and coordinator will
-route that token through the same steps above; the registration proof is never
-placed in the link.
+Notification renders a configured HTTPS link with only the verification token
+in its fragment. Local Mailpit exposes the same message for development. A verified
+domain, OS association and the mobile coordinator are still required to route the
+token through the steps above; registration proof is never placed in the link.
 
 ## Session and refresh lifecycle
 
@@ -154,9 +152,10 @@ configured access-token TTL (15 minutes by default; configuration currently perm
 up to 24 hours) because no denylist or introspection exists. Clearing local
 state reduces accidental reuse but cannot shorten that window for a copied token.
 
-Downstream consumers and acknowledgements are not implemented in v1, so the
-client must not display a completed-deletion state. A later product flow may add
-status reporting only together with the distributed completion protocol.
+Notification now consumes account deletion, removes its user data and blocks old
+JWTs locally. Distributed completion acknowledgements remain unimplemented, so
+the client must not display a completed-deletion state. A later product flow may
+add status reporting together with the distributed completion protocol.
 
 ## Required tests before UI integration
 
@@ -172,3 +171,14 @@ status reporting only together with the distributed completion protocol.
 - exact deletion retry, competing keys and secure removal only after definite acceptance;
 - assertions that logs and analytics never contain proof, verification token,
   access token, refresh token, current password or `Idempotency-Key`.
+
+## Notification verification link
+
+Notification renders a trusted configured HTTPS base URL with
+`#token=<percent-encoded-verification-token>` for email confirmation. Only the
+token is included; registration proof remains in client secure storage. The
+fragment is not sent to the HTTP origin. The mobile coordinator must parse this
+fragment, locate the attempt proof, and call Identity confirmation. This change
+does not implement domain association or that mobile coordinator, and registration
+remains closed until they are deployed. Local Mailpit can be used to inspect the
+link and exercise the existing confirmation API with a synthetic client.

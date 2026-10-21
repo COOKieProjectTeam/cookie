@@ -27,3 +27,13 @@ Public HTTP transport client генерируется из активных Open
 Реализация через Android Keystore и iOS Keychain остаётся заблокирована тем же
 незавершённым platform bootstrap. Хранить registration proof или refresh token
 в preferences, логах, URL либо синхронизируемом backup запрещено.
+
+Push на обеих платформах использует Firebase Cloud Messaging. После platform
+bootstrap нужно подключить Firebase Messaging SDK, запросить разрешение ОС,
+отправлять FCM registration token через `POST /v1/notifications/devices` после
+входа и при обновлении токена, а также задать timezone в настройках Notification.
+Поле `platform` сохраняет значение `IOS` или `ANDROID`; токен на обеих платформах
+непрозрачный и регистрозависимый. Сырой APNs device token в API не передаётся.
+Для iOS ключ APNs загружается в Firebase. Миграция V006 отключает старые iOS
+APNs-привязки: приложение должно зарегистрировать FCM-токен заново.
+Native push SDK и coordinator регистрации устройств пока не реализованы.

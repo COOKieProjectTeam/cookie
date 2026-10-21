@@ -1,58 +1,58 @@
 # Production on one VM
 
-This directory is the deliberately small first production topology. It runs
-only the implemented Identity Service, PostgreSQL and NATS JetStream on one
-non-preemptible VM. Mailpit, `notification-sink` and the legacy Go API are
-development tools and are intentionally absent.
+The production bundle runs Identity, Notification, PostgreSQL, NATS JetStream
+and ephemeral Redis on one non-preemptible Yandex VM. The configured floor is
+4 vCPU / 8 GiB RAM / 50% core fraction. This remains **non-HA**; external
+monitoring, backups, disk snapshots and a tested restore procedure are required
+before storing valuable data. Mailpit, the development notification sink and the
+legacy Go API are not production services.
 
-The topology is **not highly available**: the VM and its attached data disk are
-single points of failure. Before accepting real users, configure disk/database
-backups, external monitoring and restore tests. The production Notification
-Service is not implemented either, so registration emails will remain queued in
-`COOKIE_EVENTS`; do not open registration to users until that consumer and its
-key-management procedure exist.
+Changes in this repository prepare deployable configuration. They do not apply
+Terraform, deploy a VM, install real secrets or send notifications. Review the
+Terraform plan before expanding an existing VM; resizing can interrupt service.
 
-## What the bundle guarantees
+## Artifact and network boundaries
 
-- Identity is accepted only as an immutable
-  `cr.yandex/<registry-id>/identity@sha256:<digest>` reference. The VM never
-  builds source code.
-- PostgreSQL 18.6 and NATS 2.14.6 use versioned tags plus OCI index digests.
-- PostgreSQL and JetStream data live on host paths, not the VM boot filesystem's
-  container layer.
-- NATS is TLS-only for clients and uses operator/account/user credentials.
-  PostgreSQL and NATS have no published host ports.
-- Identity connects as restricted `identity_app`; Flyway uses the separate
-  non-superuser owner `identity_migrator`. The `postgres` superuser credential is
-  mounted only into PostgreSQL.
-- Raw values are mounted as files. Spring reads the four scalar Identity
-  secrets through `configtree:/run/secrets/`; no raw secret is placed in a
-  Compose environment variable.
-- Compose falls back to a loopback bind, while the Terraform-managed deployment
-  explicitly uses `0.0.0.0` behind a security group that admits port 8080 only
-  from API Gateway's `198.19.0.0/16` source range. `/healthz` and `/readyz` are
-  not public gateway routes. Identity alone joins a normal `edge` bridge for
-  that published port; PostgreSQL and NATS remain only on the isolated
-  `backend` bridge.
-- The gateway may expose only Identity's generated `/v1/auth/*` routes; it must
-  preserve `Authorization`, `Idempotency-Key`, request IDs and query parameters,
-  while removing a caller-supplied `X-Forwarded-For` header.
-- `deploy.sh` serializes deploys, obtains a short-lived IAM token from VM
-  metadata, pulls the selected digest, converges `COOKIE_EVENTS`, waits for
-  readiness and attempts an image rollback on failure.
+Each service has its own Container Registry repository, scoped IAM grants,
+Dockerfile, CI checks and immutable digest. CI publishes on a successful merge
+to `main`; an operator deploys separately. The VM never builds source or stores
+static Yandex service-account keys. Its short-lived registry token comes from
+metadata using its pull-only service account.
 
-An image rollback does not roll back Flyway migrations. A previous image must
-remain forward-compatible with all migrations already applied by the candidate.
-Treat an incompatible migration as a restore/incident procedure, not as a
-normal rollback.
+Identity publishes host TCP/8080 and Notification TCP/8082. Terraform permits
+these ports only from API Gateway's `198.19.0.0/16` integration range. The existing
+gateway routes `/v1/auth/*` and `/v1/notifications/*` and preserves authorization,
+idempotency, request IDs and query parameters. Client-supplied `X-Forwarded-For`
+is removed. `/healthz` and `/readyz` remain private. Keep the existing gateway
+resource/issuer when adding Notification; a new public origin is not required.
 
-## Host layout and ownership
+Both services join the ordinary `edge` bridge. Notification uses it for outbound
+HTTPS (JWKS and FCM) and SMTP with STARTTLS. PostgreSQL, NATS and Redis join only
+the internal `backend` bridge, with no host ports. Redis is authenticated and has
+no volume, snapshots or AOF: it can be rebuilt from Notification's PostgreSQL
+state. The application falls back to its PostgreSQL deadline query during Redis
+loss, eviction pressure or restart.
 
-Install this directory as an immutable, root-owned bundle such as
-`/opt/cookie/production`. The deploy command assumes Docker Engine with the
-Compose plugin, `curl`, `jq` and `flock` are installed by VM bootstrap.
+Container memory limits are Identity 1536 MiB, Notification 1536 MiB, PostgreSQL
+1536 MiB, NATS 512 MiB and Redis 256 MiB (128 MiB data limit, `noeviction`). JVM
+heap is bounded to 70% of its container. These are initial limits; observe actual
+usage before increasing concurrency or adding services.
 
-Create persistent paths before the first deploy:
+Notification reserves twelve database connections for up to eight push workers,
+leaving capacity for HTTP readiness, inbox ingestion and lease heartbeats while
+bounded provider calls hold their submission locks.
+
+The production JVM options select Bouncy Castle's pure Java implementation with
+`-Dorg.bouncycastle.native.cpu_variant=java`. The pinned LTS provider otherwise
+extracts a native CPU probe into `/tmp`, which cannot load on the intentionally
+`noexec` tmpfs. This preserves the container restriction and the same Argon2/JWE
+algorithms; benchmark password hashing with these production JVM options.
+
+## Installation and secrets
+
+Install this directory as an immutable root-owned bundle, for example
+`/opt/cookie/production`. Docker Engine/Compose, curl, jq and flock are required.
+Create directories before installing secrets:
 
 ```bash
 sudo install -d -m 0750 -o 70 -g 70 /srv/cookie/postgres
@@ -60,173 +60,317 @@ sudo install -d -m 0750 -o 1000 -g 1000 /srv/cookie/nats
 sudo install -d -m 0700 -o root -g root /srv/cookie/releases
 sudo install -d -m 0711 -o root -g root /srv/cookie/secrets
 sudo install -d -m 0700 -o 70 -g 70 /srv/cookie/secrets/postgres
-sudo install -d -m 0700 -o 10001 -g 10001 /srv/cookie/secrets/identity
-sudo install -d -m 0700 -o 10001 -g 10001 /srv/cookie/secrets/identity/retiring
+sudo install -d -m 0700 -o 10001 -g 10001 /srv/cookie/secrets/identity /srv/cookie/secrets/identity/retiring
+sudo install -d -m 0700 -o 10001 -g 10001 /srv/cookie/secrets/notification /srv/cookie/secrets/notification/retiring
 sudo install -d -m 0700 -o 1000 -g 1000 /srv/cookie/secrets/nats
-```
-
-UID/GID `70` is the user in the pinned PostgreSQL Alpine image. Compose runs
-NATS and the non-root NATS toolbox explicitly as `1000:1000`; the Identity image
-runs as `10001:10001`. Re-check these ownership assumptions whenever a base
-image changes.
-
-Copy `.env.example` to `/etc/cookie/production.env`, replace every placeholder,
-then make it root-only:
-
-```bash
+sudo install -d -m 0700 -o 999 -g 999 /srv/cookie/secrets/redis
 sudo install -d -m 0755 -o root -g root /etc/cookie
 sudo install -m 0600 -o root -g root .env.example /etc/cookie/production.env
 ```
 
-Terraform provisions API Gateway, so install `COOKIE_IDENTITY_BIND_IP=0.0.0.0`
-and `COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS=198.19.0.0/16` together. The security
-group admits that same source CIDR and blocks direct public TCP/8080. The issuer
-must be the exact externally visible HTTPS origin from Terraform output,
-including the temporary Yandex service domain while there is no custom domain.
-The Compose fallback `127.0.0.1` is only for a deliberately gateway-less SSH
-tunnel configuration.
+Replace every placeholder in the root-owned static environment file. Set both
+bind IPs to `0.0.0.0` behind the Terraform gateway, set the exact HTTPS Identity
+issuer, and use `<issuer>/v1/auth/jwks` for `COOKIE_IDENTITY_JWKS_URL`. Configure a
+real application verification-page URL; the email link must not target Identity's
+JSON POST confirmation operation. Configure the SMTP sender and Message-ID
+domain. Configure the Firebase project ID when enabling push for Android and
+iOS. Never put raw passwords, keys or credential JSON in this file, Git or
+Terraform state.
 
-Before public traffic, send requests from one client with different forged
-`X-Forwarded-For` values and verify they still consume one application IP scope;
-then repeat from two real source addresses and verify two scopes. Yandex documents
-how HTTP integration removes overridden original headers, but not whether this
-integration injects a normalized client address. If the second check fails, leave
-`COOKIE_IDENTITY_TRUSTED_PROXY_CIDRS` empty and enforce IP limits at the gateway
-until the platform behavior is confirmed.
+Provision the following files out of band. Private files use mode `0400`; every
+path in the table is relative to `/srv/cookie/secrets`.
 
-## Required files
-
-Provision these files through a secure out-of-band channel. None belongs in Git:
-
-| Host path below `/srv/cookie/secrets` | Owner/mode | Purpose |
+| Path | Owner | Purpose |
 | --- | --- | --- |
-| `postgres/admin-password` | `70:70`, `0400` | PostgreSQL bootstrap/emergency superuser password |
-| `postgres/identity-password` | `70:70`, `0400` | Password used while creating `identity_app` |
-| `postgres/identity-migration-password` | `70:70`, `0400` | Password used while creating `identity_migrator` |
-| `identity/spring.datasource.password` | `10001:10001`, `0400` | Exact copy of the `identity_app` password |
-| `identity/spring.flyway.password` | `10001:10001`, `0400` | Exact copy of the `identity_migrator` password |
-| `identity/cookie.identity.rate-limit-hmac-key` | `10001:10001`, `0400` | Canonical base64url 32-byte HMAC key |
-| `identity/cookie.identity.nats-truststore-password` | `10001:10001`, `0400` | JKS truststore password |
-| `identity/identity-jwt-private.jwk` | `10001:10001`, `0400` | Active private P-256 ES256 signing JWK |
-| `identity/notification-public.jwk` | `10001:10001`, `0400` | RSA-OAEP-256 public encryption JWK |
-| `identity/nats-identity.creds` | `10001:10001`, `0400` | Restricted Identity NATS user credential |
-| `identity/nats-truststore.jks` | `10001:10001`, `0400` | JKS containing the NATS CA certificate |
-| `identity/retiring/*.jwk` | `10001:10001`, `0400` | Optional retiring ES256 public JWKs during rotation |
-| `nats/auth.conf` | `1000:1000`, `0400` | Rendered operator and memory-resolver config |
-| `nats/server.key` | `1000:1000`, `0400` | NATS TLS private key |
-| `nats/server.crt` | `root:root`, `0444` | NATS TLS server certificate |
-| `nats/ca.crt` | `root:root`, `0444` | CA used by NATS clients |
-| `nats/stream-admin.creds` | `1000:1000`, `0400` | Deploy-only JetStream administrator credential |
+| `postgres/admin-password` | `70:70` | Bootstrap/emergency PostgreSQL administrator |
+| `postgres/identity-password`, `postgres/identity-migration-password` | `70:70` | Identity runtime/migrator passwords |
+| `postgres/notification-password`, `postgres/notification-migration-password` | `70:70` | Notification runtime/migrator passwords |
+| `identity/spring.datasource.password`, `identity/spring.flyway.password` | `10001:10001` | Exact copies of corresponding PostgreSQL credentials |
+| `identity/cookie.identity.rate-limit-hmac-key` | `10001:10001` | Canonical base64url 32-byte HMAC key |
+| `identity/identity-jwt-private.jwk` | `10001:10001` | Active private ES256 P-256 signing JWK |
+| `identity/notification-public.jwk` | `10001:10001` | Public half of Notification's active RSA-OAEP-256 key |
+| `identity/retiring/*.jwk` | `10001:10001` | Retiring public signing JWKs |
+| `identity/nats-identity.creds`, `identity/nats-truststore.jks`, `identity/cookie.identity.nats-truststore-password` | `10001:10001` | Identity NATS identity and trusted CA |
+| `notification/spring.datasource.password` | `10001:10001` | Notification runtime PostgreSQL credential |
+| `notification/spring.flyway.password` | `10001:10001` | Migrator credential; mounted only in the one-shot migration container |
+| `notification/notification-private.jwk`, `notification/retiring/*.jwk` | `10001:10001` | Active/retiring private JWE decryption JWKs |
+| `notification/nats-notification.creds`, `notification/nats-truststore.jks`, `notification/cookie.notification.nats-truststore-password` | `10001:10001` | Restricted consumer credential and trusted CA |
+| `redis/password` | `999:999` | Random Redis ACL password |
+| `notification/spring.data.redis.password` | `10001:10001` | Exact copy of Redis password |
+| `notification/cookie.notification.delivery.smtp.password` | `10001:10001` | SMTP password |
+| `notification/fcm-credentials.json` | `10001:10001` | Firebase service-account credentials for Android and iOS push |
+| `nats/auth.conf`, `nats/server.key`, `nats/stream-admin.creds` | `1000:1000` | Operator/account config, server TLS key and deployment credential |
+| `nats/ca.crt`, `nats/server.crt` | `root:root`, `0444` | CA and server certificate with DNS SAN `nats` |
 
-Enter secret values through a protected file or password manager, not as shell
-arguments. Runtime and migration passwords have one PostgreSQL-owned copy and
-one Identity-owned copy so each container can read only its material;
-`deploy.sh` refuses to proceed if either pair differs. Use three independent,
-random database passwords.
+Use different database passwords for every role. The deploy script checks that
+owner-specific copies agree, files are regular/non-symlink, permissions are
+private and owner UIDs match. Spring reads scalar secrets through
+`configtree:/run/secrets/`; no raw production secret is in a Compose environment
+variable. Each JKS contains the NATS CA, and hostname verification remains on.
+Recheck image UID assumptions when changing pinned images.
 
-`postgres-init-identity.sh` creates the restricted roles only when PostgreSQL
-initializes an empty data directory. If this bundle is ever applied to a volume
-created by an older Compose definition, create/migrate those roles explicitly
-under a reviewed database change before starting Identity; Docker entrypoint
-init scripts do not rerun against existing clusters.
+FCM is the sole push provider called by Notification for both Android and iOS.
+Upload the Apple APNs authentication key to the Firebase project's Apple app
+configuration; Firebase delivers iOS messages through APNs. Notification does
+not mount an Apple key or connect directly to APNs.
 
-The NATS server certificate must contain the DNS SAN `nats`, because that is the
-Compose service name verified by the Identity client. Build the Identity JKS
-from the same CA certificate. The JKS must contain at least one certificate.
+Push is disabled by default and needs no Firebase credential file while
+disabled. To enable both platforms, install `notification/fcm-credentials.json`,
+set `COOKIE_FCM_PROJECT_ID` and `COOKIE_FCM_ENABLED=true`. The deploy script
+automatically adds `compose.fcm.yaml` to mount the credential file. Manual
+Compose commands must pass the same overlay when enabling push. Disabled push
+does not report a fake successful delivery. Production startup validates the
+enabled FCM settings; local development uses Mailpit and disabled push.
 
-### NATS authorization prerequisites
+The mobile apps must register their Firebase Messaging registration token,
+including on iOS. Tokens are opaque and case-sensitive; a native APNs device
+token cannot be converted into an FCM token. Migration V006 disables all existing
+iOS device registrations and cancels their pending or claimed push jobs. Users
+must open the updated iOS app and re-register its FCM token before iOS push can
+resume. The migration preserves terminal delivery history and email jobs.
 
-Generate operator/account/user material offline with `nsc`; do not generate it
-on the production VM. Render `nats/auth.conf` with:
+### Key rotation
 
-- one operator and a system account;
-- one application account with JetStream enabled;
-- a memory resolver preloaded with the system and application account JWTs;
-- no anonymous/default user.
+Notification obtains only public JWT verification keys from the fixed HTTPS
+JWKS URL. It does not receive Identity's private signing key. Prepublish a new
+verification key before switching signing keys; keep old public keys for the
+configured maximum access-token lifetime plus the five-minute JWKS cache window.
 
-The Identity user in the application account may publish only:
+JWE decryption keys are independent. Install the new private key in Notification,
+retain old private keys in its `retiring` mount, then switch Identity's public
+encryption key. Set `COOKIE_NOTIFICATION_RETIRING_PRIVATE_KEY_PATHS` to the
+comma-separated container paths under `/run/notification-retiring`. Retain old
+keys at least the seven-day broker window and until no unexpired delivery refers
+to them. Expired verification deliveries are discarded, not replayed as email.
+
+After replacing mounted key/credential files, explicitly redeploy the affected
+service even when its image digest is unchanged (`--notification <current-digest>`
+or `--identity <current-digest>`). Compose file-backed mounts can keep the old
+inode after atomic host replacement; provider credentials are startup-loaded.
+Wait for readiness after installing Notification's new private key before
+switching/restarting Identity's public encryption key. A file-reload loop alone
+does not replace a mounted inode or update a configured retiring-key path list.
+
+## PostgreSQL provisioning on existing volumes
+
+Identity's historical initialization script applies only to an empty cluster.
+Adding Notification never depends on Docker re-running that script. The
+`notification-db-provision` one-shot job authenticates with the administrator
+secret, creates the missing database and roles and converges grants on each run.
+It preserves existing Identity/Notification rows and fails if an existing
+Notification database has an unexpected owner.
+
+`notification_migrator` owns Notification's database/schema. Only the one-shot
+`notification-migrate` container receives its password and runs Flyway;
+`notification_app` has CONNECT/USAGE and explicit grants on application tables.
+V008 removes historical blanket/default grants. It allows only SELECT/INSERT on
+account tombstones, no access to Flyway history or future tables, and immutable
+quarantine evidence with RLS-limited deletion after 30 days. Replay bookkeeping
+updates belong to the separate NOLOGIN `notification_replay` role, which inherits
+normal application permissions. Repeated provisioning calls the owner-only
+`notification_apply_runtime_grants()` function after that migration exists.
+Neither runtime nor replay credentials can invoke that function. Their containers
+receive no migrator/admin secret, and Flyway is disabled in both runtime modes.
+Neither login role
+is superuser, can create databases/roles, bypass RLS, or read Identity tables.
+The administrative credential is mounted only into PostgreSQL and its provisioning
+job. This job runs before Notification starts, including upgrades over a
+previous Identity-only data volume. Provisioning does not imply a schema rollback.
+
+## NATS provisioning and least privilege
+
+Generate operator/account/user material offline with `nsc`, not on the VM. Install
+one operator, system account, an application account with JetStream enabled and
+a memory resolver with their account JWTs. No anonymous/default user is allowed.
+NATS client traffic is TLS-only. Identity retains its three publish subjects
+and reply subscription `_INBOX.cookie.identity.>`; it cannot consume events.
+
+`config/notification-nats-permissions.json` is the exact permission fragment for
+Notification's application-account user. It grants consumer INFO/NEXT for
+`COOKIE_EVENTS.notification-v1`, ACK subjects scoped to that stream/consumer,
+and only `_INBOX.cookie.notification.>` subscriptions. Both supported ACK layouts
+are listed. It does not grant domain publishing, stream reads, arbitrary reply
+subscriptions, or creation/deletion of consumers. Broker subject filters come
+from `config/notification-consumer.json`, validated against `service.yaml` by CI.
+
+The deploy-only credential may read/create/edit `COOKIE_EVENTS` and
+`notification-v1`, plus its own reply inbox. It stays outside application
+containers. Extend the original stream-admin permissions with only:
 
 ```text
-cookie.events.account.activated.v1
-cookie.events.account.deletion.requested.v1
-cookie.events.notification.email.requested.v1
+$JS.API.CONSUMER.INFO.COOKIE_EVENTS.notification-v1
+$JS.API.CONSUMER.CREATE.COOKIE_EVENTS.notification-v1
+$JS.API.CONSUMER.DURABLE.CREATE.COOKIE_EVENTS.notification-v1
 ```
 
-It may subscribe only to `_INBOX.cookie.identity.>` for publish
-acknowledgements. It must not receive `$JS.API.>` stream-management permission
-or any event subscription.
+Use the subject forms emitted by the pinned nats CLI and validate credentials
+against the isolated broker before installation. The init job converges the
+stream and consumer without delete/recreate or cursor reset. Existing incompatible
+consumer settings require an operator-reviewed migration; never hide that failure
+by discarding a durable consumer.
 
-Create a separate `stream-admin.creds` in that same application account. It
-needs only the JetStream API subjects required to read, create and update
-`COOKIE_EVENTS`, plus its own reply inbox. Keep this credential out of the
-Identity container. Validate the rendered server config and both credentials in
-an isolated container/network before installing them; the repository does not
-pretend to automate operator seed handling.
+The consumer uses DeliverAll, explicit ACK, 30-second ACK wait, at most 128
+outstanding messages, and unlimited transient retries. PostgreSQL inbox commit
+precedes ACK. Poison records are durably quarantined by the application. The
+stream retains seven days / 1 GiB / one million messages; inbox deduplication
+retains 30 days. Alert on consumer lag, oldest quarantine, failed delivery age,
+Redis/NATS errors and DB pool saturation.
 
-## First and subsequent deploys
+Quarantine replay is an operator action with a **separate** credential. Do not
+add `$JS.API.STREAM.MSG.GET.COOKIE_EVENTS` to Notification's runtime user: it
+would bypass its subject filters. The replay procedure must use broker retention
+and preserve the original event identity. Telemetry storage/export backends
+remain a separate architecture decision; counters alone are not installed alerts.
 
-The VM service account needs only `container-registry.images.puller` for the
-Identity repository. The metadata endpoint then supplies the short-lived token used
-by `deploy.sh`; no static Yandex key is stored on disk.
+Delivery gauges are `cookie.notification.delivery.pending`,
+`cookie.notification.delivery.oldest.age.seconds`,
+`cookie.notification.delivery.unknown` and `cookie.notification.delivery.failed`.
+Treat `cookie.notification.delivery.metrics.healthy=0` as a failed metrics snapshot,
+not an empty queue. Inspect `cookie.notification.delivery.attempt` by channel and
+outcome when investigating growing age or failure counts. Provider responses with
+an unknown outcome require operator review and are not automatically resent.
 
-Run a deployment with the digest printed by the successful image-publish job:
+### Quarantine replay command
+
+Install an operator credential as a separate `10001:10001`, `0400` file outside
+the normal Notification secret mounts. Its only broker grants are publish
+`$JS.API.STREAM.MSG.GET.COOKIE_EVENTS` and subscribe
+`_INBOX.cookie.notification_operator.>`. The operator can thereby retrieve a
+stored quarantined stream sequence; it cannot republish an event.
+
+Provision a separate operator PostgreSQL LOGIN (for example `notification_operator`)
+through the administrator, with `NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`
+and membership in `notification_replay`. Set its password securely, for example
+using interactive `psql` `\\password`; never grant this role to `notification_app`.
+Store the operator password as `operators/notification-db-password`, owned by
+`10001:10001` with mode `0400`. The operator login inherits application data access
+plus updates to `replay_requested_at`, `replayed_at` and `replay_attempts`; it cannot
+change quarantine evidence, tombstones or migration history.
+
+```bash
+sudo docker compose \
+  --project-directory /opt/cookie/production \
+  --env-file /etc/cookie/production.env \
+  --env-file /srv/cookie/releases/current.env \
+  --file /opt/cookie/production/compose.yaml \
+  run --rm --no-deps notification-replay \
+  --cookie.notification.mode=replay \
+  --notification-replay-id='<quarantine-UUID>'
+```
+
+The dedicated short-lived process mounts only its operator PostgreSQL password,
+operator broker credential and NATS truststore/password. It has no runtime,
+migrator, SMTP, FCM or JWE private-key credentials, runs no migrations or background
+workers, and uses a separate broker connection for the privileged lookup. It verifies the stored
+message hash/subject, preserves the original event ID and closes after replay.
+It does not run background consumption, scheduling or provider delivery. A
+message removed by broker retention causes an explicit failure. Do not bypass
+UNKNOWN delivery outcomes or synthesize a replacement event to force sending.
+
+## Deploy, recovery and rollback
+
+Initial deployment on an empty host requires both image digests:
 
 ```bash
 sudo /opt/cookie/production/deploy.sh \
-  'cr.yandex/<registry-id>/identity@sha256:<64-hex-digest>'
+  --identity 'cr.yandex/<registry-id>/identity@sha256:<64-hex-digest>' \
+  --notification 'cr.yandex/<registry-id>/notification@sha256:<64-hex-digest>'
 ```
 
-The script performs these operations in order:
+For an existing Identity release, install the new bundle/config/secrets and run
+only `--notification <digest>`. The old Identity-only manifest is read safely,
+its digest is preserved and Identity is not recreated. Subsequent deployments
+can specify either service independently. Supplying a service explicitly also
+allows reapplying configuration at the same digest. The original single
+positional Identity-digest invocation remains supported after both images are
+recorded.
 
-1. checks paths, static configuration and required material;
-2. locks `/run/lock/cookie-production-deploy.lock`;
-3. logs into Yandex Container Registry using the VM metadata token and a
-   temporary Docker configuration directory;
-4. pulls the requested Identity digest and the pinned infrastructure images;
-5. starts PostgreSQL and NATS and waits for their container health checks;
-6. runs the repeatable NATS init job (`add` when absent, `edit --force` when
-   present) from `config/cookie-events.json`;
-7. starts Identity with the requested digest and verifies `/readyz` both inside
-   the container and through the host-published port;
-8. atomically records the verified digest in `/srv/cookie/releases/current.env`
-   only after both readiness checks pass, or restarts the previous verified
-   image if startup or readiness fails.
+Deployment serializes with `/run/lock/cookie-production-deploy.lock`, gets a
+short-lived registry token, validates/pulls immutable artifacts, starts shared
+infrastructure, provisions Notification's DB and durable consumer, then starts
+only requested services. For Notification the order is: stop the old runtime,
+run `notification-migrate` from the candidate image to completion, then start the
+new runtime with Flyway disabled and no migrator secret. A migration failure
+prevents the new runtime from starting. The migration process has only its
+database credential, no HTTP server, broker connection, workers or providers.
+Recovery terminates any interrupted migration container before restoring the old
+runtime; rollback never runs migrations from the old image. Do not run extra
+Notification replicas or independent migrators alongside this single-VM rollout.
+Container and published-port readiness must pass.
+Redis failure permits PostgreSQL scheduling fallback. No deploy step sends a
+real email or push as a health check.
 
-The release file keeps the last verified digest if deployment is interrupted.
-An interrupted candidate may still be running; rerun `deploy.sh` with the desired
-digest to check it or restore the digest saved in `current.env`. After an
-interrupted first deployment there is no verified release yet and no automatic
-rollback target.
+The root-owned `releases/current.env` atomically records both digests only after
+success. `releases/pending.env` records the old/new pair and services attempted
+before each restart. Failures and TERM/INT roll back attempted services in reverse
+order; first-install failures stop the new service. A KILL/power interruption
+leaves the journal for recovery at the next invocation. A journal left after a
+successful manifest commit is cleared without rolling back that commit. If
+recovery fails, the script retains the journal and stops for operator recovery.
+It never sources release/journal text as shell code.
 
-`COOKIE_EVENTS` uses file storage, `cookie.events.>`, a seven-day/1 GiB/one
-million-message limit, a 1 MiB message limit, ten-minute deduplication and one
-replica. The init job preserves the stream and its consumers, but converging
-retention limits can expire stored messages under the resulting stream policy.
+An image rollback does **not** roll back Flyway, provider requests, Redis state,
+NATS stream configuration, secrets, or deployment-bundle changes. Keep migrations
+forward-compatible with the previous image and review bundle/secret compatibility
+before rollout. Explicit `--notification` targets must support the isolated
+`migrate` entrypoint introduced with this bundle; do not target a pre-isolation
+image with that command. Automatic journal recovery can restore the previous
+runtime without this entrypoint because it disables Flyway and skips migration.
+Rolling back the image after V006 does not reactivate old iOS
+tokens or restore the old token format. Recover with an FCM-capable image; if an
+older image is temporarily required for incident recovery, keep push disabled
+until the FCM-capable service is restored. Never send newly registered FCM tokens
+through the old direct APNs adapter. An incompatible migration is a
+restore/incident operation.
 
-## Operations
+Before real traffic, verify gateway header/client-IP behavior, actual SMTP and
+push credentials in a controlled test, external HTTPS monitoring, snapshot/restore,
+and disk/VM alerts. Configuration tests do not establish production readiness by
+themselves.
 
-Always pass the static environment and current release explicitly for manual
-read-only inspection:
+## Disposable production rehearsal in CI
+
+The `Production deployment rehearsal` job builds both real service Dockerfiles
+and runs `.github/scripts/test-production-containers.py` as root on a fresh
+Linux GitHub runner. It refuses an existing `/srv/cookie` or deployment lock.
+The test generates short-lived JWKs, a CA and certificates, JKS truststores,
+NATS operator/account/user JWTs and independent role passwords. No fixture
+private key, credential, email or token is committed or uploaded as an artifact.
+
+The original production `compose.yaml` and `deploy.sh` execute without source
+rewriting. A test overlay resolves the disposable HTTPS/SMTP host and installs
+its CA in Notification's JVM truststore; production profiles, hostname
+verification, SMTP authentication and required STARTTLS remain enabled. Real
+PostgreSQL, Redis and TLS/JWT NATS run with the production secret mounts, UIDs,
+permissions, consumer filters and resource limits. A strict local SMTP fixture
+accepts email only after STARTTLS and authentication.
+
+The rehearsal covers a fresh two-service installation, invalid secret-mode
+rejection, and registration → encrypted event → SMTP → confirmation → JWT
+authenticated Notification API, including opaque 4096-character Android and
+mixed-case iOS FCM token registration through the runtime database role. A second
+run first starts only the actual Identity image and populates its real schema
+through registration, then adds
+Notification to that same PostgreSQL directory. It verifies data preservation
+and that Identity's container ID does not change during Notification installation,
+independent rollout, failed-image rollback and recovery after a SIGKILL leaves
+the deployment journal. Migrations remain applied during image rollback.
+
+Only cloud-specific transport is substituted: VM metadata returns a synthetic
+token, registry login is local, and synthetic `cr.yandex/...@sha256:` references
+map to already-built immutable Docker image IDs. Docker/Compose execution,
+container states, readiness requests, file ownership, locks and process signals
+are real. This test does not validate Yandex IAM, registry availability, gateway
+routing, public DNS/certificates, real provider credentials or VM capacity under
+load. Those remain deployment acceptance checks; CI never deploys production.
+
+The job installs `.github/scripts/production-test-requirements.txt` in a private
+virtual environment and invokes:
 
 ```bash
-set -a
-source /etc/cookie/production.env
-source /srv/cookie/releases/current.env
-set +a
-docker compose \
-  --project-directory /opt/cookie/production \
-  --env-file /etc/cookie/production.env \
-  --file /opt/cookie/production/compose.yaml \
-  ps
+sudo --preserve-env=GITHUB_ACTIONS,PATH \
+  .cache/production-rehearsal-venv/bin/python \
+  .github/scripts/test-production-containers.py \
+  --identity-image cookie/identity-ci:<commit> \
+  --notification-image cookie/notification-ci:<commit>
 ```
-
-Inspect recent logs with the same prefix plus `logs --tail 100 identity`. Docker
-rotates local JSON logs at five 10 MiB files per container. Do not use
-`docker compose down --volumes`; data is bind-mounted, but destructive lifecycle
-commands still create avoidable outage risk.
-
-Before real traffic, prove a restore on a disposable VM: restore PostgreSQL and
-JetStream data from the selected backup point, install the matching secret/key
-set, deploy a schema-compatible Identity digest, and verify `/readyz`, token
-verification and outbox publishing. A one-VM topology is an explicit cost tradeoff,
-not a substitute for that recovery procedure.

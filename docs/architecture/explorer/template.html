@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>COOKie — Атлас архитектуры</title>
+  <!-- EXPLORER_STYLE -->
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#map"><span class="brand-symbol" aria-hidden="true">c</span><strong>COOKie</strong><span class="brand-divider"></span><span>Атлас архитектуры</span></a>
+    <div class="top-actions"><span class="snapshot-label">Снимок кода, не мониторинг</span><button type="button" class="icon-button" data-action="about" aria-label="Об источниках и обновлении">?</button></div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6.5"></circle><path d="m15 15 5 5"></path></svg><input id="search" type="search" placeholder="Ручка, событие, параметр…" aria-label="Поиск по архитектуре"><kbd>/</kbd></label>
+      <nav id="navigation" aria-label="Разделы архитектуры"></nav>
+      <div class="sidebar-section"><span>Сервисы</span><button type="button" class="text-button" data-action="reset-filter">Все</button></div>
+      <div id="service-filters"></div>
+      <label class="switch-label"><input type="checkbox" id="show-planned"><span class="switch"></span>Показать план</label>
+      <div class="sidebar-note">Синий — HTTP. Охра — события.<br>Серый пунктир — целевая связь.</div>
+      <div class="sidebar-footer" id="snapshot"></div>
+    </aside>
+    <main id="main" tabindex="-1"></main>
+  </div>
+  <dialog id="source-dialog" aria-labelledby="source-title">
+    <div class="dialog-heading"><h2 id="source-title">Источник</h2><button type="button" class="icon-button" data-action="close-dialog" aria-label="Закрыть источник">×</button></div>
+    <div id="source-content"></div>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript>Для интерактивной карты включите JavaScript. Исходная архитектура находится в docs/architecture, контракты — в contracts/openapi.</noscript>
+  <!-- EXPLORER_DATA -->
+  <!-- EXPLORER_SCRIPT -->
+</body>
+</html>

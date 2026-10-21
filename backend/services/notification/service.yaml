@@ -1,0 +1,36 @@
+schema_version: 1
+id: notification
+runtime: kotlin_jvm
+stateful: true
+database: notification
+public_openapi:
+  source: contracts/openapi/public/notification.yaml
+runtime_openapi: contracts/openapi/runtime.yaml
+messaging:
+  publishes: []
+  consumes:
+    - type: account.deletion.requested
+      version: 1
+    - type: notification.email.requested
+      version: 1
+    - type: account.activated
+      version: 1
+    - type: nutrition.meal.created
+      version: 1
+    - type: nutrition.meal.updated
+      version: 1
+    - type: nutrition.meal.deleted
+      version: 1
+    - type: nutrition.water.changed
+      version: 1
+    - type: health.weight.changed
+      version: 1
+    - type: user.profile.updated
+      version: 1
+    - type: progress.day.updated
+      version: 1
+synchronous_dependencies: [identity]
+infrastructure_dependencies: [postgresql, nats_jetstream, redis, notification_decryption_key, identity_jwks]
+probes:
+  liveness: /healthz
+  readiness: /readyz

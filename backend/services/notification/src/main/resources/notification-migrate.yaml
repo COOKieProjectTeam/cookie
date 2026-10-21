@@ -1,0 +1,13 @@
+# Dedicated one-shot context: no application datasource, web server or workers.
+spring:
+  config:
+    import: optional:configtree:/run/secrets/
+  main:
+    web-application-type: none
+  application:
+    name: notification-migrate
+  flyway:
+    enabled: true
+    url: ${SPRING_FLYWAY_URL}
+    user: ${SPRING_FLYWAY_USER:notification_migrator}
+    password: ${SPRING_FLYWAY_PASSWORD:}

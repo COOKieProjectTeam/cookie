@@ -40,7 +40,7 @@ services:
       retries: 24
       start_period: 20s
     shm_size: "128m"
-    mem_limit: "1024m"
+    mem_limit: "1536m"
     cpus: "1.0"
     pids_limit: 256
     security_opt:
@@ -118,6 +118,10 @@ services:
         target: /config/cookie-events.json
         read_only: true
       - type: bind
+        source: ./config/notification-consumer.json
+        target: /config/notification-consumer.json
+        read_only: true
+      - type: bind
         source: ./scripts/nats-init.sh
         target: /config/nats-init.sh
         read_only: true
@@ -149,6 +153,7 @@ services:
         -XX:MaxRAMPercentage=70
         -XX:+ExitOnOutOfMemoryError
         -Djava.io.tmpdir=/tmp
+        -Dorg.bouncycastle.native.cpu_variant=java
       COOKIE_IDENTITY_DATABASE_URL: jdbc:postgresql://postgres:5432/identity
       COOKIE_IDENTITY_DATABASE_USER: identity_app
       COOKIE_IDENTITY_DATABASE_POOL_SIZE: "8"
@@ -219,8 +224,213 @@ services:
       - backend
       - edge
 
+
+  notification-db-provision:
+    image: postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    restart: "no"
+    user: "70:70"
+    entrypoint: ["/bin/sh", "/config/provision.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - source: postgres_admin_password
+        target: postgres-admin-password
+      - source: postgres_notification_password
+        target: postgres-notification-password
+      - source: postgres_notification_migration_password
+        target: postgres-notification-migration-password
+    volumes:
+      - ./scripts/postgres-provision-notification.sh:/config/provision.sh:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    mem_limit: "256m"
+    cpus: "0.25"
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [backend]
+
+  redis:
+    image: redis:8.2-alpine@sha256:30abb90e62f14b737010746def3ba99cc79fe19dcdb3d37b41f21fc62e7da19d
+    restart: unless-stopped
+    user: "999:999"
+    entrypoint: ["/bin/sh", "/config/redis-entrypoint.sh"]
+    secrets:
+      - source: redis_password
+        target: redis-password
+    volumes:
+      - ./scripts/redis-entrypoint.sh:/config/redis-entrypoint.sh:ro
+      - ./config/redis.conf:/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis-password) redis-cli --user notification ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,uid=999,gid=999
+    mem_limit: "256m"
+    cpus: "0.25"
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [backend]
+
+  notification:
+    image: ${NOTIFICATION_IMAGE:?NOTIFICATION_IMAGE must be an immutable cr.yandex digest reference}
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      SERVER_SHUTDOWN: graceful
+      SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: 20s
+      JAVA_TOOL_OPTIONS: >-
+        -XX:InitialRAMPercentage=25 -XX:MaxRAMPercentage=70
+        -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp
+        -Dorg.bouncycastle.native.cpu_variant=java
+      COOKIE_NOTIFICATION_DATABASE_URL: jdbc:postgresql://postgres:5432/notification
+      COOKIE_NOTIFICATION_DATABASE_USER: notification_app
+      COOKIE_NOTIFICATION_DATABASE_POOL_SIZE: "12"
+      SPRING_FLYWAY_ENABLED: "false"
+      COOKIE_NATS_URL: tls://nats:4222
+      COOKIE_NATS_CREDENTIALS_PATH: /run/secrets/nats-notification.creds
+      COOKIE_NATS_TRUSTSTORE_PATH: /run/secrets/nats-truststore.jks
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_USERNAME: notification
+      COOKIE_NOTIFICATION_PRIVATE_KEY_PATH: /run/secrets/notification-private.jwk
+      COOKIE_NOTIFICATION_RETIRING_PRIVATE_KEY_PATHS: ${COOKIE_NOTIFICATION_RETIRING_PRIVATE_KEY_PATHS:-}
+      COOKIE_IDENTITY_ISSUER: ${COOKIE_IDENTITY_ISSUER:?COOKIE_IDENTITY_ISSUER must be an HTTPS URL}
+      COOKIE_IDENTITY_AUDIENCE: ${COOKIE_IDENTITY_AUDIENCE:-cookie-api}
+      COOKIE_IDENTITY_JWKS_URL: ${COOKIE_IDENTITY_JWKS_URL:?COOKIE_IDENTITY_JWKS_URL must use HTTPS}
+      COOKIE_SMTP_HOST: ${COOKIE_SMTP_HOST:?COOKIE_SMTP_HOST is required}
+      COOKIE_SMTP_PORT: ${COOKIE_SMTP_PORT:-587}
+      COOKIE_SMTP_USERNAME: ${COOKIE_SMTP_USERNAME:?COOKIE_SMTP_USERNAME is required}
+      COOKIE_SMTP_FROM: ${COOKIE_SMTP_FROM:?COOKIE_SMTP_FROM is required}
+      COOKIE_SMTP_MESSAGE_ID_DOMAIN: ${COOKIE_SMTP_MESSAGE_ID_DOMAIN:?COOKIE_SMTP_MESSAGE_ID_DOMAIN is required}
+      COOKIE_SMTP_STARTTLS_REQUIRED: "true"
+      COOKIE_NOTIFICATION_VERIFICATION_LINK_BASE_URL: ${COOKIE_NOTIFICATION_VERIFICATION_LINK_BASE_URL:?A public verification link URL is required}
+      COOKIE_FCM_ENABLED: ${COOKIE_FCM_ENABLED:-false}
+      COOKIE_FCM_PROJECT_ID: ${COOKIE_FCM_PROJECT_ID:-}
+      COOKIE_FCM_CREDENTIALS_PATH: /run/secrets/fcm-credentials.json
+    secrets:
+      - source: notification_database_password
+        target: spring.datasource.password
+      - source: notification_nats_truststore_password
+        target: cookie.notification.nats-truststore-password
+      - source: notification_redis_password
+        target: spring.data.redis.password
+      - source: notification_smtp_password
+        target: cookie.notification.delivery.smtp.password
+      - source: notification_private_key
+        target: notification-private.jwk
+      - source: nats_notification_credentials
+        target: nats-notification.creds
+      - source: notification_nats_truststore
+        target: nats-truststore.jks
+    depends_on:
+      postgres:
+        condition: service_healthy
+      notification-db-provision:
+        condition: service_completed_successfully
+      nats-init:
+        condition: service_completed_successfully
+    ports:
+      - "${COOKIE_NOTIFICATION_BIND_IP:-127.0.0.1}:8082:8080/tcp"
+    volumes:
+      - ./scripts/notification-healthcheck.sh:/opt/cookie/notification-healthcheck.sh:ro
+      - type: bind
+        source: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/retiring
+        target: /run/notification-retiring
+        read_only: true
+    healthcheck:
+      test: ["CMD", "/bin/bash", "/opt/cookie/notification-healthcheck.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    mem_limit: "1536m"
+    cpus: "1.5"
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [backend, edge]
+
+  # Explicit operator/deploy tools share the exact release image but no runtime
+  # provider/JWE credentials. They are never started by a normal compose up.
+  notification-migrate:
+    profiles: [tools]
+    image: ${NOTIFICATION_IMAGE:?NOTIFICATION_IMAGE must be an immutable cr.yandex digest reference}
+    pull_policy: never
+    restart: "no"
+    command: ["--cookie.notification.mode=migrate"]
+    environment:
+      COOKIE_NOTIFICATION_MODE: migrate
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/notification
+      SPRING_FLYWAY_USER: notification_migrator
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp
+    secrets:
+      - source: notification_flyway_password
+        target: spring.flyway.password
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    mem_limit: "512m"
+    cpus: "0.5"
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [backend]
+
+  notification-replay:
+    profiles: [tools]
+    image: ${NOTIFICATION_IMAGE:?NOTIFICATION_IMAGE must be an immutable cr.yandex digest reference}
+    pull_policy: never
+    restart: "no"
+    command: ["--cookie.notification.mode=replay"]
+    environment:
+      COOKIE_NOTIFICATION_MODE: replay
+      COOKIE_NOTIFICATION_DATABASE_URL: jdbc:postgresql://postgres:5432/notification
+      COOKIE_NOTIFICATION_DATABASE_USER: notification_operator
+      SPRING_FLYWAY_ENABLED: "false"
+      COOKIE_NATS_URL: tls://nats:4222
+      COOKIE_NATS_TRUSTSTORE_PATH: /run/secrets/nats-truststore.jks
+      COOKIE_NOTIFICATION_OPERATOR_NATS_CREDENTIALS_PATH: /run/secrets/operator.creds
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp
+        -Dorg.bouncycastle.native.cpu_variant=java
+    secrets:
+      - source: notification_operator_database_password
+        target: spring.datasource.password
+      - source: notification_operator_nats_credentials
+        target: operator.creds
+      - source: notification_nats_truststore_password
+        target: cookie.notification.nats-truststore-password
+      - source: notification_nats_truststore
+        target: nats-truststore.jks
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    mem_limit: "512m"
+    cpus: "0.5"
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [backend]
+
 networks:
-  # Port 8080 is published through this ordinary bridge for API Gateway.
+  # Application ports are published for API Gateway; Notification also needs
+  # outbound HTTPS/SMTP. Databases, Redis and messaging remain isolated.
   # Database and messaging stay isolated on the internal backend network.
   edge:
   backend:
@@ -259,3 +469,29 @@ secrets:
     file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/nats/server.key
   nats_stream_admin_credentials:
     file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/nats/stream-admin.creds
+  postgres_notification_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/postgres/notification-password
+  postgres_notification_migration_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/postgres/notification-migration-password
+  notification_database_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/spring.datasource.password
+  notification_operator_database_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/operators/notification-db-password
+  notification_operator_nats_credentials:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/operators/notification-replay.creds
+  notification_flyway_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/spring.flyway.password
+  notification_nats_truststore_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/cookie.notification.nats-truststore-password
+  notification_redis_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/spring.data.redis.password
+  notification_smtp_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/cookie.notification.delivery.smtp.password
+  notification_private_key:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/notification-private.jwk
+  nats_notification_credentials:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/nats-notification.creds
+  notification_nats_truststore:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/nats-truststore.jks
+  redis_password:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/redis/password

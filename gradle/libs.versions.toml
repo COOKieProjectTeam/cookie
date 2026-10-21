@@ -2,6 +2,7 @@
 angus-mail = "2.0.5"
 bouncycastle-lts = "2.73.13"
 icu4j = "78.3"
+google-auth = "1.43.0"
 jnats = "2.26.4"
 kotlin = "2.4.21"
 kotlinx-coroutines = "1.11.0"
@@ -15,6 +16,7 @@ swagger-annotations = "2.2.55"
 testcontainers = "2.0.5"
 
 [libraries]
+google-auth-oauth2 = { module = "com.google.auth:google-auth-library-oauth2-http", version.ref = "google-auth" }
 angus-mail = { module = "org.eclipse.angus:jakarta.mail", version.ref = "angus-mail" }
 bouncycastle-provider = { module = "org.bouncycastle:bcprov-lts8on", version.ref = "bouncycastle-lts" }
 icu4j = { module = "com.ibm.icu:icu4j", version.ref = "icu4j" }

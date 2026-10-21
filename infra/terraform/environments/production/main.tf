@@ -35,7 +35,7 @@ resource "yandex_vpc_subnet" "production" {
 resource "yandex_vpc_security_group" "production_vm" {
   folder_id   = var.folder_id
   name        = "${var.name_prefix}-vm-sg"
-  description = "SSH allowlist plus Identity ingress from API Gateway only"
+  description = "SSH allowlist plus service ingress from API Gateway only"
   network_id  = yandex_vpc_network.production.id
   labels      = local.labels
 
@@ -50,6 +50,13 @@ resource "yandex_vpc_security_group" "production_vm" {
     description    = "Identity HTTP from API Gateway VPC integration only"
     protocol       = "TCP"
     port           = 8080
+    v4_cidr_blocks = [local.api_gateway_source_cidr]
+  }
+
+  ingress {
+    description    = "Notification HTTP from API Gateway VPC integration only"
+    protocol       = "TCP"
+    port           = 8082
     v4_cidr_blocks = [local.api_gateway_source_cidr]
   }
 
@@ -82,16 +89,20 @@ resource "yandex_container_repository" "identity" {
   name = "${yandex_container_registry.production.id}/identity"
 }
 
+resource "yandex_container_repository" "notification" {
+  name = "${yandex_container_registry.production.id}/notification"
+}
+
 resource "yandex_iam_service_account" "ci_registry_pusher" {
   folder_id   = var.folder_id
   name        = "${var.name_prefix}-ci-pusher"
-  description = "GitHub Actions image publisher scoped to the Identity repository"
+  description = "GitHub Actions image publisher scoped to the Identity and Notification repositories"
 }
 
 resource "yandex_iam_service_account" "vm_registry_puller" {
   folder_id   = var.folder_id
   name        = "${var.name_prefix}-vm-puller"
-  description = "Production VM image puller scoped to the Identity repository"
+  description = "Production VM image puller scoped to the Identity and Notification repositories"
 }
 
 resource "yandex_container_repository_iam_binding" "ci_identity_pusher" {
@@ -105,6 +116,24 @@ resource "yandex_container_repository_iam_binding" "ci_identity_pusher" {
 
 resource "yandex_container_repository_iam_binding" "vm_identity_puller" {
   repository_id = yandex_container_repository.identity.id
+  role          = "container-registry.images.puller"
+
+  members = [
+    "serviceAccount:${yandex_iam_service_account.vm_registry_puller.id}",
+  ]
+}
+
+resource "yandex_container_repository_iam_binding" "ci_notification_pusher" {
+  repository_id = yandex_container_repository.notification.id
+  role          = "container-registry.images.pusher"
+
+  members = [
+    "serviceAccount:${yandex_iam_service_account.ci_registry_pusher.id}",
+  ]
+}
+
+resource "yandex_container_repository_iam_binding" "vm_notification_puller" {
+  repository_id = yandex_container_repository.notification.id
   role          = "container-registry.images.puller"
 
   members = [
@@ -218,13 +247,14 @@ resource "yandex_compute_instance" "production" {
 
   depends_on = [
     yandex_container_repository_iam_binding.vm_identity_puller,
+    yandex_container_repository_iam_binding.vm_notification_puller,
   ]
 }
 
 resource "yandex_api_gateway" "identity" {
   folder_id         = var.folder_id
   name              = "${var.name_prefix}-identity-gateway"
-  description       = "Temporary HTTPS edge for Identity until the COOKie domain and Caddy are ready"
+  description       = "Temporary HTTPS edge for public services until the COOKie domain and Caddy are ready"
   labels            = local.labels
   execution_timeout = "15"
 
@@ -232,12 +262,12 @@ resource "yandex_api_gateway" "identity" {
     network_id = yandex_vpc_network.production.id
   }
 
-  # Only Identity's public contract is reachable. Operational endpoints,
+  # Only public Identity/Notification contracts are reachable. Operational endpoints,
   # PostgreSQL, and NATS are intentionally absent from this specification.
   spec = yamlencode({
     openapi = "3.0.0"
     info = {
-      title   = "COOKie Identity bootstrap gateway"
+      title   = "COOKie public service gateway"
       version = "1.0.0"
     }
     paths = {
@@ -262,6 +292,42 @@ resource "yandex_api_gateway" "identity" {
           "x-yc-apigateway-integration" = {
             type = "http"
             url  = "http://${yandex_compute_instance.production.network_interface[0].ip_address}:8080/v1/auth/{path}"
+            headers = {
+              "*"               = "*"
+              "X-Forwarded-For" = ""
+            }
+            omitEmptyHeaders = true
+            query = {
+              "*" = "*"
+            }
+            timeouts = {
+              connect = 2
+              read    = 12
+            }
+          }
+        }
+      }
+      "/v1/notifications/{path+}" = {
+        "x-yc-apigateway-any-method" = {
+          operationId = "notificationProxy"
+          parameters = [
+            {
+              name     = "path"
+              in       = "path"
+              required = false
+              schema = {
+                type = "string"
+              }
+            },
+          ]
+          responses = {
+            default = {
+              description = "Response proxied from Notification Service"
+            }
+          }
+          "x-yc-apigateway-integration" = {
+            type = "http"
+            url  = "http://${yandex_compute_instance.production.network_interface[0].ip_address}:8082/v1/notifications/{path}"
             headers = {
               "*"               = "*"
               "X-Forwarded-For" = ""

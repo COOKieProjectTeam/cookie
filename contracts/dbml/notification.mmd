@@ -1,17 +1,11 @@
-%% notification service schema — derived from notification.dbml
-%% Cross-service references are intentionally omitted.
+%% Notification PostgreSQL schema; derived from notification.dbml / V001 through V006.
+%% Only the actual service-local FK is drawn; logical identity/device references have no FK.
 erDiagram
-  PushDevices {
-    uuid id PK
-    uuid user_id
-    varchar platform
-    varchar device_id
-    varchar push_token
-    boolean enabled
-    timestamptz created_at
-    timestamptz updated_at
+  AccountTombstones {
+    uuid user_id PK
+    uuid deletion_request_id
+    timestamptz deleted_at
   }
-
   Settings {
     uuid user_id PK
     boolean water_enabled
@@ -22,24 +16,98 @@ erDiagram
     boolean goal_warning_enabled
     time quiet_start
     time quiet_end
-    timestamptz updated_at
-  }
-
-  State {
-    uuid user_id PK
-    timestamptz last_meal_at
-    timestamptz last_water_at
-    timestamptz next_food_reminder_at
-    timestamptz next_water_reminder_at
     varchar timezone
+    varchar locale
+    boolean locale_overridden
+    timestamptz scheduling_started_at
+    timestamptz food_started_at
+    timestamptz water_started_at
+    timestamptz last_water_reminder_at
+    timestamptz last_water_submission_at
+    uuid last_water_submission_occurrence_id
     timestamptz updated_at
   }
-
-  Delivery {
+  PushDevices {
     uuid id PK
     uuid user_id
-    varchar type
-    timestamptz sent_at
-    varchar status
-    varchar provider_message_id
+    varchar platform
+    varchar device_id
+    varchar push_token
+    bytea push_token_hash
+    boolean enabled
+    timestamptz created_at
+    timestamptz updated_at
   }
+  InboxEvents {
+    varchar consumer_name PK
+    uuid event_id PK
+    varchar event_type
+    timestamptz processed_at
+  }
+  EventProjections {
+    varchar kind PK
+    uuid user_id PK
+    varchar entity_id PK
+    bigint version
+    jsonb payload
+    boolean deleted
+    timestamptz updated_at
+  }
+  ReminderDeadlines {
+    uuid user_id PK
+    timestamptz due_at
+    bigint generation
+  }
+  ReminderOccurrences {
+    uuid id PK
+    uuid user_id
+    varchar kind
+    varchar cycle_key
+    timestamptz scheduled_at
+    timestamptz last_submitted_at
+    timestamptz created_at
+  }
+  MessageQuarantine {
+    uuid id PK
+    char message_hash
+    uuid event_id
+    varchar subject
+    varchar reason
+    bigint stream_sequence
+    timestamptz created_at
+    timestamptz replay_requested_at
+    timestamptz replayed_at
+    integer replay_attempts
+  }
+  DeliveryJobs {
+    uuid id PK
+    varchar dedup_key
+    varchar channel
+    uuid user_id
+    uuid device_id
+    uuid registration_attempt_id
+    uuid occurrence_id
+    varchar kind
+    varchar locale
+    text encrypted_payload
+    timestamptz expires_at
+    timestamptz created_at
+    timestamptz next_attempt_at
+    varchar status
+    integer attempt_count
+    integer provider_failure_count
+    uuid lease_token
+    timestamptz lease_until
+    varchar provider_message_id
+    varchar last_code
+    timestamptz finished_at
+  }
+  DeliveryAttempts {
+    uuid id PK
+    uuid delivery_id FK
+    timestamptz started_at
+    timestamptz finished_at
+    varchar outcome
+    varchar safe_code
+  }
+  DeliveryJobs ||--o{ DeliveryAttempts : has_attempts

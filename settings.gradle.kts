@@ -25,5 +25,8 @@ include(
     "backend:services:identity",
     "backend:services:identity:domain",
     "backend:services:identity:application",
+    "backend:services:notification",
+    "backend:services:notification:domain",
+    "backend:services:notification:application",
     "backend:tools:notification-sink",
 )

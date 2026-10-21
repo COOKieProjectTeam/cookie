@@ -1,0 +1,29 @@
+# The replay context imports only JDBC, event handling and operator NATS access.
+spring:
+  config:
+    import: optional:configtree:/run/secrets/
+  application:
+    name: notification-replay
+  main:
+    web-application-type: none
+  datasource:
+    url: ${COOKIE_NOTIFICATION_DATABASE_URL}
+    username: ${COOKIE_NOTIFICATION_DATABASE_USER:notification_operator}
+    password: ${COOKIE_NOTIFICATION_DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 2
+      connection-timeout: 2000
+      validation-timeout: 1000
+      data-source-properties:
+        options: "-c statement_timeout=5000 -c lock_timeout=2000"
+        socketTimeout: 10
+        tcpKeepAlive: true
+  flyway:
+    enabled: false
+cookie:
+  notification:
+    nats-url: ${COOKIE_NATS_URL}
+    operator-nats-credentials-path: ${COOKIE_NOTIFICATION_OPERATOR_NATS_CREDENTIALS_PATH:}
+    nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
+    nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
+    consumer-enabled: false

@@ -1,13 +1,14 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-08-19
+updated_at: 2026-10-20
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
 
 rules:
   - calls not listed here are forbidden until the model is updated
   - every internal operation is owned and authorized by the callee service
-  - every runtime caller proves cryptographic workload identity with callee audience
+  - internal protected operations require cryptographic workload identity with callee audience
+  - explicitly public signing-key discovery uses fixed authenticated TLS origin and no workload token
   - client module availability does not grant permission to call the callee
   - callee operation grants must be a subset of calls declared here
   - callers must set timeouts and propagate trace context
@@ -61,5 +62,14 @@ calls:
     callee: object_storage
     purpose: direct pre-signed PUT/GET without proxying bytes through backend services
   - caller: notification
-    callees: [apns, fcm]
-    purpose: send push notification
+    callee: fcm
+    purpose: send Android and iOS push through FCM HTTP v1; Firebase manages downstream APNs delivery
+  - caller: notification
+    callee: smtp
+    purpose: authenticated TLS email submission
+  - caller: notification
+    callee: identity
+    purpose: public signing-key discovery at /v1/auth/jwks
+    authentication: public_jwks_over_tls
+    user_context: none
+    implementation: fixed-origin bounded JWKS cache, not an internal domain client

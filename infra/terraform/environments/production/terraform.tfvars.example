@@ -16,8 +16,8 @@ ssh_public_key    = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIReplaceThisExamplePubl
 
 # Cost-oriented initial capacity. Increase after observing CPU, memory, disk, and
 # JVM pressure; do not add more services to this VM without a reviewed plan.
-vm_cores           = 2
-vm_memory_gib      = 4
+vm_cores           = 4
+vm_memory_gib      = 8
 vm_core_fraction   = 50
 boot_disk_size_gib = 30
 data_disk_size_gib = 30

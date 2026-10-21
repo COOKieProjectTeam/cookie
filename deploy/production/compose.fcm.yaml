@@ -1,0 +1,9 @@
+# Added automatically by deploy.sh only when this provider is enabled.
+services:
+  notification:
+    secrets:
+      - source: notification_fcm_credentials
+        target: fcm-credentials.json
+secrets:
+  notification_fcm_credentials:
+    file: ${COOKIE_SECRET_ROOT:-/srv/cookie/secrets}/notification/fcm-credentials.json

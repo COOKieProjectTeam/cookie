@@ -1,0 +1,392 @@
+openapi: 3.0.3
+info:
+  title: COOKie Notification Public API
+  version: 1.0.0
+  description: Push devices and notification preferences owned by Notification Service.
+servers:
+  - url: https://api.cookie.app/v1
+    description: Production
+  - url: http://127.0.0.1:8082/v1
+    description: Local Notification
+tags:
+  - name: notifications
+    description: Push devices and notification preferences.
+paths:
+  /notifications/devices:
+    post:
+      tags: [notifications]
+      security:
+        - accessToken: []
+      operationId: registerDevice
+      summary: Зарегистрировать push-токен устройства
+      description: >-
+        Register the Firebase Cloud Messaging registration token for IOS or ANDROID.
+        Existing IOS clients using direct APNs must obtain and re-register an FCM token;
+        APNs device tokens cannot be used as FCM registration tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushDeviceInput"
+      responses:
+        "403":
+          $ref: "#/components/responses/NotificationAccountDeleted"
+        "413":
+          $ref: "#/components/responses/NotificationPayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/NotificationUnavailable"
+        "200":
+          description: Токен существующего устройства обновлён
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NotificationNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushDevice"
+        "201":
+          description: Устройство зарегистрировано
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NotificationNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushDevice"
+        "400":
+          $ref: "#/components/responses/NotificationBadRequest"
+        "401":
+          $ref: "#/components/responses/NotificationUnauthorized"
+
+  /notifications/devices/{deviceId}:
+    parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [notifications]
+      security:
+        - accessToken: []
+      operationId: unregisterDevice
+      summary: Удалить push-токен устройства
+      responses:
+        "403":
+          $ref: "#/components/responses/NotificationAccountDeleted"
+        "503":
+          $ref: "#/components/responses/NotificationUnavailable"
+        "204":
+          description: Удалено
+        "401":
+          $ref: "#/components/responses/NotificationUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotificationNotFound"
+
+  /notifications/settings:
+    get:
+      tags: [notifications]
+      security:
+        - accessToken: []
+      operationId: getNotificationSettings
+      summary: Получить настройки уведомлений
+      responses:
+        "403":
+          $ref: "#/components/responses/NotificationAccountDeleted"
+        "503":
+          $ref: "#/components/responses/NotificationUnavailable"
+        "200":
+          description: Настройки
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NotificationNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+        "401":
+          $ref: "#/components/responses/NotificationUnauthorized"
+    patch:
+      tags: [notifications]
+      security:
+        - accessToken: []
+      operationId: updateNotificationSettings
+      summary: Частично обновить настройки уведомлений
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationSettingsPatch"
+      responses:
+        "403":
+          $ref: "#/components/responses/NotificationAccountDeleted"
+        "413":
+          $ref: "#/components/responses/NotificationPayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/NotificationUnavailable"
+        "200":
+          description: Обновлённые настройки
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NotificationNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+        "400":
+          $ref: "#/components/responses/NotificationBadRequest"
+        "401":
+          $ref: "#/components/responses/NotificationUnauthorized"
+
+components:
+  securitySchemes:
+    accessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Identity access JWT: ES256, typ=at+jwt, expected issuer and audience,
+        and mandatory valid sub, sid, jti, iat and exp claims.
+  headers:
+    NotificationNoStore:
+      description: Account data and error responses must not be stored in caches.
+      schema:
+        type: string
+        enum: [no-store]
+  responses:
+    NotificationBadRequest:
+      description: Invalid notification input
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NotificationNoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NotificationError"
+    NotificationUnauthorized:
+      description: Missing or invalid access JWT
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NotificationNoStore"
+        WWW-Authenticate:
+          description: Bearer challenge for missing or invalid access credentials.
+          schema:
+            type: string
+            enum: [Bearer]
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NotificationError"
+    NotificationNotFound:
+      description: Device not found
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NotificationNoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NotificationError"
+    NotificationAccountDeleted:
+      description: Account deletion has been received; access is forbidden
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NotificationNoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NotificationError"
+    NotificationPayloadTooLarge:
+      description: Request exceeds 16 KiB
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NotificationError"
+    NotificationUnavailable:
+      description: Notification dependency unavailable
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NotificationNoStore"
+        Retry-After:
+          description: Minimum recommended delay before retrying, in seconds.
+          schema:
+            type: integer
+            enum: [1]
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NotificationError"
+  schemas:
+    PushDeviceInput:
+      type: object
+      additionalProperties: false
+      required: [platform, token, deviceId]
+      properties:
+        platform:
+          type: string
+          enum: [IOS, ANDROID]
+        token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: >-
+            Firebase Cloud Messaging registration token on both IOS and ANDROID;
+            opaque and case-sensitive, including tokens that look hexadecimal.
+            IOS clients must send the FCM token, never the APNs device token.
+            Registering an existing token transfers its active binding to this account and device.
+        deviceId:
+          type: string
+          minLength: 1
+          maxLength: 255
+
+    PushDevice:
+      type: object
+      required: [platform, token, deviceId, id, enabled]
+      properties:
+        platform:
+          type: string
+          enum: [IOS, ANDROID]
+        token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Exact opaque FCM registration token as registered, preserving letter case on both platforms.
+        deviceId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        id:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+
+    NotificationSettings:
+      type: object
+      description: Scheduled push stays disabled until timezone is explicitly set.
+      required: [water, food, weighIn, goalWarning, quietHours, locale]
+      properties:
+        timezone:
+          type: string
+          description: IANA timezone. Omitted until explicitly configured; null cannot clear it.
+          example: Europe/London
+        locale:
+          type: string
+          enum: [ru, en]
+          default: ru
+        water:
+          type: object
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+        food:
+          type: object
+          required: [enabled, inactiveForMinutes]
+          properties:
+            enabled:
+              type: boolean
+            inactiveForMinutes:
+              type: integer
+              minimum: 1
+              maximum: 10080
+        weighIn:
+          type: object
+          required: [enabled, time]
+          properties:
+            enabled:
+              type: boolean
+            time:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+              example: "08:00"
+        goalWarning:
+          type: object
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+        quietHours:
+          type: object
+          required: [start, end]
+          properties:
+            start:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+              example: "23:00"
+            end:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+              example: "08:00"
+
+    NotificationSettingsPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        timezone:
+          type: string
+          description: IANA timezone. Omitted until explicitly configured; null cannot clear it.
+          example: Europe/London
+        locale:
+          type: string
+          enum: [ru, en]
+        water:
+          type: object
+          minProperties: 1
+          additionalProperties: false
+          properties:
+            enabled:
+              type: boolean
+        food:
+          type: object
+          minProperties: 1
+          additionalProperties: false
+          properties:
+            enabled:
+              type: boolean
+            inactiveForMinutes:
+              type: integer
+              minimum: 1
+              maximum: 10080
+        weighIn:
+          type: object
+          minProperties: 1
+          additionalProperties: false
+          properties:
+            enabled:
+              type: boolean
+            time:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+        goalWarning:
+          type: object
+          minProperties: 1
+          additionalProperties: false
+          properties:
+            enabled:
+              type: boolean
+        quietHours:
+          type: object
+          minProperties: 1
+          additionalProperties: false
+          properties:
+            start:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+            end:
+              type: string
+              pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+
+    NotificationError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        requestId:
+          type: string
+          format: uuid
