@@ -1,19 +1,27 @@
+%% Physical columns mirrored from nutrition.dbml; versioned SQL migrations are authoritative.
+%% Owned dish/item snapshots are embedded in document JSONB; no cross-service foreign keys.
 erDiagram
   meals {
     uuid id PK
     uuid user_id
     uuid client_generated_id
+    varchar request_hash
+    date local_date
     bigint version
     jsonb document
   }
   saved_dishes {
     uuid id PK
     uuid user_id
+    bigint version
     jsonb document
   }
   water_entries {
     uuid id PK
     uuid user_id
+    uuid client_generated_id
+    varchar request_hash
+    date local_date
     bigint version
     jsonb document
   }
@@ -25,14 +33,27 @@ erDiagram
   }
   account_tombstones {
     uuid user_id PK
+    uuid deletion_request_id
+    timestamptz deleted_at
   }
   inbox_events {
     uuid event_id PK
+    timestamptz received_at
   }
   outbox_events {
     uuid event_id PK
+    uuid user_id
     jsonb envelope
+    varchar subject
+    timestamptz occurred_at
+    timestamptz available_at
+    uuid claim_id
+    timestamptz claimed_until
+    timestamptz published_at
+    integer attempts
   }
   rejected_events {
     bigint stream_sequence PK
+    varchar reason
+    timestamptz rejected_at
   }

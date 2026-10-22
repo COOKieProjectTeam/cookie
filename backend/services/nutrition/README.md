@@ -66,6 +66,10 @@ water snapshots, and consumer inbox/projections. Scheduling and delivery are
 disabled; no provider delivery or production readiness is claimed. HTTP replies
 also pass through the generated KMP JVM client/serializer. TERM/NAK transport
 faults use mocks; release/quarantine faults use real PostgreSQL triggers.
+Batch interruption tests use actual persisted leases and JetStream acceptance,
+then prove recovery and stable-ID deduplication. The downstream test also proves
+that a claimed event published after account deletion cannot recreate state
+after Notification commits its tombstone; the deletion envelope is synthetic.
 
 ## Runtime and permissions
 

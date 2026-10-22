@@ -156,6 +156,49 @@ class NutritionIntegrationTest {
         outbox.publishAvailable()
         assertThat(service.jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE user_id=? AND published_at IS NULL",Long::class.java,u)).isZero()
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans=[true,false])
+    fun `interrupted batch recovers submitted and untouched claims without duplicate broker messages`(interruptSubmit:Boolean) {
+        val u=user();repeat(3) { call(u,"addWaterEntry",water()) }
+        val claims=outbox.claim();assertThat(claims).hasSize(3)
+        val actual=natsConnection.jetStream()
+        val accepted=mutableMapOf<UUID,Long>()
+        var submitted=0
+        val stream=org.mockito.Mockito.mock(io.nats.client.JetStream::class.java) { invocation ->
+            if(invocation.method.name!="publishAsync") org.mockito.Mockito.RETURNS_DEFAULTS.answer(invocation)
+            else {
+                val index=submitted++
+                if(interruptSubmit && index==1) throw InterruptedException("interrupt second submission")
+                val ack=actual.publishAsync(invocation.getArgument<String>(0),invocation.getArgument<io.nats.client.impl.Headers>(1),invocation.getArgument<ByteArray>(2)).get(5,TimeUnit.SECONDS)
+                accepted[claims[index].id]=ack.seqno
+                if(!interruptSubmit && index==1) object : java.util.concurrent.CompletableFuture<io.nats.client.api.PublishAck>() {
+                    override fun get(timeout:Long,unit:TimeUnit):io.nats.client.api.PublishAck = throw InterruptedException("interrupt second ACK wait")
+                } else java.util.concurrent.CompletableFuture.completedFuture(ack)
+            }
+        }
+        val connection=org.mockito.Mockito.mock(NatsJetStreamConnection::class.java)
+        org.mockito.Mockito.`when`(connection.jetStream()).thenReturn(stream)
+        val publisher=org.mockito.Mockito.spy(NutritionOutbox(service.jdbc,connection,SimpleMeterRegistry()))
+        org.mockito.Mockito.doReturn(claims).`when`(publisher).claim()
+        try {
+            publisher.publishAvailable()
+            assertThat(Thread.currentThread().isInterrupted).isTrue()
+        } finally { Thread.interrupted() }
+        assertThat(submitted).isEqualTo(if(interruptSubmit) 2 else 3)
+        assertThat(service.jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE user_id=? AND published_at IS NOT NULL",Long::class.java,u)).isEqualTo(if(interruptSubmit) 0L else 1L)
+        // Advance durable lease/retry eligibility without sleeping or changing production timeouts.
+        service.jdbc.update("UPDATE outbox_events SET claimed_until=clock_timestamp()-interval '1 second' WHERE user_id=? AND claim_id IS NOT NULL",u)
+        service.jdbc.update("UPDATE outbox_events SET available_at=clock_timestamp() WHERE user_id=? AND published_at IS NULL",u)
+        outbox.publishAvailable()
+        assertThat(service.jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE user_id=? AND published_at IS NOT NULL",Long::class.java,u)).isEqualTo(3)
+        for(c in claims) {
+            assertThat(outbox.complete(c)).isFalse()
+            val duplicate=actual.publish(c.subject,io.nats.client.impl.Headers().add("Nats-Msg-Id",c.id.toString()),c.body.toByteArray())
+            assertThat(duplicate.isDuplicate).isTrue()
+            accepted[c.id]?.let { assertThat(duplicate.seqno).isEqualTo(it) }
+        }
+    }
+
     @Test fun `saved dish consumption copies snapshots and retries do not duplicate`() {
         val u=user();val original=meal().path("dishes")[0]
         val saved=call(u,"createSavedDish",original).body!!;val sid=saved.path("id").stringValue()
@@ -486,6 +529,31 @@ class NutritionIntegrationTest {
             outbox.publishAvailable();notification.awaitProjection(emptyUser,"WATER",2)
             val empty=json(notification.jdbc.queryForObject("SELECT payload::text FROM event_projections WHERE user_id=? AND kind='WATER'",String::class.java,emptyUser)!!)
             assertThat(empty.path("totalMl").longValue()).isZero();assertThat(empty.path("lastConsumedAt").isNull).isTrue()
+            // Deterministic claim -> account deletion -> late publish interleaving.
+            // Identity's deletion envelope is synthetic; Nutrition publishes its real retained claims.
+            val deletedUser=user();assertThat(http(deletedUser,"POST","/v1/diary/meals",meal()).statusCode()).isEqualTo(201)
+            val retained=outbox.claim();assertThat(retained).hasSize(2)
+            val deletionEnvelope=service.snapshots.obj("event_id" to UUID.randomUUID(),"event_type" to "account.deletion.requested","event_version" to 1,"producer" to "identity","occurred_at" to Instant.now(),"aggregate_type" to "account","aggregate_id" to deletedUser,
+                "payload" to mapOf("accountId" to deletedUser,"deletionRequestId" to UUID.randomUUID(),"requestedAt" to Instant.now()))
+            val deletionBytes=mapper.writeValueAsBytes(deletionEnvelope)
+            deletion.handle(DeletionConsumer.SUBJECT,deletionBytes)
+            natsConnection.jetStream().publish(DeletionConsumer.SUBJECT,deletionBytes)
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted {
+                assertThat(notification.jdbc.queryForObject("SELECT count(*) FROM account_tombstones WHERE user_id=?",Long::class.java,deletedUser)).isEqualTo(1)
+            }
+            val latePublisher=org.mockito.Mockito.spy(outbox)
+            org.mockito.Mockito.doReturn(retained).`when`(latePublisher).claim()
+            latePublisher.publishAvailable()
+            val lateMeal=retained.single { it.subject=="cookie.events.nutrition.meal.created.v1" }
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted {
+                assertThat(notification.jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id=?",Long::class.java,lateMeal.id)).isEqualTo(1)
+            }
+            assertThat(count(deletedUser,"outbox_events")).isZero();assertThat(count(deletedUser,"meals")).isZero()
+            assertThat(outbox.complete(lateMeal)).isFalse()
+            for(table in listOf("event_projections","settings","reminder_deadlines")) {
+                assertThat(notification.jdbc.queryForObject("SELECT count(*) FROM $table WHERE user_id=?",Long::class.java,deletedUser)).isZero()
+            }
+            assertThat(http(deletedUser,"POST","/v1/diary/meals",meal()).statusCode()).isEqualTo(403)
             for(event in events(u)+events(emptyUser)) {
                 if(event.path("event_type").stringValue()=="nutrition.day.changed") continue
                 val eventId=UUID.fromString(event.path("event_id").stringValue())

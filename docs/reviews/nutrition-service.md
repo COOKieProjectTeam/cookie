@@ -24,7 +24,7 @@ in the PR description. No Notification production implementation is changed.
 | Independent saved copies | consumeSavedDish | copy IDs differ; template edits preserve history; exact replay | Passed |
 | Contract/build consistency | generated server/KMP transport, descriptors, CI selector | service checks, all active contracts, compileKmpPublicClient, shared convention/module selector regressions | Passed; integration task fingerprints Notification JAR and grants SQL |
 
-Final local Nutrition run: 11 unit and 26 integration cases, no skips. Identity,
+Latest local Nutrition run: 11 unit and 28 integration cases, no skips. Identity,
 Notification, four platform checks, mobile shared tests and KMP compilation also
 passed. Atlas generator freshness, Python/UI tests and CI scope mapping passed.
 Existing generated KMP compiler warnings remain non-fatal.
@@ -86,3 +86,53 @@ Docker Compose validation is therefore established by the final Linux CI run.
   lease recovery; no host/process-kill outage rehearsal is claimed.
 - Repository approval requirements remain separate from this independent agent
   review. CI success does not establish human approval or configure branch rules.
+
+## Claude findings and cross-service audit, 2026-10-23
+
+Reviewed existing behavior at `b25b292469479b4337da237bcdbb079d5327f6e5`.
+The follow-up commit changes only Nutrition implementation/tests and its schema
+illustration/evidence. Its exact head and fresh CI are recorded in PR21.
+
+- Fresh meal creation now reuses the same day totals for the event and HTTP
+  response. The duplicate scan existed only on fresh creation (also invoked by
+  saved-dish consumption), not on every child edit. Existing exact-total/lifecycle
+  tests pass; this is an optimization, not a reproduced correctness failure.
+- Nutrition Mermaid now lists the same physical columns as DBML for all eight
+  tables; a parser comparison verifies the column sets. SQL migrations remain
+  authoritative. No handwritten HTML atlas integration is claimed.
+- Two new PostgreSQL/JetStream cases interrupt either the second submission or
+  the second ACK wait. They prove the thread stops, preserves interruption, and
+  leased/unvisited work recovers with stable event IDs and broker deduplication.
+- Actual Notification-process ingestion now additionally exercises the exact
+  claim → Nutrition deletion → Notification tombstone → late Nutrition publish
+  interleaving. The real publisher sends retained claims; no local row or
+  downstream settings/projection/reminder is resurrected. Identity's deletion
+  envelope is synthetic, not an Identity-producer end-to-end test.
+- These interruption/deletion behaviors were already specified by ADR0014; the
+  tests close coverage gaps rather than claim a newly fixed runtime defect.
+- Overflowed days cannot be accumulated through the current account-locked API:
+  add/update/move overflow rolls back. An overflow-recovery scenario needs
+  preexisting corrupt/imported data, which was not established.
+- String dispatch and duplicated JWT/NATS implementations remain maintenance
+  concerns. Extraction should preserve service-specific key loading, credentials,
+  provisioning and lifecycle behavior and be independently reviewed.
+
+Independent cross-service reviewers inspected the same guarantees in Identity
+and Notification. No deletion resurrection, duplicate business effect, auth
+bypass or TLS peer-verification defect was confirmed. Source comparison matched
+Identity's nine and Notification's ten physical table/column sets across
+migrations, DBML and Mermaid (not a proof of every constraint/index).
+
+Follow-ups outside this independent Nutrition PR:
+
+| Priority | Service / location | Trigger and effect | Focused follow-up |
+|---|---|---|---|
+| P2 | Identity `security/KeyMaterial.kt:24–44`; Notification `security/RemoteJwksAccessTokenVerifier.kt:51,90–94` | Identity accepts a signing kid longer than128 characters or more than15 retiring keys. Notification rejects those tokens/sets; Nutrition also caps its mounted set at16. A valid-by-issuer configuration can therefore break consumer authentication. No deployed violating configuration or auth bypass was established. | Agree and enforce producer/consumer key bounds; test129-character kid and active+16 retiring keys. |
+| P3 | Identity `messaging/OutboxPublisher.kt:70,95,100–107` | Failure of repository.release escapes the per-record handler; healthy tail waits for30-second lease recovery. No data loss is established. | Contain release failure, measure it and continue independent work; inject failure followed by a healthy record. |
+| P3 | Notification `messaging/NotificationConsumer.kt:35–53` | Quarantine/NAK failure escapes consume and abandons fetched healthy tail until redelivery (production ACK wait30seconds). No premature ACK or permanent loss is established. | Contain recovery exceptions per message and preserve cancellation; inject quarantine/NAK failure before a healthy deletion. |
+
+Those cross-service findings are source-reviewed, not new fault-injection runtime
+reproductions. The existing Identity95+44 and Notification94+72 test suites and
+four platform checks pass but do not cover all listed fault/configuration paths.
+They remain explicit follow-ups; no foreign service implementation was copied
+or changed in the Nutrition diff.

@@ -170,8 +170,9 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
         val value=snapshots.obj("id" to id,"localDate" to p.path("localDate"),"eatenAt" to snapshots.timestamp(p,"eatenAt").toInstant().toString(),
             "timezone" to p.path("timezone"),"dishes" to dishes,"nutrition" to snapshots.total(dishes),"version" to 1L)
         insert("meals",user,id,clientId,requestHash,value)
-        mealEvent(user,value,"created",correlationId);dayEvent(user,snapshots.date(value),correlationId)
-        return Result(201,snapshots.obj("meal" to value,"dayTotals" to day(user,snapshots.date(value)).path("total")))
+        mealEvent(user,value,"created",correlationId)
+        val totals=dayEvent(user,snapshots.date(value),correlationId)
+        return Result(201,snapshots.obj("meal" to value,"dayTotals" to totals))
     }
     private fun mutateChild(user: UUID,op: String,args: Map<String,Any?>,p: JsonNode,correlationId: UUID?): Result {
         val childId=args["dishId"]?.toString() ?: args["itemId"]?.toString()
@@ -226,8 +227,12 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
         "INSERT INTO day_versions(user_id,local_date,kind,version) VALUES (?,?,?,1) ON CONFLICT(user_id,local_date,kind) DO UPDATE SET version=day_versions.version+1 RETURNING version",Long::class.java,user,date,kind)!!
     private fun mealEvent(user: UUID,value: ObjectNode,action: String,correlationId: UUID?) = event(user,"nutrition.meal.$action","meal",value.path("id").stringValue(),snapshots.version(value),
         snapshots.obj("mealId" to value.path("id"),"userId" to user,"eatenAt" to value.path("eatenAt")),correlationId)
-    private fun dayEvent(user: UUID,date: LocalDate,correlationId: UUID?) = event(user,"nutrition.day.changed","nutrition_day","$user:$date",nextDayVersion(user,date,"day"),
-        snapshots.obj("userId" to user,"localDate" to date,"nutritionTotals" to day(user,date).path("total")),correlationId)
+    private fun dayEvent(user: UUID,date: LocalDate,correlationId: UUID?): JsonNode {
+        val totals=day(user,date).path("total")
+        event(user,"nutrition.day.changed","nutrition_day","$user:$date",nextDayVersion(user,date,"day"),
+            snapshots.obj("userId" to user,"localDate" to date,"nutritionTotals" to totals),correlationId)
+        return totals
+    }
     private fun waterEvent(user: UUID,date: LocalDate,correlationId: UUID?) {
         val entries=documents("water_entries",user,date)
         val total=entries.fold(0L) { sum, entry ->
