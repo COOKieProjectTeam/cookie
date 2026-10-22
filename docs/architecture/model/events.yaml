@@ -128,7 +128,7 @@ events:
     consumers: [progress, notification]
     payload: [userId, localDate, totalMl, lastConsumedAt]
     aggregate_version: positive monotonic version scoped to userId and localDate, survives empty days
-    implementation_note: lastConsumedAt is explicitly null when totalMl is zero; complete snapshot, never a delta
+    implementation_note: totalMl is an integer in [0, 2147483647]; overflow is rejected atomically by Nutrition. lastConsumedAt is explicitly null when totalMl is zero; complete snapshot, never a delta
 
     aggregate_version_required: true
 

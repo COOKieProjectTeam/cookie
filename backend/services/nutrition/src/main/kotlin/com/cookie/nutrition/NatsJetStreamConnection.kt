@@ -112,6 +112,7 @@ class NatsJetStreamConnection(
             if (!localProvisioning) {
                 truststorePath(properties.natsTruststorePath)
                 truststorePassword(properties.natsTruststorePassword.toCharArray())
+                hostnameResolveMode(Options.HostnameResolveMode.HappyEyeballs)
                 dataPortType(HostnameVerifyingSocketDataPort::class.java.name)
             }
         }

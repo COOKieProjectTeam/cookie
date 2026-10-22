@@ -39,7 +39,8 @@ class NutritionOutbox(private val jdbc: JdbcTemplate, private val nats: NatsJetS
         // All publishes share one bounded acknowledgement deadline, below the lease.
         val pending=claims.mapNotNull { c ->
             try { c to nats.jetStream().publishAsync(c.subject,Headers().add("Nats-Msg-Id",c.id.toString()),c.body.toByteArray()) }
-            catch (_: Exception) { release(c);metrics.counter("cookie.nutrition.outbox.failure").increment();null }
+            catch (e: InterruptedException) { releaseSafely(c);Thread.currentThread().interrupt();return }
+            catch (_: Exception) { releaseSafely(c);metrics.counter("cookie.nutrition.outbox.failure").increment();null }
         }
         val deadline=System.nanoTime()+Duration.ofSeconds(10).toNanos()
         pending.forEach { (c,future) ->
@@ -47,8 +48,15 @@ class NutritionOutbox(private val jdbc: JdbcTemplate, private val nats: NatsJetS
                 future.get((deadline-System.nanoTime()).coerceAtLeast(0),java.util.concurrent.TimeUnit.NANOSECONDS)
                 if(complete(c)) metrics.counter("cookie.nutrition.outbox.published").increment()
             } catch (e: InterruptedException) {
-                release(c);Thread.currentThread().interrupt()
-            } catch (_: Exception) { release(c);metrics.counter("cookie.nutrition.outbox.failure").increment() }
+                releaseSafely(c);Thread.currentThread().interrupt();return
+            } catch (_: Exception) { releaseSafely(c);metrics.counter("cookie.nutrition.outbox.failure").increment() }
+        }
+    }
+    private fun releaseSafely(c: Claim) {
+        try { release(c) } catch (e: Exception) {
+            metrics.counter("cookie.nutrition.outbox.recovery.failure").increment()
+            if(e is InterruptedException) Thread.currentThread().interrupt()
+            // The fenced claim remains durable and becomes eligible after its lease expires.
         }
     }
     @Scheduled(fixedDelay=60000)
@@ -90,17 +98,28 @@ class DeletionConsumer(private val nats: NatsJetStreamConnection,private val han
                     ConsumerConfiguration.builder().durable("nutrition-account-deletion-v1").filterSubject(SUBJECT).ackPolicy(AckPolicy.Explicit).ackWait(Duration.ofSeconds(30)).maxAckPending(20).build())
                 connection.jetStream().subscribe(SUBJECT,PullSubscribeOptions.bind(NatsJetStreamConnection.STREAM_NAME,"nutrition-account-deletion-v1")).also { subscription=it }
             }
-            sub.fetch(20,Duration.ofMillis(200)).forEach { message ->
-                try { handler.handle(message.subject,message.data);message.ackSync(Duration.ofSeconds(2)) }
-                catch (e: NutritionFailure) {
-                    if(e.status!=400) throw e
-                    // Invalid payloads are not retained. Preserve bounded broker metadata before TERM.
-                    jdbc.update("INSERT INTO rejected_events(stream_sequence,reason) VALUES (?,?) ON CONFLICT DO NOTHING",message.metaData().streamSequence(),e.code)
-                    message.term();metrics.counter("cookie.nutrition.consumer.rejected").increment()
-                } catch (_: Exception) { message.nakWithDelay(Duration.ofSeconds(5));metrics.counter("cookie.nutrition.consumer.retry").increment() }
+            for(message in sub.fetch(20,Duration.ofMillis(200))) {
+                consume(message)
+                if(Thread.currentThread().isInterrupted) return
             }
         } catch (e: InterruptedException) { Thread.currentThread().interrupt() }
         catch (_: Exception) { metrics.counter("cookie.nutrition.consumer.failure").increment() }
+    }
+    internal fun consume(message: io.nats.client.Message) {
+        try {
+            try { handler.handle(message.subject,message.data);message.ackSync(Duration.ofSeconds(2)) }
+            catch (e: NutritionFailure) {
+                if(e.status!=400) throw e
+                // Rejection must commit before TERM; otherwise leave this message for redelivery.
+                jdbc.update("INSERT INTO rejected_events(stream_sequence,reason) VALUES (?,?) ON CONFLICT DO NOTHING",message.metaData().streamSequence(),e.code)
+                message.term();metrics.counter("cookie.nutrition.consumer.rejected").increment()
+            } catch (e: InterruptedException) { throw e }
+            catch (_: Exception) { message.nakWithDelay(Duration.ofSeconds(5));metrics.counter("cookie.nutrition.consumer.retry").increment() }
+        } catch (e: InterruptedException) { Thread.currentThread().interrupt() }
+        catch (_: Exception) {
+            // Recovery itself failed. Do not ACK/TERM or abort independent fetched messages.
+            metrics.counter("cookie.nutrition.consumer.recovery.failure").increment()
+        }
     }
     companion object { const val SUBJECT="cookie.events.account.deletion.requested.v1" }
 }

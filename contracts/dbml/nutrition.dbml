@@ -1,4 +1,6 @@
 // Nutrition physical schema. One database, no cross-service foreign keys.
+// JSONB nutrient values remain exact numeric decimals; HTTP nutrient strings are transport-only.
+// Application transaction enforces per-user/local-day water sum <= 2147483647 ml.
 // Documents contain owned dish/item snapshots; migrations are authoritative.
 
 Table meals {

@@ -23,6 +23,8 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation(project(":backend:platform:starter-testing"))
+    testImplementation(project(":apps:mobile:shared"))
+    testImplementation(libs.ktor.client.cio.jvm)
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
@@ -117,6 +119,12 @@ tasks.named<Test>("test") {
 }
 
 val integrationTest = tasks.register<Test>("integrationTest") {
+    dependsOn(":backend:services:notification:bootJar")
+    inputs.file(rootProject.layout.projectDirectory.file("backend/services/notification/build/libs/notification.jar"))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(layout.projectDirectory.file("ops/runtime-grants.sql"))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("cookie.test.notification-jar", rootProject.layout.projectDirectory.file("backend/services/notification/build/libs/notification.jar").asFile.absolutePath)
     description = "Runs Nutrition HTTP and JDBC integration tests against required containers."
     group = "verification"
     testClassesDirs = sourceSets["test"].output.classesDirs

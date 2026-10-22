@@ -80,5 +80,6 @@ ADR 0003–0013, имеют приоритет над более старым с
 Nutrition boundary, aggregate snapshots and Notification-compatible events.
 Recipe/Media calls remain planned. Notification #20 is now in main. The generated
 atlas snapshot includes current contracts; handwritten Nutrition flows/topology
-and real Nutrition → Notification end-to-end verification remain explicit
-follow-ups. Current producer tests do not establish that E2E flow.
+remain an explicit follow-up. A separate test now runs real Nutrition HTTP,
+PostgreSQL/outbox, JetStream and the Notification JAR consumer through persisted
+projections. This ingestion E2E does not establish scheduler/provider delivery.

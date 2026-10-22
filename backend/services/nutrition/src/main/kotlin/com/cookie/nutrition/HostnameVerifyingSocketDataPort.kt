@@ -10,6 +10,9 @@ class HostnameVerifyingSocketDataPort : SocketDataPort() {
     private lateinit var configuredOptions: Options
 
     override fun afterConstruct(options: Options) {
+        require(options.hostnameResolveMode() == Options.HostnameResolveMode.HappyEyeballs) {
+            "TLS verification requires the original broker hostname"
+        }
         configuredOptions = options
     }
 

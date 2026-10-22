@@ -33,7 +33,7 @@ class Snapshots(val mapper: ObjectMapper) {
     }
     fun number(n: JsonNode, positive: Boolean = false, max: BigDecimal = BigDecimal("1000000")): BigDecimal {
         if (!n.isNumber) invalid()
-        val v = try { n.decimalValue() } catch (_: Exception) { invalid() }
+        val v = try { n.decimalValue().stripTrailingZeros() } catch (_: Exception) { invalid() }
         if (v < BigDecimal.ZERO || (positive && v.signum() == 0) || v > max || v.scale() > 6) invalid()
         return v
     }

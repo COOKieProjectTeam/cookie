@@ -104,6 +104,7 @@ Provisioning и deployment выполняются раздельно по
 Nutrition now implements autonomous diary, saved-dish and hydration APIs with
 transactional events. See [service instructions](backend/services/nutrition/README.md)
 and [ADR 0014](docs/adr/0014-autonomous-nutrition-service.md). Notification PR #20
-has merged into main. Handwritten Nutrition atlas flows/topology and real
-Nutrition → Notification end-to-end verification remain follow-ups; the generated
-atlas snapshot is refreshed during rebase. Contract assertions are not E2E evidence.
+has merged into main. Nutrition HTTP → outbox → JetStream → the real Notification
+consumer is covered by ingestion E2E tests; scheduler/provider delivery is not.
+Handwritten Nutrition atlas flows/topology remain a follow-up. The generated
+atlas snapshot reflects the current contracts, including exact nutrient strings.

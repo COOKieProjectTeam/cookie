@@ -72,7 +72,7 @@ class NutritionIntegrationTest {
         val created=http(u,"POST","/v1/diary/meals",input)
         assertThat(created.statusCode()).isEqualTo(201)
         val m=json(created.body()).path("meal");val id=m.path("id").stringValue()
-        assertThat(m.path("nutrition").path("calories").decimalValue()).isEqualByComparingTo("150")
+        assertThat(m.path("nutrition").path("calories").stringValue().toBigDecimal()).isEqualByComparingTo("150")
         assertThat(http(user(),"PATCH","/v1/diary/meals/$id",json("""{"version":1,"eatenAt":"2026-10-21T14:00:00Z"}""")).statusCode()).isEqualTo(404)
         assertThat(http(u,"POST","/v1/diary/meals",input).statusCode()).isEqualTo(200)
         assertThat(http(u,"GET","/v1/diary/days/2026-10-21").statusCode()).isEqualTo(200)
@@ -267,10 +267,263 @@ class NutritionIntegrationTest {
         val batches=Executors.newFixedThreadPool(2).use { pool -> (1..2).map { pool.submit<List<NutritionOutbox.Claim>> { barrier.await();outbox.claim() } }.map { it.get(10,TimeUnit.SECONDS) } }
         assertThat(batches.flatten().map { it.id }).hasSize(30).doesNotHaveDuplicates()
     }
-    private fun http(u: UUID,method: String,path: String,body: JsonNode?=null,version: Int?=null,token: String=token(u)): HttpResponse<String> {
+
+    @Test fun `raw decimal HTTP inputs preserve micro amounts bounds and canonical retries`() {
+        val u=user();val input=meal().toString().replace("\"value\":150","\"value\":0.000001")
+        assertThat(http(u,"POST","/v1/diary/meals",raw=input).statusCode()).isEqualTo(201)
+        for (equivalent in listOf("1e-6","0.000001000")) {
+            assertThat(http(u,"POST","/v1/diary/meals",raw=input.replace("0.000001",equivalent)).statusCode()).isEqualTo(200)
+        }
+        assertThat(count(u,"outbox_events")).isEqualTo(2)
+        for (value in listOf("1000000.00000000001","1e400","0.0000001")) {
+            val bad=meal().toString().replace("\"value\":150","\"value\":$value")
+            assertThat(http(u,"POST","/v1/diary/meals",raw=bad).statusCode()).describedAs(value).isEqualTo(400)
+        }
+        assertThat(count(u,"meals")).isEqualTo(1);assertThat(count(u,"outbox_events")).isEqualTo(2)
+        assertThat(http(u,"POST","/v1/diary/meals",raw=meal().toString().replace("\"value\":150","\"value\":1000000")).statusCode()).isEqualTo(201)
+    }
+    @Test fun `large exact totals agree in SQL event bytes and HTTP decimal strings`() {
+        val u=user()
+        val item="""{"source":{"type":"MANUAL"},"name":"x","baseUnit":"G","amount":{"value":1000000,"unit":"G"},"nutritionPer100":{"calories":1000000}}"""
+        val dish="""{"items":[${List(100){item}.joinToString(",")}]}"""
+        val small="""{"items":[${item.replace("\"value\":1000000","\"value\":0.1").replace("\"calories\":1000000","\"calories\":1")}]}"""
+        val base=meal().deepCopy() as ObjectNode
+        base.set("dishes",json("[${(List(9){dish}+small).joinToString(",")}]"))
+        val response=http(u,"POST","/v1/diary/meals",raw=base.toString())
+        assertThat(base.toString().toByteArray().size).isLessThan(262144)
+        assertThat(response.statusCode()).isEqualTo(201)
+        val exact="9000000000000.001"
+        assertThat(service.jdbc.queryForObject("SELECT document->'nutrition'->>'calories' FROM meals WHERE user_id=?",String::class.java,u)).isEqualTo(exact)
+        val dayEvent=events(u).single { it.path("event_type").stringValue()=="nutrition.day.changed" }
+        assertThat(dayEvent.path("payload").path("nutritionTotals").path("calories").decimalValue()).isEqualByComparingTo(exact)
+        val body=json(response.body())
+        assertThat(body.path("meal").path("nutrition").path("calories").stringValue()).isEqualTo(exact)
+        assertThat(body.path("dayTotals").path("calories").stringValue()).isEqualTo(exact)
+        val clientJson=kotlinx.serialization.json.Json
+        val generated=clientJson.decodeFromString(com.cookie.mobile.generated.model.MealCreatedResponse.serializer(),response.body())
+        assertThat(generated.meal.nutrition.calories as Any).isEqualTo(exact)
+        val roundTrip=clientJson.encodeToString(com.cookie.mobile.generated.model.MealCreatedResponse.serializer(),generated)
+        assertThat(json(roundTrip).path("dayTotals").path("calories").stringValue()).isEqualTo(exact)
+        outbox.publishAvailable()
+        val published=natsConnection.connected().jetStreamManagement().getLastMessage("COOKIE_EVENTS","cookie.events.nutrition.day.changed.v1")
+        assertThat(json(String(requireNotNull(published.data))).path("payload").path("nutritionTotals").path("calories").decimalValue()).isEqualByComparingTo(exact)
+        assertThat(json(http(u,"GET","/v1/diary/days/2026-10-21").body()).path("total").path("calories").stringValue()).isEqualTo(exact)
+    }
+    @Test fun `missing HTTP arguments and nonpositive child versions use public invalid input contract`() {
+        val u=user();val m=call(u,"createMeal",meal()).body!!.path("meal")
+        val paths=listOf("/v1/diary/meals/${m.path("id").stringValue()}","/v1/diary/dishes/${m.path("dishes")[0].path("id").stringValue()}","/v1/diary/items/${m.path("dishes")[0].path("items")[0].path("id").stringValue()}")
+        val responses=paths.map { http(u,"DELETE",it) }+http(u,"GET","/v1/water")+paths.flatMap { p -> listOf(0,-1).map { http(u,"DELETE",p,version=it) } }
+        responses.forEach {
+            assertThat(it.statusCode()).isEqualTo(400)
+            assertThat(json(it.body()).path("code").stringValue()).isEqualTo("INVALID_INPUT")
+            assertThat(json(it.body()).path("message").isString).isTrue()
+        }
+        paths.forEach { assertThat(http(u,"DELETE",it,version=2).statusCode()).isEqualTo(409) }
+        assertThat(count(u,"outbox_events")).isEqualTo(2)
+    }
+    @Test fun `request correlation is durable and exact retry does not replace it`() {
+        val u=user();val input=meal();val requestId=UUID.randomUUID().toString()
+        val created=http(u,"POST","/v1/diary/meals",input,requestId=requestId)
+        assertThat(created.statusCode()).isEqualTo(201)
+        assertThat(created.headers().firstValue("X-Request-Id").orElseThrow()).isEqualTo(requestId)
+        assertThat(events(u).map { it.path("correlation_id").stringValue() }).containsOnly(requestId)
+        assertThat(http(u,"POST","/v1/diary/meals",input,requestId=UUID.randomUUID().toString()).statusCode()).isEqualTo(200)
+        assertThat(events(u)).hasSize(2)
+        assertThat(events(u).map { it.path("correlation_id").stringValue() }).containsOnly(requestId)
+    }
+    @Test fun `daily water bound rejects overflow before commit including updates and moves`() {
+        val u=user();seedWater(u)
+        val last=water().deepCopy() as ObjectNode;last.put("amountMl",83647)
+        val response=http(u,"POST","/v1/water",last)
+        assertThat(response.statusCode()).isEqualTo(201)
+        val id=json(response.body()).path("id").stringValue()
+        assertThat(events(u).single().path("payload").path("totalMl").longValue()).isEqualTo(2147483647L)
+        val one=water().deepCopy() as ObjectNode;one.put("amountMl",1)
+        assertThat(http(u,"POST","/v1/water",one).statusCode()).isEqualTo(400)
+        assertThat(http(u,"PATCH","/v1/water/$id",json("""{"version":1,"amountMl":83648}""")).statusCode()).isEqualTo(400)
+        assertThat(count(u,"water_entries")).isEqualTo(21475);assertThat(count(u,"outbox_events")).isEqualTo(1)
+        val other=one.deepCopy();other.put("localDate","2026-10-22");other.put("consumedAt","2026-10-22T12:00:00Z")
+        val otherId=json(http(u,"POST","/v1/water",other).body()).path("id").stringValue()
+        assertThat(http(u,"PATCH","/v1/water/$otherId",json("""{"version":1,"localDate":"2026-10-21","consumedAt":"2026-10-21T12:00:00Z"}""")).statusCode()).isEqualTo(400)
+        assertThat(count(u,"outbox_events")).isEqualTo(2)
+    }
+    private fun seedWater(u:UUID) {
+        service.jdbc.update("""INSERT INTO water_entries(id,user_id,client_generated_id,request_hash,local_date,version,document)
+            SELECT gen_random_uuid(),?,gen_random_uuid(),'fixture','2026-10-21',1,
+            '{"amountMl":100000,"consumedAt":"2026-10-21T12:00:00Z","localDate":"2026-10-21","timezone":"Europe/Moscow","version":1}'::jsonb
+            FROM generate_series(1,21474)""",u)
+    }
+    @Test fun `provisioning rejects unsafe preexisting effective privileges`() {
+        val grants=Path.of("ops/runtime-grants.sql").toFile().readText()
+        for (pollute in listOf("ALTER TABLE account_tombstones OWNER TO nutrition_runtime",
+            "ALTER SCHEMA public OWNER TO nutrition_runtime",
+            "ALTER DATABASE nutrition OWNER TO nutrition_runtime",
+            "GRANT UPDATE(user_id) ON account_tombstones TO PUBLIC",
+            "GRANT CREATE ON SCHEMA public TO nutrition_runtime",
+            "GRANT DELETE ON account_tombstones TO PUBLIC",
+            "CREATE ROLE inherited_writer; GRANT inherited_writer TO nutrition_runtime",
+            "ALTER DEFAULT PRIVILEGES GRANT DELETE ON TABLES TO PUBLIC")) {
+            java.sql.DriverManager.getConnection(postgres.jdbcUrl,postgres.username,postgres.password).use { connection ->
+                connection.autoCommit=false
+                try {
+                    connection.createStatement().use { statement ->
+                        statement.execute(pollute)
+                        assertThatThrownBy { statement.execute(grants) }.describedAs(pollute).isInstanceOf(java.sql.SQLException::class.java)
+                    }
+                } finally { connection.rollback() }
+            }
+        }
+    }
+
+
+    @Test fun `release SQL failure does not prevent healthy independent publish`() {
+        val u=user();call(u,"createMeal",meal())
+        val ids=service.jdbc.queryForList("SELECT event_id FROM outbox_events WHERE user_id=? ORDER BY event_id",UUID::class.java,u)
+        val bad=ids[0];val good=ids[1]
+        service.jdbc.update("UPDATE outbox_events SET subject='' WHERE event_id=?",bad)
+        val owner=JdbcTemplate(DriverManagerDataSource(postgres.jdbcUrl,postgres.username,postgres.password))
+        owner.execute("""CREATE FUNCTION test_release_fault() RETURNS trigger LANGUAGE plpgsql AS ${'$'}${'$'}
+            BEGIN IF OLD.event_id='$bad'::uuid AND NEW.claim_id IS NULL AND NEW.published_at IS NULL THEN
+            RAISE EXCEPTION 'synthetic release failure'; END IF; RETURN NEW; END ${'$'}${'$'}""")
+        owner.execute("CREATE TRIGGER test_release_fault BEFORE UPDATE ON outbox_events FOR EACH ROW EXECUTE FUNCTION test_release_fault()")
+        try {
+            val claims=outbox.claim().sortedBy { if(it.id==bad) 0 else 1 }
+            val ordered=org.mockito.Mockito.spy(outbox)
+            org.mockito.Mockito.doReturn(claims).`when`(ordered).claim()
+            ordered.publishAvailable()
+            assertThat(service.jdbc.queryForObject("SELECT published_at IS NOT NULL FROM outbox_events WHERE event_id=?",Boolean::class.java,good)).isTrue()
+            assertThat(service.jdbc.queryForObject("SELECT published_at IS NULL AND claimed_until IS NOT NULL FROM outbox_events WHERE event_id=?",Boolean::class.java,bad)).isTrue()
+        } finally {
+            owner.execute("DROP TRIGGER test_release_fault ON outbox_events")
+            owner.execute("DROP FUNCTION test_release_fault()")
+        }
+        service.jdbc.update("UPDATE outbox_events SET subject='cookie.events.nutrition.day.changed.v1',claimed_until=clock_timestamp()-interval '1 second' WHERE event_id=?",bad)
+        outbox.publishAvailable()
+        assertThat(service.jdbc.queryForObject("SELECT published_at IS NOT NULL FROM outbox_events WHERE event_id=?",Boolean::class.java,bad)).isTrue()
+    }
+    @Test fun `quarantine SQL failure leaves poison unacked and still deletes healthy tail`() {
+        repeat(3){consumer.poll()}
+        val good=user();call(good,"createMeal",meal())
+        fun deletionEvent(version:Int)=service.snapshots.obj("event_id" to UUID.randomUUID(),"event_type" to "account.deletion.requested","event_version" to version,"producer" to "identity","occurred_at" to Instant.now(),"aggregate_type" to "account","aggregate_id" to good,
+            "payload" to mapOf("accountId" to good,"deletionRequestId" to UUID.randomUUID(),"requestedAt" to Instant.now()))
+        val owner=JdbcTemplate(DriverManagerDataSource(postgres.jdbcUrl,postgres.username,postgres.password))
+        owner.execute("CREATE FUNCTION test_quarantine_fault() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''synthetic rejection failure''; END'")
+        owner.execute("CREATE TRIGGER test_quarantine_fault BEFORE INSERT ON rejected_events FOR EACH ROW EXECUTE FUNCTION test_quarantine_fault()")
+        val bad=natsConnection.jetStream().publish(DeletionConsumer.SUBJECT,mapper.writeValueAsBytes(deletionEvent(2)))
+        natsConnection.jetStream().publish(DeletionConsumer.SUBJECT,mapper.writeValueAsBytes(deletionEvent(1)))
+        try {
+            consumer.poll()
+            assertThat(count(good,"meals")).isZero()
+            assertThat(service.jdbc.queryForObject("SELECT count(*) FROM rejected_events WHERE stream_sequence=?",Long::class.java,bad.seqno)).isZero()
+            assertThat(natsConnection.connected().jetStreamManagement().getConsumerInfo("COOKIE_EVENTS","nutrition-account-deletion-v1").numAckPending).isEqualTo(1)
+        } finally {
+            owner.execute("DROP TRIGGER test_quarantine_fault ON rejected_events")
+            owner.execute("DROP FUNCTION test_quarantine_fault()")
+            // The recovery may be pending; test-only pull redelivery cleanup avoids order-dependent tests.
+            val cleanup=natsConnection.connected().jetStream().subscribe(DeletionConsumer.SUBJECT,
+                io.nats.client.PullSubscribeOptions.bind("COOKIE_EVENTS","nutrition-account-deletion-v1"))
+            natsConnection.connected().jetStreamManagement().deleteConsumer("COOKIE_EVENTS","nutrition-account-deletion-v1")
+            org.springframework.test.util.ReflectionTestUtils.setField(consumer,"subscription",null)
+            cleanup.unsubscribe()
+            // Previously processed deletion envelopes remain inbox-idempotent on durable recreation.
+            repeat(3){consumer.poll()}
+        }
+    }
+
+
+    @Test fun `generated client accepts saved dish creation and exact replay`() = kotlinx.coroutines.runBlocking<Unit> {
+        val u=user();val saved=call(u,"createSavedDish",meal().path("dishes")[0]).body!!
+        val input=meal().deepCopy() as ObjectNode;input.remove("dishes")
+        val body=kotlinx.serialization.json.Json.decodeFromString(com.cookie.mobile.generated.model.ConsumeSavedDishInput.serializer(),input.toString())
+        val engine=io.ktor.client.engine.cio.CIO.create()
+        try {
+            val client=com.cookie.mobile.generated.api.DiaryApi(baseUrl="http://127.0.0.1:$port/v1",httpClientEngine=engine)
+            client.setBearerToken(token(u))
+            val first=client.consumeSavedDish(saved.path("id").stringValue(),body)
+            val second=client.consumeSavedDish(saved.path("id").stringValue(),body)
+            assertThat(first.status).isEqualTo(201);assertThat(second.status).isEqualTo(200)
+            assertThat(first.body().id).isEqualTo(second.body().id)
+            assertThat(count(u,"outbox_events")).isEqualTo(2)
+        } finally { engine.close() }
+    }
+
+
+    @Test fun `actual Notification process consumes Nutrition HTTP outbox events and water boundary`() {
+        NotificationProcess(postgres.jdbcUrl,postgres.username,postgres.password,"nats://${nats.host}:${nats.getMappedPort(4222)}").use { notification ->
+            val u=user();val response=http(u,"POST","/v1/diary/meals",meal())
+            assertThat(response.statusCode()).isEqualTo(201)
+            val id=json(response.body()).path("meal").path("id").stringValue()
+            val created=events(u).single { it.path("event_type").stringValue()=="nutrition.meal.created" }
+            outbox.publishAvailable()
+            notification.awaitProjection(u,"MEAL",1)
+            assertThat(http(u,"PATCH","/v1/diary/meals/$id",json("""{"version":1,"eatenAt":"2026-10-21T14:00:00Z"}""")).statusCode()).isEqualTo(200)
+            outbox.publishAvailable();notification.awaitProjection(u,"MEAL",2)
+            // Duplicate the actual producer event before advancing to deletion.
+            natsConnection.jetStream().publish("cookie.events.nutrition.meal.created.v1",mapper.writeValueAsBytes(created))
+            assertThat(http(u,"DELETE","/v1/diary/meals/$id",version=2).statusCode()).isEqualTo(204)
+            outbox.publishAvailable();notification.awaitProjection(u,"MEAL",3)
+            // A fresh event ID bypasses inbox dedup: the retained old snapshot must still be rejected by version.
+            val stale=created.deepCopy() as ObjectNode;val staleId=UUID.randomUUID();stale.put("event_id",staleId.toString())
+            natsConnection.jetStream().publish("cookie.events.nutrition.meal.created.v1",mapper.writeValueAsBytes(stale))
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted {
+                assertThat(notification.jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id=?",Long::class.java,staleId)).isEqualTo(1)
+            }
+            notification.awaitProjection(u,"MEAL",3)
+            assertThat(notification.jdbc.queryForObject("SELECT deleted FROM event_projections WHERE user_id=? AND kind='MEAL'",Boolean::class.java,u)).isTrue()
+            seedWater(u)
+            val boundary=water().deepCopy() as ObjectNode;boundary.put("amountMl",83647)
+            assertThat(http(u,"POST","/v1/water",boundary).statusCode()).isEqualTo(201)
+            outbox.publishAvailable();notification.awaitProjection(u,"WATER",1)
+            assertThat(notification.jdbc.queryForObject("SELECT (payload->>'totalMl')::bigint FROM event_projections WHERE user_id=? AND kind='WATER'",Long::class.java,u)).isEqualTo(2147483647L)
+            val countBefore=count(u,"outbox_events")
+            val overflow=water().deepCopy() as ObjectNode;overflow.put("amountMl",1)
+            assertThat(http(u,"POST","/v1/water",overflow).statusCode()).isEqualTo(400)
+            assertThat(count(u,"outbox_events")).isEqualTo(countBefore)
+            val emptyUser=user();val w=http(emptyUser,"POST","/v1/water",water())
+            assertThat(w.statusCode()).isEqualTo(201)
+            outbox.publishAvailable();notification.awaitProjection(emptyUser,"WATER",1)
+            assertThat(http(emptyUser,"DELETE","/v1/water/${json(w.body()).path("id").stringValue()}",version=1).statusCode()).isEqualTo(204)
+            outbox.publishAvailable();notification.awaitProjection(emptyUser,"WATER",2)
+            val empty=json(notification.jdbc.queryForObject("SELECT payload::text FROM event_projections WHERE user_id=? AND kind='WATER'",String::class.java,emptyUser)!!)
+            assertThat(empty.path("totalMl").longValue()).isZero();assertThat(empty.path("lastConsumedAt").isNull).isTrue()
+            for(event in events(u)+events(emptyUser)) {
+                if(event.path("event_type").stringValue()=="nutrition.day.changed") continue
+                val eventId=UUID.fromString(event.path("event_id").stringValue())
+                org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted {
+                    assertThat(notification.jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id=?",Long::class.java,eventId)).isEqualTo(1)
+                }
+                assertThat(notification.jdbc.queryForObject("SELECT count(*) FROM message_quarantine WHERE event_id=?",Long::class.java,eventId)).isZero()
+            }
+        }
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings=["1000000.00000000001","1e400"])
+    fun `invalid raw numeric literals are rejected without writes`(literal:String) {
+        val u=user();val input=meal().toString().replace("\"value\":150","\"value\":$literal")
+        val response=http(u,"POST","/v1/diary/meals",raw=input)
+        assertThat(response.statusCode()).isEqualTo(400)
+        assertThat(json(response.body()).path("code").stringValue()).isEqualTo("INVALID_INPUT")
+        assertThat(count(u,"meals")).isZero();assertThat(count(u,"outbox_events")).isZero()
+    }
+    @Test fun `existing dish and item reject nonpositive versions before conflict comparison`() {
+        val u=user();val m=call(u,"createMeal",meal()).body!!.path("meal")
+        val dish=m.path("dishes")[0];val item=dish.path("items")[0]
+        for((path,id) in listOf("dishes" to dish.path("id").stringValue(),"items" to item.path("id").stringValue())) {
+            for(v in listOf(0,-1)) assertThat(http(u,"DELETE","/v1/diary/$path/$id",version=v).statusCode()).isEqualTo(400)
+            assertThat(http(u,"DELETE","/v1/diary/$path/$id",version=2).statusCode()).isEqualTo(409)
+        }
+        assertThat(count(u,"outbox_events")).isEqualTo(2)
+        assertThat(http(u,"DELETE","/v1/diary/items/${item.path("id").stringValue()}",version=1).statusCode()).isEqualTo(204)
+        assertThat(http(u,"DELETE","/v1/diary/dishes/${dish.path("id").stringValue()}",version=2).statusCode()).isEqualTo(204)
+    }
+
+    private fun http(u: UUID,method: String,path: String,body: JsonNode?=null,version: Int?=null,token: String=token(u),raw: String?=null,requestId: String?=null): HttpResponse<String> {
         val builder=HttpRequest.newBuilder(URI("http://127.0.0.1:$port$path")).header("Authorization","Bearer $token").header("Content-Type","application/json")
         version?.let { builder.header("If-Match-Version",it.toString()) }
-        return HttpClient.newHttpClient().send(builder.method(method,body?.let { HttpRequest.BodyPublishers.ofString(it.toString()) }?:HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.ofString())
+        requestId?.let { builder.header("X-Request-Id",it) }
+        return HttpClient.newHttpClient().send(builder.method(method,(raw ?: body?.toString())?.let { HttpRequest.BodyPublishers.ofString(it) }?:HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.ofString())
     }
     private fun token(u: UUID): String = SignedJWT(JWSHeader.Builder(JWSAlgorithm.ES256).keyID(key.keyID).type(JOSEObjectType("at+jwt")).build(),JWTClaimsSet.Builder().issuer("https://api.cookie.app").audience("cookie-api").subject(u.toString()).jwtID(user().toString()).claim("sid",user().toString()).issueTime(Date.from(Instant.now().minusSeconds(1))).expirationTime(Date.from(Instant.now().plusSeconds(600))).build()).apply { sign(ECDSASigner(key)) }.serialize()
     companion object {

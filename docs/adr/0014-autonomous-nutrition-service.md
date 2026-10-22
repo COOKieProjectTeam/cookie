@@ -76,9 +76,9 @@ DELETION_PENDING until that separately designed protocol exists.
 - Complete handwritten Nutrition atlas flows/facts and topology. Notification
   #20 has now merged; the rebase refreshes only the generated contract snapshot
   required by main CI. The agreed full-map readiness exception remains.
-- Run Nutrition → Notification end-to-end (now unblocked by #20 merge). Real Nutrition
-  PostgreSQL/outbox/JetStream tests plus consumer-requirement assertions prove
-  producer behavior and contract compatibility only. They do not run Notification.
+- Nutrition → Notification ingestion now has an actual-process E2E test: HTTP,
+  PostgreSQL/outbox, JetStream and Notification inbox/projections. Scheduling,
+  provider delivery and Identity HTTP-driven lifecycle remain separate evidence.
 - Recipe import and Media attachments require real authenticated callees and
   generated per-callee clients. They remain roadmap operations, not active API.
 - Production configuration/rollout and automatic merge are outside this request.
@@ -92,3 +92,34 @@ needed after measurement. The account lock serializes that account's diary
 writes, including deletion; unrelated accounts proceed independently. JWTs
 remain usable until expiry or a consumed local deletion tombstone; broker lag
 therefore delays local revocation, as in the existing lifecycle design.
+
+## Review corrections, 2026-10-22
+
+Parse both request JSON and persisted JSONB as BigDecimal before validation or
+hashing; normalize trailing zeros for the six-fractional-place input policy.
+Keep exact numeric event payloads and persisted snapshots. The public Nutrition
+response uses decimal strings (nullable for unknown macros), because valid large
+aggregates cannot retain millesimal precision through generated Double clients.
+This is an explicit breaking correction to the unreleased API, with generated
+server and KMP transport changed together. Inputs remain bounded decimal numbers;
+clients must convert response strings explicitly when constructing edits.
+
+Cap each user's local-day water total at 2147483647 ml, matching the existing
+Notification v1 integer validator. Check every affected day inside the same
+transaction; exceeding the cap returns INVALID_INPUT and leaves documents,
+versions and outbox unchanged. This avoids changing another service's contract.
+
+Pass normalized request IDs from the controller to event creation explicitly;
+publishers do not inspect servlet state. Background operations without a request
+may leave correlation null; incoming deletion does not generate events. Exact
+retries retain original event identity/correlation. Reject missing HTTP arguments
+and nonpositive versions with the public INVALID_INPUT envelope. Document 200
+for saved-template replay alongside 201 for first consumption.
+
+Preserve broker DNS identity using HappyEyeballs plus the TLS data-port guard,
+as in current main. A trusted certificate with the wrong DNS SAN is rejected even
+if an IP SAN matches the resolved address. Contain release/quarantine/TERM/NAK
+failures per item, preserve unacknowledged durable work and restore interruption.
+Provisioning requires an unprivileged non-owner role; reject unsafe effective
+schema/table/column privileges and inherited/default grants instead of assuming
+that a direct REVOKE proves isolation. No production grants are changed here.

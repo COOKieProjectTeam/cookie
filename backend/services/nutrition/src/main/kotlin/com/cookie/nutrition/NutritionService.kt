@@ -19,7 +19,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
     data class Result(val status: Int, val body: JsonNode? = null)
     private data class Row(val id: UUID, val version: Long, val day: LocalDate?, val document: ObjectNode?)
 
-    fun execute(user: UUID, operation: String, args: Map<String, Any?>, input: JsonNode? = null): Result =
+    fun execute(user: UUID, operation: String, args: Map<String, Any?>, input: JsonNode? = null, correlationId: UUID? = null): Result =
         requireNotNull(tx.execute {
             lock(user)
             if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM account_tombstones WHERE user_id=?)",Boolean::class.java,user)==true)
@@ -27,24 +27,24 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
             val p=input ?: snapshots.obj()
             fun arg(name: String): String = args[name]?.toString() ?: invalid()
             fun id(name: String): UUID = try { UUID.fromString(arg(name)) } catch (_: IllegalArgumentException) { invalid() }
-            fun expected(): Long = arg("ifMatchVersion").toLongOrNull()?.takeIf { it>0 } ?: invalid()
+            fun expected(): Long = expectedVersion(args)
             when(operation) {
                 "getDiaryDay" -> Result(200,day(user,LocalDate.parse(arg("date"))))
-                "createMeal" -> createMeal(user,p)
+                "createMeal" -> createMeal(user,p,correlationId=correlationId)
                 "updateMeal" -> {
                     val old=row("meals",user,id("mealId"))
                     val changed=snapshots.merge(old.document!!,p,setOf("eatenAt","localDate"))
                     snapshots.validateTime(changed,"eatenAt")
-                    saveMeal(user,old,changed); Result(200,changed)
+                    saveMeal(user,old,changed,correlationId); Result(200,changed)
                 }
                 "deleteMeal" -> {
                     val old=row("meals",user,id("mealId")); checkVersion(old,expected())
                     jdbc.update("UPDATE meals SET document=NULL,version=version+1 WHERE id=? AND user_id=?",old.id,user)
-                    event(user,"nutrition.meal.deleted","meal",old.id.toString(),old.version+1,snapshots.obj("mealId" to old.id,"userId" to user))
-                    dayEvent(user,old.day!!); Result(204)
+                    event(user,"nutrition.meal.deleted","meal",old.id.toString(),old.version+1,snapshots.obj("mealId" to old.id,"userId" to user),correlationId)
+                    dayEvent(user,old.day!!,correlationId); Result(204)
                 }
                 "addDishToMeal","updateDish","deleteDish","addFoodEntry","updateFoodEntry","deleteFoodEntry" ->
-                    mutateChild(user,operation,args,p)
+                    mutateChild(user,operation,args,p,correlationId)
                 "getRecentFoods" -> {
                     val limit=limit(args)
                     val docs=documents("meals",user)
@@ -89,7 +89,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
                     val saved=row("saved_dishes",user,savedId).document!!
                     val meal=(p.deepCopy() as ObjectNode)
                     meal.set("dishes",mapper.valueToTree(listOf(snapshots.obj("name" to saved.path("name"),"items" to saved.path("items").toList().map(snapshots::entryInput)))))
-                    val created=createMeal(user,meal,hash)
+                    val created=createMeal(user,meal,hash,correlationId)
                     Result(201,created.body!!.path("meal"))
                 }
                 "listWaterEntries" -> Result(200,snapshots.obj("items" to documents("water_entries",user,LocalDate.parse(arg("date")))))
@@ -102,7 +102,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
                         val value=(p.deepCopy() as ObjectNode);value.remove("clientGeneratedId")
                         val entryId=UUID.randomUUID();value.put("id",entryId.toString());value.put("version",1L)
                         insert("water_entries",user,entryId,clientId,hash,value)
-                        waterEvent(user,snapshots.date(value)); Result(201,value)
+                        waterEvent(user,snapshots.date(value),correlationId); Result(201,value)
                     }
                 }
                 "updateWaterEntry" -> {
@@ -110,13 +110,13 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
                     val changed=snapshots.merge(old.document!!,p,setOf("amountMl","consumedAt","localDate"))
                     validateWater(changed)
                     update("water_entries",user,old.id,changed)
-                    setOf(old.day!!,snapshots.date(changed)).forEach { waterEvent(user,it) }
+                    setOf(old.day!!,snapshots.date(changed)).forEach { waterEvent(user,it,correlationId) }
                     Result(200,changed)
                 }
                 "deleteWaterEntry" -> {
                     val old=row("water_entries",user,id("waterEntryId"));checkVersion(old,expected())
                     jdbc.update("UPDATE water_entries SET document=NULL,version=version+1 WHERE id=? AND user_id=?",old.id,user)
-                    waterEvent(user,old.day!!);Result(204)
+                    waterEvent(user,old.day!!,correlationId);Result(204)
                 }
                 else -> error("Unimplemented operation $operation")
             }
@@ -127,6 +127,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
         // A collision only reduces concurrency; it never changes ownership checks.
         jdbc.query("SELECT pg_advisory_xact_lock(?)", { _,_ -> Unit }, user.mostSignificantBits xor user.leastSignificantBits)
     }
+    private fun expectedVersion(args: Map<String,Any?>): Long = args["ifMatchVersion"]?.toString()?.toLongOrNull()?.takeIf { it>0 } ?: invalid()
     private fun limit(args: Map<String,Any?>): Int = (args["limit"]?.toString()?.toIntOrNull() ?: 20).also { if(it !in 1..100) invalid() }
     private fun checkVersion(row: Row, version: Long) { if(row.version!=version) conflict() }
     private fun row(table: String,user: UUID,id: UUID): Row = jdbc.query(
@@ -139,7 +140,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
         fun canonical(v: JsonNode): Any? = when {
             v.isObject -> v.properties().sortedBy { it.key }.associate { it.key to canonical(it.value) }
             v.isArray -> v.toList().map(::canonical)
-            v.isNumber -> v.decimalValue().stripTrailingZeros()
+            v.isNumber -> try { v.decimalValue().stripTrailingZeros() } catch (_: Exception) { invalid() }
             v.isNull -> null
             v.isBoolean -> v.booleanValue()
             else -> v.stringValue()
@@ -157,7 +158,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
     private fun update(table: String,user: UUID,id: UUID,value: ObjectNode) {
         jdbc.update("UPDATE $table SET local_date=?,version=?,document=?::jsonb WHERE id=? AND user_id=?",snapshots.date(value),snapshots.version(value),value.toString(),id,user)
     }
-    private fun createMeal(user: UUID,p: JsonNode,requestHash: String = hash(p)): Result {
+    private fun createMeal(user: UUID,p: JsonNode,requestHash: String = hash(p),correlationId: UUID? = null): Result {
         snapshots.fields(p,setOf("clientGeneratedId","localDate","eatenAt","timezone","dishes"),setOf("clientGeneratedId","localDate","eatenAt","timezone","dishes"))
         snapshots.validateTime(p,"eatenAt")
         val clientId=snapshots.uuid(p,"clientGeneratedId")
@@ -169,10 +170,10 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
         val value=snapshots.obj("id" to id,"localDate" to p.path("localDate"),"eatenAt" to snapshots.timestamp(p,"eatenAt").toInstant().toString(),
             "timezone" to p.path("timezone"),"dishes" to dishes,"nutrition" to snapshots.total(dishes),"version" to 1L)
         insert("meals",user,id,clientId,requestHash,value)
-        mealEvent(user,value,"created");dayEvent(user,snapshots.date(value))
+        mealEvent(user,value,"created",correlationId);dayEvent(user,snapshots.date(value),correlationId)
         return Result(201,snapshots.obj("meal" to value,"dayTotals" to day(user,snapshots.date(value)).path("total")))
     }
-    private fun mutateChild(user: UUID,op: String,args: Map<String,Any?>,p: JsonNode): Result {
+    private fun mutateChild(user: UUID,op: String,args: Map<String,Any?>,p: JsonNode,correlationId: UUID?): Result {
         val childId=args["dishId"]?.toString() ?: args["itemId"]?.toString()
         val mealId=if(op=="addDishToMeal") UUID.fromString(args["mealId"].toString()) else {
             val path=if(args.containsKey("dishId")) "$.dishes[*] ? (@.id == \$id)" else "$.dishes[*].items[*] ? (@.id == \$id)"
@@ -187,7 +188,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
             val items=dish.path("items").toList().map { (it.deepCopy() as ObjectNode) }.toMutableList()
             when(op) {
                 "updateDish" -> { val changed=snapshots.merge(dish,p,setOf("name"));snapshots.text(changed,"name");dishes[dishes.indexOf(dish)]=changed;result=changed }
-                "deleteDish" -> { if(args["ifMatchVersion"].toString().toLongOrNull()!=snapshots.version(dish)) conflict();dishes.remove(dish) }
+                "deleteDish" -> { if(expectedVersion(args)!=snapshots.version(dish)) conflict();dishes.remove(dish) }
                 "addFoodEntry" -> { if(items.size>=100) invalid();result=snapshots.entry(p);items.add(result) }
                 "updateFoodEntry" -> {
                     val oldItem=items.first { it.path("id").stringValue()==childId }
@@ -196,7 +197,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
                 }
                 "deleteFoodEntry" -> {
                     val item=items.first { it.path("id").stringValue()==childId }
-                    if(args["ifMatchVersion"].toString().toLongOrNull()!=snapshots.version(item)) conflict();items.remove(item)
+                    if(expectedVersion(args)!=snapshots.version(item)) conflict();items.remove(item)
                 }
             }
             if(op in setOf("addFoodEntry","updateFoodEntry","deleteFoodEntry")) {
@@ -204,13 +205,13 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
             }
         }
         meal.set("dishes",mapper.valueToTree(dishes));meal.set("nutrition",snapshots.total(dishes));meal.put("version",old.version+1)
-        saveMeal(user,old,meal)
+        saveMeal(user,old,meal,correlationId)
         return Result(if(op.startsWith("delete")) 204 else if(op.startsWith("add")) 201 else 200,result)
     }
-    private fun saveMeal(user: UUID,old: Row,value: ObjectNode) {
+    private fun saveMeal(user: UUID,old: Row,value: ObjectNode,correlationId: UUID?) {
         value.put("eatenAt",snapshots.timestamp(value,"eatenAt").toInstant().toString())
-        update("meals",user,old.id,value);mealEvent(user,value,"updated")
-        setOf(old.day!!,snapshots.date(value)).forEach { dayEvent(user,it) }
+        update("meals",user,old.id,value);mealEvent(user,value,"updated",correlationId)
+        setOf(old.day!!,snapshots.date(value)).forEach { dayEvent(user,it,correlationId) }
     }
     private fun validateWater(value: JsonNode) {
         val amount=value.path("amountMl")
@@ -223,17 +224,22 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
     }
     private fun nextDayVersion(user: UUID,date: LocalDate,kind: String): Long = jdbc.queryForObject(
         "INSERT INTO day_versions(user_id,local_date,kind,version) VALUES (?,?,?,1) ON CONFLICT(user_id,local_date,kind) DO UPDATE SET version=day_versions.version+1 RETURNING version",Long::class.java,user,date,kind)!!
-    private fun mealEvent(user: UUID,value: ObjectNode,action: String) = event(user,"nutrition.meal.$action","meal",value.path("id").stringValue(),snapshots.version(value),
-        snapshots.obj("mealId" to value.path("id"),"userId" to user,"eatenAt" to value.path("eatenAt")))
-    private fun dayEvent(user: UUID,date: LocalDate) = event(user,"nutrition.day.changed","nutrition_day","$user:$date",nextDayVersion(user,date,"day"),
-        snapshots.obj("userId" to user,"localDate" to date,"nutritionTotals" to day(user,date).path("total")))
-    private fun waterEvent(user: UUID,date: LocalDate) {
+    private fun mealEvent(user: UUID,value: ObjectNode,action: String,correlationId: UUID?) = event(user,"nutrition.meal.$action","meal",value.path("id").stringValue(),snapshots.version(value),
+        snapshots.obj("mealId" to value.path("id"),"userId" to user,"eatenAt" to value.path("eatenAt")),correlationId)
+    private fun dayEvent(user: UUID,date: LocalDate,correlationId: UUID?) = event(user,"nutrition.day.changed","nutrition_day","$user:$date",nextDayVersion(user,date,"day"),
+        snapshots.obj("userId" to user,"localDate" to date,"nutritionTotals" to day(user,date).path("total")),correlationId)
+    private fun waterEvent(user: UUID,date: LocalDate,correlationId: UUID?) {
         val entries=documents("water_entries",user,date)
+        val total=entries.fold(0L) { sum, entry ->
+            val next=sum+entry.path("amountMl").longValue()
+            if(next !in 0..Int.MAX_VALUE.toLong()) invalid()
+            next
+        }
         event(user,"nutrition.water.changed","water_day","$user:$date",nextDayVersion(user,date,"water"),snapshots.obj("userId" to user,"localDate" to date,
-            "totalMl" to entries.sumOf { it.path("amountMl").longValue() },"lastConsumedAt" to entries.maxOfOrNull { snapshots.timestamp(it,"consumedAt").toInstant() }))
+            "totalMl" to total,"lastConsumedAt" to entries.maxOfOrNull { snapshots.timestamp(it,"consumedAt").toInstant() }),correlationId)
     }
-    private fun event(user: UUID,type: String,aggregate: String,id: String,version: Long,payload: JsonNode) {
-        val envelope=EventEnvelope(UUID.randomUUID(),type,1,Instant.now(),"nutrition",aggregate,id,payload,version)
+    private fun event(user: UUID,type: String,aggregate: String,id: String,version: Long,payload: JsonNode,correlationId: UUID?) {
+        val envelope=EventEnvelope(UUID.randomUUID(),type,1,Instant.now(),"nutrition",aggregate,id,payload,version,correlationId=correlationId)
         jdbc.update("INSERT INTO outbox_events(event_id,user_id,envelope,subject) VALUES (?,?,?::jsonb,?)",envelope.eventId,user,mapper.writeValueAsString(envelope),envelope.subject())
     }
 }

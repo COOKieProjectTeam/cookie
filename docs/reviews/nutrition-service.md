@@ -1,74 +1,75 @@
 # Nutrition implementation review evidence
 
-Initial implementation/review base: `2d9b18dc754bf70e7a8ea627094ab7ba583f7847`.
-Scope: standalone `feat/nutrition-service`; all implementation/report files in
-this PR. No Notification implementation changes. Initial review conducted on the
-working tree before commit; final PR head/CI evidence is recorded in its body.
+PR: #21, independent `feat/nutrition-service` against `main`.
+Current base: `bf0ad8b270306c469df200effe929a694db8d860` (Notification #20 merged).
+Review corrections compare against `7f2a7fe9b66a17663b5ef78e08b55016d1434d2c`.
+The correction commit contains this report; its exact SHA and CI run are recorded
+in the PR description. No Notification production implementation is changed.
 
-## Invariants and executed evidence
+## Current guarantees and executed evidence
 
-| Guarantee | Implementation | Behavioral evidence | Result |
+| Invariant | Implementation | Behavioral evidence | Result / limits |
 |---|---|---|---|
-| Verified Identity subject and ownership | AccessTokens, AuthenticationFilter, NutritionService account predicates | HTTP valid/bad token, cross-account meal/child access, local deletion denial | Passed |
-| Atomic diary + outbox | TransactionTemplate and per-account lock | rollback removes both records; concurrent exact creates produce one meal/two events | Passed on PostgreSQL |
-| Idempotency and versions | client ID/hash rows, child/meal versions | changed body conflicts, stale item patch fails, deleted meal/water key conflicts | Passed |
-| Snapshot calculation | Snapshots | decimal PIECE rounding, unknown macros, invalid units/values, date/DST validation | Passed |
-| Independent saved copies | consumeSavedDish | copy IDs differ; template edits do not change history; exact consume replay | Passed |
-| Full Notification snapshots | mealEvent/waterEvent/dayEvent | real outbox → JetStream messages, meal v1/v2/v3, both moved dates, empty day explicit null | Passed; contract compatibility only |
-| Durable publication | NutritionOutbox | competing leases, stale completion rejected, ACK-before-DB-completion replay keeps broker message ID/sequence, failed independent publish does not block healthy record | Passed on PostgreSQL/JetStream |
-| Durable deletion | AccountDeletion, DeletionConsumer | Identity-shaped envelope sent via real broker; inbox replay, erasure/tombstone, poison followed by healthy deletion, durable rejection + no pending ACK | Passed; synthetic Identity envelope, not Identity producer E2E |
-| Runtime privileges | ops/runtime-grants.sql | real runtime role cannot UPDATE/DELETE tombstones or read Flyway history | Passed on fresh database |
-| API/build model | generated DiaryApi, service.yaml, architecture model | all service checks, descriptor/bundle validation, KMP client compilation | Passed |
+| Verified Identity subject and ownership | AccessTokens, AuthenticationFilter, account predicates | HTTP valid/bad token, two-account access denial, deleted account denial | Passed; Identity deletion input is synthetic, not its producer E2E |
+| Atomic diary/outbox and idempotency | NutritionService transaction/account lock | rollback, competing exact creates, changed-body conflict, stale child versions | Passed on PostgreSQL |
+| Exact numbers at input, storage, event and client boundaries | Jackson BigDecimal, Snapshots, public decimal strings | micro/exponent/trailing zero inputs; over-max and 1e400 reject400; valid total9000000000000.001 survives JSONB, event, JetStream and generated KMP serialization | Passed; response number→string is an explicit breaking correction to unreleased API |
+| Consistent HTTP errors and replay | Errors, expectedVersion, consumeSavedDish contract | missing header/query INVALID_INPUT400; zero/negative child DELETE version400; stale409; generated KMP client consumes first201/replay200 | Passed |
+| Durable event correlation | controller→service→EventEnvelope | request ID persisted in outbox; replay neither changes correlation nor creates another event | Passed |
+| Consumer-compatible water totals | transactional daily bound | Int.MAX_VALUE accepted; add/update/date move overflow400 rolls back row/version/outbox | Passed against actual Notification consumer |
+| Verified TLS hostname | JNATS HappyEyeballs and verifying socket | trusted DNS/IP SAN connect/reconnect; wrong DNS with matching IP, missing IP and untrusted chain rejected | Passed on TLS NATS |
+| Isolated outbox recovery | releaseSafely and leases | SQL release fault followed by healthy ACK/publish; lease reclaim; interrupt preserved even when release throws | PostgreSQL/JetStream plus focused interruption unit regression |
+| Isolated deletion recovery | per-message recovery boundary | quarantine SQL failure followed by healthy deletion; TERM/NAK failures do not stop next message | Real DB/broker plus mock ACK-operation fault tests |
+| Protected lifecycle records | runtime-grants.sql | actual restricted runtime cannot modify tombstones/read Flyway history; provisioning rejects unsafe PUBLIC table/column grants, schema CREATE, role membership, default grants and ownership | Passed on PostgreSQL; provisioning must run atomically as owner |
+| Actual downstream ingestion | real Nutrition HTTP/outbox/JetStream and Notification bootJar process | meal create/update/delete; duplicate; fresh-ID stale snapshot after version3; water boundary and empty-day projection; inbox/projection assertions | Passed; no Notification production stub |
+| Independent saved copies | consumeSavedDish | copy IDs differ; template edits preserve history; exact replay | Passed |
+| Contract/build consistency | generated server/KMP transport, descriptors, CI selector | service checks, all active contracts, compileKmpPublicClient, shared convention/module selector regressions | Passed; integration task fingerprints Notification JAR and grants SQL |
 
-Nutrition has 3 unit and 13 integration tests, with no skips. Identity checks and
-real integration tests, all four platform checks, existing notification-sink and
-mobile shared checks also passed locally. CI scope mapping and pinned-image
-checks passed. Existing generated KMP code emits non-fatal compiler warnings.
+Final local Nutrition run: 11 unit and 26 integration cases, no skips. Identity,
+Notification, four platform checks, mobile shared tests and KMP compilation also
+passed. Atlas generator freshness, Python/UI tests and CI scope mapping passed.
+Existing generated KMP compiler warnings remain non-fatal.
 
-## Independent review and regressions
+## Regression and independent review evidence
 
-An independent read-only reviewer traced authorization, ownership, transaction,
-idempotency, leases, deletion, generated transport, contracts, grants and CI.
-Confirmed findings were reconciled with executable regressions:
+The 12 PR comments on `7f2a7fe` were traced through producer, consumer,
+provisioning and generated transport. Tests were run against an isolated source
+copy of that revision with only regression tests/test dependencies overlaid.
+They reproduced wrong TLS identity acceptance and valid DNS rejection, numeric
+boundary/precision failures, malformed parameter errors, invalid child versions,
+missing correlation, water overflow, recovery failures and ineffective grant
+checks. The interrupted-release case was reproduced separately. CI selector
+regressions also failed on the previous selector. All pass with the fixes.
+The consumeSavedDish runtime already returned201/200 correctly; its test passes
+before and after, and the correction is the missing200 OpenAPI response.
 
-- Recent foods sorted timestamp strings rather than instants. Before the fix,
-  the same-second fractional regression returned amount 150 instead of 200;
-  after sorting parsed instants it passes.
-- Out-of-range event_version caused Jackson 3 to throw rather than return a
-  controlled invalid-envelope result. The original reviewer initially inferred
-  truncation/erasure, but runtime evidence disproved that inference: actual
-  impact was retry instead of quarantine. The new range guard and broker test
-  prove durable rejection without deleting that user's diary.
-- Canonical Nutrition event definitions were updated to the full snapshot
-  contract; no Notification implementation was copied.
-- Publish ACL documentation now enumerates all five exact subjects. The initial
-  one-token wildcard would not have matched those subjects; no production ACL
-  was deployed from it.
+Two independent read-only reviewers covered numerical/HTTP/TLS/privilege
+invariants and messaging recovery/contracts/test execution/CI selection. Their
+additional findings led to explicit PUBLIC column/ownership checks, Gradle
+integration input fingerprinting, broader CI dependency selection and a distinct
+stale-version event test (fresh event ID, so inbox deduplication cannot mask it).
+The ownership regression was also run before its SQL guard and failed.
 
-## Limits and follow-ups
+Earlier implementation evidence against `2d9b18d` (3 unit/13 integration cases)
+and rebase-only evidence against `7f2a7fe` are historical. They do not establish
+these corrected guarantees or current-head CI. Earlier snapshot ordering and
+out-of-range event_version fixes remain covered by the retained regressions.
 
-- Interactive HTML atlas update and Nutrition → Notification E2E are explicitly
-  remain explicit follow-ups. Notification #20 is now merged; the rebase only
-  refreshes the generated atlas snapshot required by main CI.
+## Limits and explicit follow-ups
+
+- Full handwritten Nutrition atlas flows/topology remain deferred by agreement.
+  Only generated data.js/index.html are refreshed for main CI. Notification #20
+  is merged, so the follow-up is now unblocked.
+- Nutrition→Notification ingestion E2E is now implemented. Notification scheduling,
+  provider delivery, authenticated Notification API/readiness, and full mobile
+  application E2E are not established by that ingestion test.
 - Recipe import and Media attachments await their real authenticated services.
-- No production deployment, production credential/ACL rehearsal or merge was
-  performed. Image build is a CI check, not a production rollout.
-- Tests cover a fresh Nutrition schema; there is no earlier deployed Nutrition
-  schema to upgrade. Other services' existing data/migrations remain unchanged.
-- Runtime role explicitly protects lifecycle tombstones and schema metadata;
-  the compromised runtime role can still change ordinary domain tables. This
-  is service-level access control, not per-user PostgreSQL RLS.
-- ACK ambiguity is reproduced by broker acceptance followed by skipped database
-  completion and lease recovery. A host/process kill was not performed. This
-  is narrower than a full outage/deployment rehearsal.
-- Ruleset inspection found PR approval requirements but no required status-check
-  rule for main; this PR does not alter repository protection configuration.
-
-## Rebase onto Notification-enabled main
-
-Rebased onto `bf0ad8b` on 2026-10-21. CI jobs/aggregate checks and both event
-contracts are preserved. Nutrition runtime behavior is unchanged. Generated
-atlas data is refreshed to satisfy main's snapshot check; handwritten Nutrition
-flows/topology and real Nutrition → Notification E2E remain outstanding.
-Fresh verification and independent review are reported against the rebased head
-in PR #21; the initial evidence above must not be treated as new-head CI evidence.
+- No production deployment, production credential/ACL rehearsal or merge.
+- Fresh schema tests do not establish upgrades from an earlier deployed Nutrition
+  schema; none exists. No other service migrations are changed.
+- Runtime can mutate ordinary domain tables; this is service-level isolation,
+  not per-user PostgreSQL RLS. Unsafe existing provisioning is rejected rather
+  than silently repairing unrelated ownership/membership/default grants.
+- ACK ambiguity uses broker acceptance followed by omitted DB completion and
+  lease recovery; no host/process-kill outage rehearsal is claimed.
+- Repository approval requirements remain separate from this independent agent
+  review. CI success does not establish human approval or configure branch rules.

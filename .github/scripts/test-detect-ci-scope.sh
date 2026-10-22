@@ -266,7 +266,6 @@ rm "$fixture_dir/contracts/openapi/unknown.yaml"
 unknown_deleted_head="$(commit_fixture delete-unknown)"
 expect_git_rejected "$unknown_head" "$unknown_deleted_head" pull_request contracts/openapi/unknown.yaml
 
-echo "CI scope mapping tests passed."
 
 classify backend/services/notification/application/src/main/kotlin/example.kt
 expect_flag notification true
@@ -333,3 +332,15 @@ classify backend/platform/starter-messaging/src/main/kotlin/Example.kt
 expect_flag nutrition true
 classify .github/workflows/ci.yml
 expect_flag nutrition true
+
+for plugin in CookieSpringServicePlugin CookieKotlinLibraryPlugin CookieKotlinMultiplatformPlugin; do
+  classify "build-logic/src/main/kotlin/${plugin}.kt"
+  expect_flag nutrition true
+done
+
+for dependency in contracts/openapi/public/notification.yaml contracts/openapi/public/identity.yaml backend/services/notification/application/src/main/kotlin/Handler.kt backend/services/notification/domain/src/main/kotlin/Projection.kt backend/services/notification/application/build.gradle.kts backend/services/notification/src/main/kotlin/Consumer.kt backend/services/notification/build.gradle.kts apps/mobile/shared/src/commonMain/kotlin/Transport.kt; do
+  classify "$dependency"
+  expect_flag nutrition true
+done
+
+echo "CI scope mapping tests passed."

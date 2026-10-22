@@ -681,6 +681,12 @@ paths:
             schema:
               $ref: '#/components/schemas/ConsumeSavedDishInput'
       responses:
+        '200':
+          description: Exact idempotent replay returns the current meal without another event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meal'
         '201':
           description: Новый приём пищи/блюдо создано как копия
           content:
@@ -747,6 +753,7 @@ paths:
     post:
       tags:
       - diary
+      description: Daily water total must not exceed 2147483647 ml. Overflow is INVALID_INPUT and rolls back the write and events.
       operationId: addWaterEntry
       summary: Добавить запись о выпитой воде
       requestBody:
@@ -799,6 +806,7 @@ paths:
     patch:
       tags:
       - diary
+      description: Every affected daily total must remain at most 2147483647 ml; overflow returns INVALID_INPUT without writes.
       operationId: updateWaterEntry
       summary: Изменить запись о воде
       requestBody:
@@ -955,6 +963,7 @@ components:
           minimum: 0
           exclusiveMinimum: true
           maximum: 1000000
+          multipleOf: 0.000001
         unit:
           type: string
           enum:
@@ -1308,6 +1317,7 @@ components:
           format: date
     Nutrition:
       type: object
+      description: Exact nonnegative decimal strings; calculated totals are rounded half-up to 3 places. Unknown nutrients remain null. Convert explicitly to a decimal type, never binary floating point.
       required:
       - calories
       - proteinG
@@ -1316,26 +1326,27 @@ components:
       - fiberG
       properties:
         calories:
-          type: number
-          format: double
+          type: string
+          pattern: '^[0-9]+(?:\.[0-9]{1,6})?$'
         proteinG:
-          type: number
+          type: string
           nullable: true
-          format: double
+          pattern: '^[0-9]+(?:\.[0-9]{1,6})?$'
         fatG:
-          type: number
+          type: string
           nullable: true
-          format: double
+          pattern: '^[0-9]+(?:\.[0-9]{1,6})?$'
         carbsG:
-          type: number
+          type: string
           nullable: true
-          format: double
+          pattern: '^[0-9]+(?:\.[0-9]{1,6})?$'
         fiberG:
-          type: number
+          type: string
           nullable: true
-          format: double
+          pattern: '^[0-9]+(?:\.[0-9]{1,6})?$'
     NutritionInput:
       type: object
+      description: Exact JSON decimals, at most 6 fractional places after removing trailing zeros. Exponent notation is accepted within the same bounds.
       required:
       - calories
       properties:
@@ -1343,26 +1354,31 @@ components:
           type: number
           minimum: 0
           maximum: 1000000
+          multipleOf: 0.000001
         proteinG:
           type: number
           nullable: true
           minimum: 0
           maximum: 1000000
+          multipleOf: 0.000001
         fatG:
           type: number
           nullable: true
           minimum: 0
           maximum: 1000000
+          multipleOf: 0.000001
         carbsG:
           type: number
           nullable: true
           minimum: 0
           maximum: 1000000
+          multipleOf: 0.000001
         fiberG:
           type: number
           nullable: true
           minimum: 0
           maximum: 1000000
+          multipleOf: 0.000001
     RecentFoodsResponse:
       type: object
       required:
@@ -1468,6 +1484,7 @@ components:
           minimum: 0
           exclusiveMinimum: true
           maximum: 1000000
+          multipleOf: 0.000001
     WaterEntry:
       type: object
       required:

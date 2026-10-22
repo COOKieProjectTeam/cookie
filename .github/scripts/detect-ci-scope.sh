@@ -159,6 +159,7 @@ while IFS= read -r -d '' path; do
       notification_image=true
       ;;
     build-logic/*/CookieSpringServicePlugin.kt)
+      nutrition=true
       identity=true
       notification=true
       notification_sink=true
@@ -166,6 +167,7 @@ while IFS= read -r -d '' path; do
       notification_image=true
       ;;
     build-logic/*/CookieKotlinLibraryPlugin.kt)
+      nutrition=true
       platform=true
       platform_web=true
       platform_postgres=true
@@ -178,6 +180,7 @@ while IFS= read -r -d '' path; do
       notification_image=true
       ;;
     build-logic/*/CookieKotlinMultiplatformPlugin.kt)
+      nutrition=true
       mobile=true
       ;;
     build-logic/*)
@@ -189,7 +192,7 @@ while IFS= read -r -d '' path; do
   esac
 
   case "$path" in
-    backend/platform/*/src/main/* | backend/platform/*/build.gradle.kts | contracts/openapi/runtime.yaml | contracts/openapi/generation.yaml | contracts/openapi/public/nutrition.yaml | docs/architecture/model/events.yaml | docs/architecture/model/services.yaml | deploy/docker/nutrition.Dockerfile)
+    backend/services/notification/*/src/main/* | backend/services/notification/*/build.gradle.kts | backend/services/notification/src/main/* | backend/services/notification/build.gradle.kts | apps/mobile/shared/src/commonMain/* | apps/mobile/shared/src/jvmMain/* | apps/mobile/shared/build.gradle.kts | backend/platform/*/src/main/* | backend/platform/*/build.gradle.kts | contracts/openapi/runtime.yaml | contracts/openapi/generation.yaml | contracts/openapi/public/*.yaml | docs/architecture/model/events.yaml | docs/architecture/model/services.yaml | deploy/docker/nutrition.Dockerfile)
       nutrition=true
       ;;
   esac

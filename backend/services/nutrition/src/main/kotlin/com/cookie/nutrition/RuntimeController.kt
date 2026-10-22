@@ -20,7 +20,7 @@ class RuntimeController(private val database: DataSource,private val tokens: Acc
 class Errors {
     @ExceptionHandler(NutritionFailure::class)
     fun failure(e: NutritionFailure) = ResponseEntity.status(e.status).body(mapOf("code" to e.code,"message" to e.code))
-    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException::class,org.springframework.web.method.annotation.MethodArgumentTypeMismatchException::class,java.time.DateTimeException::class)
+    @ExceptionHandler(org.springframework.web.bind.MissingRequestHeaderException::class,org.springframework.web.bind.MissingServletRequestParameterException::class,org.springframework.http.converter.HttpMessageNotReadableException::class,org.springframework.web.method.annotation.MethodArgumentTypeMismatchException::class,java.time.DateTimeException::class)
     fun input() = ResponseEntity.badRequest().body(mapOf("code" to "INVALID_INPUT","message" to "Invalid request"))
     @ExceptionHandler(org.springframework.dao.DataAccessException::class,org.springframework.transaction.TransactionException::class)
     fun database() = ResponseEntity.status(503).body(mapOf("code" to "TEMPORARILY_UNAVAILABLE","message" to "Retry later"))
