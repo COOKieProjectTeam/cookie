@@ -1,5 +1,6 @@
 package com.cookie.notification.security
 
+import com.cookie.platform.web.IdentityAccessKeyPolicy
 import com.nimbusds.jose.JOSEObjectType
 import com.nimbusds.jose.JWSAlgorithm
 import com.nimbusds.jose.crypto.ECDSAVerifier
@@ -48,7 +49,7 @@ class RemoteJwksAccessTokenVerifier(
                 require(it.header.algorithm == JWSAlgorithm.ES256 && it.header.type == JOSEObjectType("at+jwt"))
                 require(it.header.criticalParams.isNullOrEmpty())
                 require(it.header.jwk == null && it.header.getJWKURL() == null && it.header.x509CertURL == null)
-                require(!it.header.keyID.isNullOrBlank() && it.header.keyID.length <= 128)
+                IdentityAccessKeyPolicy.requireKeyId(it.header.keyID)
             }
         } catch (_: Exception) { throw InvalidAccessTokenException() }
         val now = clock.instant()
@@ -87,11 +88,11 @@ class RemoteJwksAccessTokenVerifier(
         lastRefreshAttempt = now
         try {
             val parsed = JWKSet.parse(source.fetch()).keys
-            require(parsed.isNotEmpty() && parsed.size <= 16)
+            IdentityAccessKeyPolicy.requireKeyCount(parsed.size)
             val keys = parsed.map { raw ->
                 require(raw is ECKey && !raw.isPrivate && raw.curve == Curve.P_256)
                 require(raw.algorithm == JWSAlgorithm.ES256 && raw.keyUse == KeyUse.SIGNATURE)
-                require(!raw.keyID.isNullOrBlank() && raw.keyID.length <= 128)
+                IdentityAccessKeyPolicy.requireKeyId(raw.keyID)
                 raw.toECPublicKey()
                 raw
             }

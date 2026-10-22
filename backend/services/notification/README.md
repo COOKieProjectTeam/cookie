@@ -57,3 +57,15 @@ image rollback are in the [production runbook](../../../deploy/production/README
 Production requires real SMTP credentials and a verified HTTPS link origin with
 the mobile handler. Provider acceptance is recorded as `ACCEPTED`; it does not
 prove that a message was displayed or read.
+
+## Key compatibility and recovery isolation
+
+Issuer and consumer share `IdentityAccessKeyPolicy`: nonblank signing kid up to
+128 characters and at most 16 active/retiring public signing keys in JWKS. Cache
+refresh, expiry, URL restrictions and signature validation remain unchanged.
+
+A failed quarantine write, recovery ACK or delayed NAK leaves the message for
+broker redelivery and increments `notification.inbox.recovery.failures` without
+aborting healthy independent fetched messages. Quarantine must commit before
+its ACK. Interruption stops traversal and preserves the thread flag; it is not
+converted into an ordinary retry or a poison decision.

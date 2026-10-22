@@ -235,10 +235,10 @@
       "id": "identity-outbox-loop",
       "label": "Outbox polling",
       "value": "500 мс · batch100 · lease30 с · ACK budget10 с",
-      "description": "После PubAck запись помечается published с fencing claimId; сбой/неопределённость ведёт к повтору того же eventId.",
+      "description": "После PubAck запись помечается published с fencing claimId; сбой/неопределённость ведёт к повтору того же eventId. Ошибка release одной записи не блокирует здоровый хвост; lease остаётся доступным для recovery. Прерывание останавливает обход.",
       "source": {
         "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
-        "line": 121
+        "line": 143
       }
     },
     {
@@ -248,7 +248,7 @@
       "description": "Nats-Msg-Id равен eventId; это at-least-once, а не гарантия exactly-once. Inbox потребителя остаётся обязательным.",
       "source": {
         "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
-        "line": 128
+        "line": 150
       }
     },
     {
@@ -279,6 +279,16 @@
       "source": {
         "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/transport/ClientIpResolver.kt",
         "line": 17
+      }
+    },
+    {
+      "id": "identity-signing-key-bounds",
+      "label": "Совместимость signing keys",
+      "value": "kid ≤128 символов; JWKS ≤16 ключей",
+      "description": "Общая политика issuer/consumer: непустой kid и максимум 1 active + 15 retiring keys. Identity отклоняет несовместимую конфигурацию при старте.",
+      "source": {
+        "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/IdentityAccessKeyPolicy.kt",
+        "line": 5
       }
     }
   ],
@@ -749,7 +759,7 @@
           "detail": "Notification обращается к настроенному JWKS URL; token-controlled jku/x5u/jwk не выбирают источник ключей. Полный HTTP exchange ограничен3 с.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 24
+            "line": 25
           }
         },
         {
@@ -785,7 +795,7 @@
           "detail": "Кэш300 с; scheduled refresh240 с, глобальный refresh cooldown30 с. Нет пригодных ключей —503, неверный токен при пригодном ключе —401.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 78
+            "line": 79
           }
         }
       ]
@@ -820,16 +830,16 @@
           "detail": "Публикация cookie.events.<type>.v1; общий batch ACK budget10 с. Сбой/потеря ACK может породить повтор, поэтому доставка at-least-once.",
           "source": {
             "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
-            "line": 74
+            "line": 80
           }
         },
         {
           "node": "identity_db",
           "label": "Mark published с fencing",
-          "detail": "Только успешный PubAck позволяет markPublished(eventId,claimId). Stale completion игнорируется; release назначает retry с jitter1с…5мин.",
+          "detail": "Только успешный PubAck позволяет markPublished(eventId,claimId). Stale completion игнорируется; release назначает retry с jitter1с…5мин. Ошибка release изолирована: lease сохранён для повторного claim, независимые записи продолжаются.",
           "source": {
             "path": "backend/services/identity/src/main/kotlin/com/cookie/identity/messaging/OutboxPublisher.kt",
-            "line": 79
+            "line": 86
           }
         },
         {
@@ -838,7 +848,7 @@
           "detail": "Notification подтверждает сообщение только после успешного handler commit; replay тех же eventId не создаёт повторную delivery.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-            "line": 40
+            "line": 46
           }
         }
       ],

@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
-- Amended: 2026-08-20
+- Amended: 2026-10-23
 
 ## Context
 
@@ -30,6 +30,12 @@ Identity v1 публикует события и ничего не потреб�
 - Consumer worker начинает DB-транзакцию, регистрирует `event_id` в inbox,
   применяет изменение и при необходимости создаёт новый outbox event.
 - NATS acknowledgement отправляется только после commit.
+- Ошибка восстановления одной записи не прерывает независимый хвост batch:
+  при неудачном outbox release сохраняется fenced lease для повторного claim;
+  при сбое quarantine/ACK/NAK сообщение остаётся доступным для redelivery.
+  Recovery failures наблюдаемы отдельными счётчиками. Quarantine ACK допустим
+  только после durable записи. Прерывание потока сохраняет interrupt flag и
+  останавливает обход, оставляя незавершённую работу для последующего recovery.
 - Доставка считается at-least-once; бизнес-обработчики обязаны быть
   идемпотентными.
 
@@ -45,5 +51,5 @@ Identity v1 публикует события и ничего не потреб�
   transactional consumer и duplicate-delivery test в одном изменении.
 - Identity хранит published outbox 7 дней и очищает его bounded batches;
   development stream ограничен 7 днями, 1 GiB, 1 000 000 сообщений и 1 MiB на
-  сообщение. Production quotas/replicas задаёт deployment layer. Consumer
-  retry/dead-letter/inbox retention остаются TBD до первого реального consumer.
+  сообщение. Production quotas/replicas задаёт deployment layer. Политика
+  Notification consumer, quarantine и retention определена в ADR 0013.

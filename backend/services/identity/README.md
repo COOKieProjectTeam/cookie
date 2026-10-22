@@ -249,3 +249,17 @@ cache TTL + rollout/clock-skew margin after the final token signed with it.
 Notification private keys must remain available while any outbox/JetStream
 message encrypted to their `kid` can still be delivered; rotation therefore
 requires a key ring or a drained queue, not overwriting the only private key.
+
+## Key compatibility and outbox recovery
+
+Identity startup rejects signing key IDs longer than 128 characters and sets with
+more than 16 signing keys (one active plus at most 15 retiring public keys). These
+bounds are shared with Notification in `IdentityAccessKeyPolicy`; active and
+retiring keys are checked alike. Correct incompatible configuration before an
+upgrade: this is an intentional fail-fast configuration restriction.
+
+Outbox release/completion failures never discard durable work or abort unrelated
+records in the batch. A failed release leaves its fenced 30-second lease eligible
+for later recovery; `cookie.identity.outbox.publish{outcome="recovery_failure"}`
+records the fault. Interruption restores the thread flag and stops traversal;
+stable event IDs and consumer inboxes handle ambiguous publication.

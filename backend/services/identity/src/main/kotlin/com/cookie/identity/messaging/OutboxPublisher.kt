@@ -26,6 +26,7 @@ class OutboxPublisher(
 ) {
     @Scheduled(fixedDelayString = "\${cookie.identity.outbox-poll-delay:500}")
     fun publishAvailable() {
+        if (Thread.currentThread().isInterrupted) return
         val claimed = repository.claim(BATCH_SIZE, LEASE, UUID.randomUUID())
         publishBatch(claimed)
     }
@@ -37,16 +38,17 @@ class OutboxPublisher(
             nats.jetStream()
         } catch (interrupted: InterruptedException) {
             try {
-                records.forEach { record -> release(record, interrupted) }
+                releaseAll(records, interrupted)
             } finally {
                 Thread.currentThread().interrupt()
             }
             return
         } catch (exception: Exception) {
-            records.forEach { record -> release(record, exception) }
+            releaseAll(records, exception)
             return
         }
         val pending = records.mapNotNull { record ->
+            if (Thread.currentThread().isInterrupted) return
             try {
                 val payloadNode = objectMapper.readTree(record.payload)
                 val envelope = EventEnvelope(
@@ -66,13 +68,18 @@ class OutboxPublisher(
                 val subject = envelope.subject()
                 val body = objectMapper.writeValueAsString(envelope).toByteArray(StandardCharsets.UTF_8)
                 record to jetStream.publishAsync(subject, headers, body)
+            } catch (interrupted: InterruptedException) {
+                try { releaseSafely(record, interrupted) } finally { Thread.currentThread().interrupt() }
+                return
             } catch (exception: Exception) {
-                release(record, exception)
+                releaseSafely(record, exception)
+                if (Thread.currentThread().isInterrupted) return
                 null
             }
         }
         val acknowledgementDeadline = System.nanoTime() + ACK_TIMEOUT.toNanos()
         pending.forEachIndexed { index, (record, acknowledgement) ->
+            if (Thread.currentThread().isInterrupted) return
             try {
                 val remainingNanos = (acknowledgementDeadline - System.nanoTime()).coerceAtLeast(0)
                 acknowledgement.get(remainingNanos, TimeUnit.NANOSECONDS)
@@ -84,16 +91,31 @@ class OutboxPublisher(
                 }
             } catch (interrupted: InterruptedException) {
                 try {
-                    pending.subList(index, pending.size).forEach { (unresolved, _) ->
-                        release(unresolved, interrupted)
-                    }
+                    releaseAll(pending.subList(index, pending.size).map { it.first }, interrupted)
                 } finally {
                     Thread.currentThread().interrupt()
                 }
                 return
             } catch (exception: Exception) {
-                release(record, exception)
+                releaseSafely(record, exception)
             }
+        }
+    }
+
+    private fun releaseAll(records: List<OutboxRecord>, cause: Exception) {
+        for (record in records) {
+            if (Thread.currentThread().isInterrupted) return
+            releaseSafely(record, cause)
+        }
+    }
+
+    private fun releaseSafely(record: OutboxRecord, cause: Exception) {
+        try { release(record, cause) }
+        catch (failure: Exception) {
+            metrics.recordRecoveryFailure(record.eventType)
+            // A failed release leaves the fenced lease recoverable; other records can proceed.
+            logger.warn("Outbox recovery failed eventId={} cause={}", record.eventId, failure.javaClass.simpleName)
+            if (failure is InterruptedException) Thread.currentThread().interrupt()
         }
     }
 
