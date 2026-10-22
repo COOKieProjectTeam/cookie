@@ -54,6 +54,19 @@ and rebase-only evidence against `7f2a7fe` are historical. They do not establish
 these corrected guarantees or current-head CI. Earlier snapshot ordering and
 out-of-range event_version fixes remain covered by the retained regressions.
 
+## CI fixture follow-up
+
+The first correction CI run on `9e5f3e9` passed Nutrition tests/image build but
+exposed a PostgreSQL startup race in the existing Notification deployment test.
+Its Unix-socket pg_isready probe could accept the temporary initdb server before
+TCP was ready. A disposable container with delayed init SQL reproduced the old
+probe succeeding while the subsequent TCP SQL failed. The fixture now waits
+for SELECT1 through its actual authenticated TCP helper. This changes only the
+test harness, not Notification production provisioning or runtime behavior.
+The affected real-container boundary tests pass locally. The local Podman
+Compose replacement cannot run the unrelated JSON Compose config assertion;
+Docker Compose validation is therefore established by the final Linux CI run.
+
 ## Limits and explicit follow-ups
 
 - Full handwritten Nutrition atlas flows/topology remain deferred by agreement.

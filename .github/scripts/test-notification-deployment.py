@@ -150,7 +150,9 @@ class ContainerBoundaryTest(unittest.TestCase):
         docker("run", "--detach", "--name", cls.postgres, "--network", cls.network, "--network-alias", "postgres",
             "--env", "POSTGRES_PASSWORD=synthetic-admin-password", POSTGRES)
         for _ in range(90):
-            if docker("exec", cls.postgres, "pg_isready", "-U", "postgres", check=False).returncode == 0:
+            # The initdb temporary server accepts Unix sockets before final TCP startup.
+            # Probe the same authenticated connection used by subsequent setup SQL.
+            if cls.sql("SELECT 1", check=False).returncode == 0:
                 break
             time.sleep(1)
         else:
