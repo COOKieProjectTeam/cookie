@@ -43,6 +43,8 @@ class OutboxMetrics(
 
     fun recordPublishFailure(eventType: String) = counter(eventType, "failure").increment()
 
+    fun recordRecoveryFailure(eventType: String) = counter(eventType, "recovery_failure").increment()
+
     fun recordStaleCompletion(eventType: String) = counter(eventType, "stale_completion").increment()
 
     private fun counter(eventType: String, outcome: String) = registry.counter(

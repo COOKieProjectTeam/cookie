@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-19
-- Amended: 2026-09-04
+- Amended: 2026-10-23
 - Account deletion amendment: ADR 0011 supersedes the earlier decision to defer
   the delete flow; the remaining Identity security profile stays in force.
 
@@ -104,6 +104,12 @@ Identity v1 реализует только email/password. Контракт д�
   `sid` содержит стабильный `RefreshFamily.id` и не меняется при rotation; email
   и роли не включаются. Public active/retiring keys доступны через JWKS с
   `max-age=300`; private key монтируется в deployable.
+- Общая `IdentityAccessKeyPolicy` ограничивает signing `kid` непустым значением
+  до 128 символов, а JWKS — 16 ключами всего (active + максимум 15 retiring).
+  Identity проверяет обе границы при старте; Notification применяет ту же
+  политику при проверке токена и загрузке JWKS. Это ограничение конфигурации:
+  перед обновлением нужно исправить несовместимый key ring с сохранением
+  периода проверки ранее выданных токенов. Формат токена и алгоритм не меняются.
 
 ### Enumeration, abuse and messaging
 

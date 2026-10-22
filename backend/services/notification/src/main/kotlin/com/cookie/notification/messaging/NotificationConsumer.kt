@@ -25,32 +25,44 @@ class NotificationConsumer(
     private var subscription:JetStreamSubscription?=null
     private val processed=registry.counter("notification.inbox.processed")
     private val failures=registry.counter("notification.inbox.failures")
+    private val recoveryFailures=registry.counter("notification.inbox.recovery.failures")
     private val quarantined=registry.counter("notification.inbox.quarantined")
     @Scheduled(fixedDelayString="\${cookie.notification.consumer-poll-millis:100}")
     fun poll() {
-        if(!properties.consumerEnabled) return
+        if(!properties.consumerEnabled || Thread.currentThread().isInterrupted) return
         try {
             val active=subscription?.takeIf { it.isActive }?:nats.connection().jetStream()
                 .subscribe(null,PullSubscribeOptions.bind(NotificationNatsConnection.STREAM,NotificationEventHandler.CONSUMER)).also { subscription=it }
-            active.fetch(20,Duration.ofSeconds(1)).forEach(::consume)
-        } catch (_:Exception) { failures.increment() }
+            for(message in active.fetch(20,Duration.ofSeconds(1))) {
+                consume(message)
+                if(Thread.currentThread().isInterrupted) return
+            }
+        } catch (_:InterruptedException) { Thread.currentThread().interrupt() }
+        catch (_:Exception) { failures.increment() }
     }
     fun consume(message:Message) {
+        if(Thread.currentThread().isInterrupted) return
         try {
-            handler.handle(message.subject,message.data)
-            message.ack()
-            processed.increment()
-        } catch (invalid:InvalidNotificationEvent) {
-            // If durable quarantine fails, do not acknowledge: a DB outage cannot lose evidence.
-            quarantine.record(message.subject,message.data,message.metaData().streamSequence(),invalid.reason)
-            message.ack()
-            quarantined.increment()
-        } catch (_:Exception) {
-            failures.increment()
-            // Broker delivery count includes infrastructure outages, not just handler failures.
-            // Only explicit InvalidNotificationEvent is poison; all other failures retry indefinitely.
-            val seconds=(1L shl message.metaData().deliveredCount().coerceIn(0,8).toInt()).coerceAtMost(300)
-            message.nakWithDelay(Duration.ofSeconds(seconds))
+            try {
+                handler.handle(message.subject,message.data)
+                message.ack()
+                processed.increment()
+            } catch (invalid:InvalidNotificationEvent) {
+                // Durable quarantine must succeed before ACK; otherwise preserve broker redelivery.
+                quarantine.record(message.subject,message.data,message.metaData().streamSequence(),invalid.reason)
+                message.ack()
+                quarantined.increment()
+            } catch (interrupted:InterruptedException) { throw interrupted }
+            catch (_:Exception) {
+                failures.increment()
+                // Only explicit semantic invalidity is poison. Infrastructure failures retry indefinitely.
+                val seconds=(1L shl message.metaData().deliveredCount().coerceIn(0,8).toInt()).coerceAtMost(300)
+                message.nakWithDelay(Duration.ofSeconds(seconds))
+            }
+        } catch (_:InterruptedException) { Thread.currentThread().interrupt() }
+        catch (_:Exception) {
+            recoveryFailures.increment()
+            // No recovery ACK: leave this message unacknowledged and continue independent work.
         }
     }
 }
