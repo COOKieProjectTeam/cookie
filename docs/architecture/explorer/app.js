@@ -18,7 +18,7 @@
   let state = {view:"map", item:"notification", service:"", planned:false, direction:"all", flow:"", query:"", response:"", step:-1, zoom:1};
   let toastTimer;
   let filterFocus = "";
-  const titles = {mobile_client:"Мобильный клиент",gateway:"API Gateway",identity:"Identity",notification:"Notification",identity_db:"Identity DB",notification_db:"Notification DB",nats:"NATS JetStream",redis:"Redis",smtp:"SMTP",apns:"APNs",fcm:"FCM",object_storage:"Object storage",infrastructure:"Инфраструктура"};
+  const titles = {mobile_client:"Мобильный клиент",gateway:"API Gateway",identity:"Identity",notification:"Notification",user:"User",user_db:"User DB",identity_db:"Identity DB",notification_db:"Notification DB",nats:"NATS JetStream",redis:"Redis",smtp:"SMTP",apns:"APNs",fcm:"FCM",object_storage:"Object storage",infrastructure:"Инфраструктура"};
   function title(id) { return titles[id] || serviceById.get(id)?.name?.replace(/ Service$/, "") || asArray(D.externalSystems).find(e => e.id === id)?.name || id; }
   function serviceMark(id) { return `<span class="service-dot ${esc(id)}"></span>${esc(title(id))}`; }
   function statusPill(status) { return `<span class="pill ${esc(status)}">${status === "implemented" ? "Реализовано" : "План"}</span>`; }
@@ -107,6 +107,8 @@
     if (state.view === "facts") renderFacts();
   }
   const baseNodes = [
+    {id:"user",x:276,y:582,w:182,sub:"Local :8083 · не deployed",kind:"service"},
+    {id:"user_db",x:516,y:582,w:188,sub:"PostgreSQL · goals / inbox",kind:"store"},
     {id:"mobile_client",x:18,y:80,w:176,sub:"KMP · публичный HTTP",kind:"client"},
     {id:"gateway",x:18,y:258,w:176,sub:"Yandex API Gateway",kind:"infra"},
     {id:"identity",x:276,y:154,w:182,sub:"Kotlin / JVM · :8080",kind:"service"},
@@ -120,6 +122,10 @@
     {id:"apns",x:1047,y:333,w:165,sub:"iOS · через Firebase",kind:"external"}
   ];
   const baseEdges = [
+    {id:"user-db",from:"user",to:"user_db",kind:"store",label:"state + outbox / inbox",path:"M458 619H516",lx:465,ly:674},
+    {id:"user-jwks",from:"user",to:"identity",kind:"http",label:"JWKS",path:"M276 605H247V214H276",lx:207,ly:530},
+    {id:"user-publish",from:"user",to:"nats",kind:"event",label:"User events",path:"M415 582V540H610V494",lx:438,ly:529},
+    {id:"user-consume",from:"nats",to:"user",kind:"event",label:"Identity lifecycle",path:"M550 494V515H330V582",lx:340,ly:503},
     {id:"client-gateway",from:"mobile_client",to:"gateway",kind:"http",label:"HTTPS",path:"M106 154V258",lx:118,ly:210},
     {id:"gateway-identity",from:"gateway",to:"identity",kind:"http",label:"/v1/auth/*",path:"M194 282H227V191H276",lx:200,ly:166},
     {id:"gateway-notification",from:"gateway",to:"notification",kind:"http",label:"/v1/notifications/*",path:"M194 313H720V210H748",lx:440,ly:301},
@@ -265,17 +271,19 @@
     const selected=statuses.includes(state.response)?state.response:statuses[0];
     const body=op.requestBody;
     const opNotes=asArray(notes[op.id]?.notes);
+    const route=notes[op.id]?.route;
+    const configuredFacts=notes[op.id]?.factIds;
     const missingSecurity=[...new Set(security.flatMap(requirement=>Object.keys(requirement)))].filter(name=>!Object.hasOwn(op.securitySchemes||{},name));
     return `<div class="eyeline">${serviceMark(op.service)}<span class="pill ${op.visibility==="internal"?"internal":"implemented"}">${op.visibility==="internal"?"Закрыт на ingress":"Публичный маршрут"}</span><code>${esc(op.id)}</code></div>
       <div class="operation-path">${methodPill(op.method)}<code>${esc(op.path)}</code></div><h2>${esc(op.summary)}</h2><p class="description">${esc(op.description||"")}</p>${sourceLink(op.source,op.source?.path||"OpenAPI")}
-      <div class="flow-strip">${op.visibility==="internal"?`Оркестратор / оператор <span class="arrow">→</span> ${esc(title(op.service))} <span class="pill internal">без публичного gateway</span>`:`Клиент <span class="arrow">→</span> API Gateway <span class="arrow">→</span> ${esc(title(op.service))} ${flow?`<span class="arrow">·</span>${mapFlowLink(flow,"Путь запроса","")}`:""}`}</div>
+      <div class="flow-strip">${op.visibility==="internal"?`Оркестратор / оператор <span class="arrow">→</span> ${esc(title(op.service))} <span class="pill internal">без публичного gateway</span>`:`${route?esc(route):`Клиент <span class="arrow">→</span> API Gateway <span class="arrow">→</span> ${esc(title(op.service))}`} ${flow?`<span class="arrow">·</span>${mapFlowLink(flow,"Путь запроса","")}`:""}`}</div>
       ${opNotes.length?`<ul class="note-list">${opNotes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`:""}
       <section class="detail-section"><h3>Авторизация</h3>${security.length?`<div class="callout">${security.map(requirement=>Object.keys(requirement).map(name=>`<code>${esc(name)}</code>${op.securitySchemes?.[name]?.scheme==="bearer"?" · Authorization: Bearer &lt;access JWT&gt;":""}`).join(" + ")).join(" или ")}</div>${missingSecurity.length?`<div class="callout warning">Пробел контракта: ${esc(missingSecurity.join(", "))} используется в security, но не объявлен в components.securitySchemes этого файла.${op.service==="notification"?" Реализация требует Authorization: Bearer &lt;access JWT&gt;; проверка описана в сценарии и исходниках ниже.":""}</div>`:""}${rawDetails("Security schemes",op.securitySchemes||{})}`:`<p class="response-description">${op.visibility==="internal"?"Без пользовательского токена на уровне приложения. Доступ ограничен deployment-сетью.":"Bearer JWT не требуется. Proof, refresh credentials и rate limits могут проверяться самим handler."}</p>`}</section>
       <section class="detail-section"><h3>Параметры пути, query и headers <span class="count">${asArray(op.parameters).length}</span></h3>${parametersMarkup(op.parameters)}</section>
       <section class="detail-section"><h3>Тело запроса ${body?`<span class="pill">${body.required?"Обязательно":"Необязательно"}</span>`:""}</h3>${body?contentMarkup(body.content):'<p class="response-description">Тело запроса не определено контрактом.</p>'}</section>
       <section class="detail-section"><h3>Ответы</h3><div class="response-tabs" role="tablist" aria-label="Коды ответа">${statuses.map(s=>`<button type="button" role="tab" aria-selected="${s===selected}" class="response-tab ${s===selected?"active":""}" data-action="response" data-response="${esc(s)}">${esc(s)}</button>`).join("")}</div><div id="response-body">${responseMarkup(op.responses?.[selected])}</div></section>
       ${op.visibility!=="internal"?`<section class="detail-section"><div class="code-heading"><span>Пример запроса · замените placeholders</span>${actionButton("copy-curl","Скопировать cURL",`data-operation="${esc(op.id)}"`,"text-button")}</div><div class="code-block"><pre>${esc(curlExample(op))}</pre></div></section>`:""}
-      <section class="detail-section"><h3>Таймауты и ограничения</h3><div class="facts-grid">${facts.filter(f=>(op.visibility==="internal"?[op.service==="identity"?"identity-probes":"notification-readiness"]:["infra-gateway-deadlines","infra-app-deadline",...(op.service==="identity"?["identity-db-defaults"]:["notification-database","notification-jwks-http"])]).includes(f.id)).map(factMarkup).join("")}</div>${linkButton("facts","","Все параметры сервиса","mini-link",{service:op.service})}</section>
+      <section class="detail-section"><h3>Таймауты и ограничения</h3><div class="facts-grid">${facts.filter(f=>(configuredFacts||(op.visibility==="internal"?[op.service==="identity"?"identity-probes":"notification-readiness"]:["infra-gateway-deadlines","infra-app-deadline",...(op.service==="identity"?["identity-db-defaults"]:["notification-database","notification-jwks-http"])])).includes(f.id)).map(factMarkup).join("")}</div>${linkButton("facts","","Все параметры сервиса","mini-link",{service:op.service})}</section>
       ${flow?`<section class="detail-section"><h3>Что происходит внутри</h3>${timeline(flow)}${mapFlowLink(flow)}</section>${continuations(flow)}`:""}
       ${rawDetails("Полная операция OpenAPI",op)}`;
   }

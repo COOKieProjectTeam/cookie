@@ -3,7 +3,7 @@ package com.cookie.notification.delivery
 import com.cookie.notification.application.ports.PushEligibility
 import com.cookie.notification.config.DeliveryProperties
 import com.cookie.notification.config.FcmProperties
-import com.cookie.notification.security.BoundedHttpExchange
+import com.cookie.platform.web.BoundedHttpExchange
 import com.cookie.notification.security.DecryptionKeyUnavailableException
 import com.cookie.notification.security.VerificationPayloadDecryptor
 import com.cookie.notification.security.VerificationEmail

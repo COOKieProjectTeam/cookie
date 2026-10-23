@@ -86,3 +86,8 @@ generator/UI regressions, and rejects stale generated documentation.
 Regenerate with `make architecture-build`; verify with
 `make architecture-check`. Review the handwritten facts and flows when their
 referenced implementation changes.
+
+The `User service` job runs User unit and real PostgreSQL/JetStream HTTP integration
+checks. User source/contracts and common JVM/platform/CI changes select it, and
+`CI required` aggregates its result. User does not yet participate in production
+image publication or ingress; creating a workflow does not change branch rulesets.

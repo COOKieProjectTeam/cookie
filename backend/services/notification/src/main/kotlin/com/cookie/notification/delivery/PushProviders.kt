@@ -1,7 +1,7 @@
 package com.cookie.notification.delivery
 
 import com.cookie.notification.config.FcmProperties
-import com.cookie.notification.security.BoundedHttpExchange
+import com.cookie.platform.web.BoundedHttpExchange
 import com.google.auth.oauth2.ServiceAccountCredentials
 import tools.jackson.databind.ObjectMapper
 import java.net.http.HttpRequest

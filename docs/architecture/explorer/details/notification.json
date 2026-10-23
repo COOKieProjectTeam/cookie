@@ -48,7 +48,7 @@
       "description": "Проверяются подпись, точный issuer и единственный audience, iat/exp/nbf без clock skew; lifetime ≤24 h; sub/sid/jti — UUIDv7. Token-controlled jwk/jku/x5u и crit запрещены.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-        "line": 44
+        "line": 46
       }
     },
     {
@@ -58,7 +58,7 @@
       "description": "Неизвестный kid или истёкший cache вызывает refresh, ограниченный общим cooldown. Старый cache используется только до expiry; неизвестный kid после успешного refresh даёт 401, отсутствие пригодных ключей — 503. Cache/refresh/cooldown зафиксированы в коде, env overrides для этих интервалов нет.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-        "line": 80
+        "line": 82
       }
     },
     {
@@ -68,7 +68,7 @@
       "description": "Источник задан COOKIE_IDENTITY_JWKS_URL, а issuer/audience — COOKIE_IDENTITY_ISSUER / COOKIE_IDENTITY_AUDIENCE. HTTP разрешён только dev/test; production требует HTTPS.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-        "line": 24
+        "line": 26
       }
     },
     {
@@ -87,7 +87,7 @@
       "value": "≤65536 bytes; deadline включает body",
       "description": "BoundedHttpExchange ограничивает размер ответа и весь обмен, включая зависшее тело; при timeout отменяет future.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/BoundedHttpExchange.kt",
+        "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/BoundedHttpExchange.kt",
         "line": 15
       }
     },
@@ -298,7 +298,7 @@
       "description": "Production требует tls://, workload credentials и JKS truststore с hostname verification. HappyEyeballs сохраняет исходное имя брокера для проверки DNS/IP SAN, включая reconnect. COOKIE_NATS_URL/CREDENTIALS_PATH/TRUSTSTORE_PATH/TRUSTSTORE_PASSWORD; приложение bind-ится к заранее созданному consumer.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
-        "line": 71
+        "line": 73
       }
     },
     {
@@ -318,7 +318,7 @@
       "description": "Локальный bootstrap создаёт/обновляет stream и consumer. Эти значения отличаются от production provisioning.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
-        "line": 52
+        "line": 54
       }
     },
     {
@@ -664,7 +664,7 @@
           "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 54
+            "line": 56
           }
         },
         {
@@ -755,7 +755,7 @@
           "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 54
+            "line": 56
           }
         },
         {
@@ -828,7 +828,7 @@
           "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 54
+            "line": 56
           }
         },
         {
@@ -892,7 +892,7 @@
           "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 54
+            "line": 56
           }
         },
         {

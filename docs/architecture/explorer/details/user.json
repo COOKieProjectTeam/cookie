@@ -1,0 +1,395 @@
+{
+  "serviceId": "user",
+  "facts": [
+    {
+      "id": "user-jwt",
+      "label": "Identity JWT",
+      "value": "ES256 · at+jwt · UUIDv7",
+      "description": "Issuer/audience/time/signature; fixed-origin JWKS only.",
+      "source": {
+        "path": "backend/services/user/src/main/kotlin/com/cookie/user/security/IdentityTokens.kt",
+        "line": 44
+      }
+    },
+    {
+      "id": "user-jwks",
+      "label": "JWKS limits",
+      "value": "3s request · 64KiB · 5min cache",
+      "description": "Минимум 30s между refresh; после expiry outage даёт 503.",
+      "source": {
+        "path": "backend/services/user/src/main/kotlin/com/cookie/user/security/IdentityTokens.kt",
+        "line": 40
+      }
+    },
+    {
+      "id": "user-database",
+      "label": "PostgreSQL transaction",
+      "value": "account advisory lock",
+      "description": "Deletion, bootstrap, reads and mutations serialize on the same account lock.",
+      "source": {
+        "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/JdbcUserStore.kt",
+        "line": 22
+      }
+    },
+    {
+      "id": "user-idempotency",
+      "label": "Повтор команды",
+      "value": "UUIDv4 · account + operation",
+      "description": "Неизменяемые request fingerprint и response в одной транзакции; changed payload даёт 409.",
+      "source": {
+        "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/JdbcUserStore.kt",
+        "line": 38
+      }
+    },
+    {
+      "id": "user-goal",
+      "label": "Current goal",
+      "value": "account-local date + revision",
+      "description": "Новая ручная цель создаёт immutable version; newest same-date revision wins.",
+      "source": {
+        "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/JdbcUserStore.kt",
+        "line": 90
+      }
+    },
+    {
+      "id": "user-outbox",
+      "label": "Outbox delivery",
+      "value": "30s lease · 10s ACK",
+      "description": "Fencing token, SKIP LOCKED; retries 1s–5min с jitter, per-item failures isolated.",
+      "source": {
+        "path": "backend/services/user/src/main/kotlin/com/cookie/user/messaging/UserPublisher.kt",
+        "line": 46
+      }
+    },
+    {
+      "id": "user-health-dependency",
+      "label": "Onboarding",
+      "value": "Planned: Health calculation",
+      "description": "User хранит принятые цели. Health calculation, manual-weight idempotency и workload policy ещё нужны; onboardingCompleted остаётся false.",
+      "source": {
+        "path": "docs/adr/0015-user-service.md",
+        "line": 11
+      }
+    },
+    {
+      "id": "user-ingress",
+      "label": "Доступ к User",
+      "value": "локальный HTTP · PORT=8083",
+      "description": "Production gateway пока не маршрутизирует /v1/me/*. Production deployment не активирован.",
+      "source": {
+        "path": "backend/services/user/README.md",
+        "line": 44
+      }
+    }
+  ],
+  "flows": [
+    {
+      "id": "user-read",
+      "title": "Прочитать профиль и цели",
+      "operationIds": [
+        "getProfile",
+        "getCurrentGoal",
+        "getGoalHistory",
+        "getHydrationGoal",
+        "getDailyGoalOverride"
+      ],
+      "description": "Проверенный JWT задаёт account scope. Позднее первое обращение может создать incomplete profile.",
+      "steps": [
+        {
+          "node": "user",
+          "label": "Public HTTP",
+          "detail": "GET /v1/me/*; no-store response. Доступный User runtime; production ingress ещё не активирован.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/transport/ProfileController.kt",
+            "line": 28
+          }
+        },
+        {
+          "node": "identity",
+          "label": "Identity public keys",
+          "detail": "Configured JWKS; verified access JWT, no trusted owner headers.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/security/IdentityTokens.kt",
+            "line": 44
+          }
+        },
+        {
+          "node": "user_db",
+          "label": "Read / lazy bootstrap",
+          "detail": "Account lock, tombstone check, profile bootstrap then owner-scoped read. Historical activation may have expired.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/JdbcUserStore.kt",
+            "line": 27
+          }
+        }
+      ]
+    },
+    {
+      "id": "user-write",
+      "title": "Изменить профиль или цель",
+      "operationIds": [
+        "updateProfile",
+        "setCurrentGoal",
+        "setHydrationGoal",
+        "setDailyGoalOverride",
+        "deleteDailyGoalOverride"
+      ],
+      "nextFlows": [
+        "user-publish"
+      ],
+      "description": "Идемпотентная команда сохраняет state и outbox атомарно.",
+      "steps": [
+        {
+          "node": "user",
+          "label": "Verify and validate",
+          "detail": "Identity subject, strict JSON, generated DTO → domain command.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/transport/ProfileController.kt",
+            "line": 29
+          }
+        },
+        {
+          "node": "user_db",
+          "label": "Single commit",
+          "detail": "Account lock; key/fingerprint replay or mutation; version/cheat-day conflict; state + outbox + stored response.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/JdbcUserStore.kt",
+            "line": 38
+          }
+        }
+      ]
+    },
+    {
+      "id": "user-publish",
+      "title": "Доставить события User",
+      "operationIds": [],
+      "description": "Реальный User producer; Progress остаётся planned. Notification читает профиль.",
+      "nextFlows": [
+        "notification-snapshot-ingestion"
+      ],
+      "steps": [
+        {
+          "node": "user_db",
+          "label": "Claim one row",
+          "detail": "SKIP LOCKED; 30s lease + token. Payload immutable.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/messaging/UserPublisher.kt",
+            "line": 46
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Publish with ACK",
+          "detail": "Nats-Msg-Id=event_id; ACK deadline 10s; retry without losing independent rows.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/messaging/UserPublisher.kt",
+            "line": 30
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Profile projection",
+          "detail": "Existing consumer compares aggregate_version and updates locale only when not explicitly overridden. Timezone belongs to Notification.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 72
+          }
+        }
+      ]
+    },
+    {
+      "id": "user-lifecycle",
+      "title": "Активация и удаление User",
+      "operationIds": [],
+      "description": "Identity lifecycle через JetStream: inbox + effects commit before ACK.",
+      "steps": [
+        {
+          "node": "nats",
+          "label": "Pull durable lifecycle",
+          "detail": "user-lifecycle-v1: account.activated and account.deletion.requested only.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/messaging/UserConsumer.kt",
+            "line": 28
+          }
+        },
+        {
+          "node": "user",
+          "label": "Validate event",
+          "detail": "Envelope producer/type/subject/account IDs must agree; malformed input is metadata quarantine.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/LifecycleEvents.kt",
+            "line": 31
+          }
+        },
+        {
+          "node": "user_db",
+          "label": "Delete / activate under lock",
+          "detail": "Inbox and tombstone/erasure are atomic. Late activation cannot resurrect; profile data and pending outbox erased.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/LifecycleEvents.kt",
+            "line": 15
+          }
+        },
+        {
+          "node": "nats",
+          "label": "ACK after commit",
+          "detail": "Failure retries; quarantine write/NAK failure cannot abort a healthy next item.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/messaging/UserConsumer.kt",
+            "line": 38
+          }
+        }
+      ]
+    }
+  ],
+  "operationNotes": {
+    "getProfile": {
+      "flowId": "user-read",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "getCurrentGoal": {
+      "flowId": "user-read",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "getGoalHistory": {
+      "flowId": "user-read",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "getHydrationGoal": {
+      "flowId": "user-read",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "getDailyGoalOverride": {
+      "flowId": "user-read",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "updateProfile": {
+      "flowId": "user-write",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "setCurrentGoal": {
+      "flowId": "user-write",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "setHydrationGoal": {
+      "flowId": "user-write",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "setDailyGoalOverride": {
+      "flowId": "user-write",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "deleteDailyGoalOverride": {
+      "flowId": "user-write",
+      "notes": [
+        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database",
+        "user-idempotency",
+        "user-ingress"
+      ],
+      "route": "Local client → User; production ingress не активирован"
+    },
+    "user:getLiveness": {
+      "notes": [
+        "User runtime probes; no production public ingress."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database"
+      ]
+    },
+    "user:getReadiness": {
+      "notes": [
+        "User runtime probes; no production public ingress."
+      ],
+      "factIds": [
+        "user-jwks",
+        "user-database"
+      ]
+    }
+  }
+}

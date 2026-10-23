@@ -73,3 +73,13 @@ calls:
     authentication: public_jwks_over_tls
     user_context: none
     implementation: fixed-origin bounded JWKS cache, not an internal domain client
+  - caller: user
+    callee: identity
+    purpose: public signing-key discovery at /v1/auth/jwks
+    authentication: public_jwks_over_tls
+    user_context: none
+    implementation: fixed-origin bounded JWKS cache
+  - caller: user
+    callee: health
+    purpose: calculate initial nutrition/hydration targets and idempotently record initial manual weight for onboarding
+    implementation: planned; requires Health implementation and callee-owned workload policy before activation

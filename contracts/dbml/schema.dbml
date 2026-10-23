@@ -166,14 +166,14 @@ Table identity_outbox_events as IDOE {
 // USER SERVICE
 //////////////////////////////////////////////////////////////////////////
 
-Table user_profiles as UP {
+Table user_profiles as Profiles {
   user_id uuid [pk, note: 'logical ref -> Identity.accounts.id, no FK']
   sex varchar
   birth_date date
   height_cm decimal(5,2)
   activity_level varchar [note: 'LOW | MODERATE | HIGH']
-  timezone varchar
-  locale varchar
+  timezone varchar [not null, default: 'UTC']
+  locale varchar [not null, default: 'ru']
   onboarding_completed boolean [not null, default: false]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
@@ -182,17 +182,18 @@ Table user_profiles as UP {
   Note: 'Service: User'
 }
 
-Table user_nutrition_goal_versions as UNG {
+Table user_nutrition_goal_versions as NutritionGoalVersions {
   id uuid [pk]
-  user_id uuid [not null, ref: > UP.user_id]
+  user_id uuid [not null, ref: > Profiles.user_id]
+  revision bigint [not null, note: 'Monotonic account version; immutable revision']
   effective_from date [not null]
   target_weight_kg decimal(6,2)
   target_weight_change_per_week decimal(4,2)
   calorie_target decimal(8,2) [not null]
-  protein_g decimal(8,2)
-  fat_g decimal(8,2)
-  carbs_g decimal(8,2)
-  fiber_g decimal(8,2)
+  protein_g decimal(8,2) [not null]
+  fat_g decimal(8,2) [not null]
+  carbs_g decimal(8,2) [not null]
+  fiber_g decimal(8,2) [not null]
   source varchar [not null, note: 'CALCULATED | MANUAL']
   created_at timestamptz [not null]
 
@@ -203,9 +204,10 @@ Table user_nutrition_goal_versions as UNG {
   Note: 'Service: User'
 }
 
-Table user_hydration_goal_versions as UHG {
+Table user_hydration_goal_versions as HydrationGoalVersions {
   id uuid [pk]
-  user_id uuid [not null, ref: > UP.user_id]
+  user_id uuid [not null, ref: > Profiles.user_id]
+  revision bigint [not null, note: 'Monotonic account version; immutable revision']
   effective_from date [not null]
   target_ml integer [not null]
   source varchar [not null, note: 'CALCULATED | MANUAL']
@@ -214,8 +216,8 @@ Table user_hydration_goal_versions as UHG {
   Note: 'Service: User'
 }
 
-Table user_diet_preferences as UDP {
-  user_id uuid [not null, ref: > UP.user_id]
+Table user_diet_preferences as DietPreferences {
+  user_id uuid [not null, ref: > Profiles.user_id]
   diet_type varchar [not null, note: 'BALANCED | HIGH_PROTEIN | VEGETARIAN | VEGAN | PESCATARIAN | LOW_CARB | KETO | MEDITERRANEAN | GLUTEN_FREE | LACTOSE_FREE']
 
   indexes {
@@ -225,8 +227,8 @@ Table user_diet_preferences as UDP {
   Note: 'Service: User'
 }
 
-Table user_allergies as UA {
-  user_id uuid [not null, ref: > UP.user_id]
+Table user_allergies as Allergies {
+  user_id uuid [not null, ref: > Profiles.user_id]
   allergen varchar [not null, note: 'GLUTEN | CRUSTACEANS | EGGS | FISH | PEANUTS | SOY | MILK | TREE_NUTS | CELERY | MUSTARD | SESAME | SULPHITES | LUPIN | MOLLUSCS']
 
   indexes {
@@ -236,9 +238,9 @@ Table user_allergies as UA {
   Note: 'Service: User'
 }
 
-Table user_daily_goal_overrides as UDO {
+Table user_daily_goal_overrides as DailyGoalOverrides {
   id uuid [pk]
-  user_id uuid [not null, ref: > UP.user_id]
+  user_id uuid [not null, ref: > Profiles.user_id]
   local_date date [not null]
   calorie_target decimal(8,2) [null]
   protein_g decimal(8,2) [null]
@@ -247,16 +249,64 @@ Table user_daily_goal_overrides as UDO {
   fiber_g decimal(8,2) [null]
   unlimited_calories boolean [not null, default: false]
   type varchar [not null, note: 'CUSTOM | CHEAT_DAY']
-  cheat_month date [null]
+  cheat_month date [null, note: 'Generated from local_date for CHEAT_DAY; NULL otherwise']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 
   indexes {
     (user_id, local_date) [unique]
-    (user_id, cheat_month) [unique, note: 'WHERE type = CHEAT_DAY — enforces 1 cheat day per month at DB level']
+    (user_id, cheat_month) [unique, note: 'Generated nullable cheat_month enforces one cheat day per account/month']
   }
 
   Note: 'Service: User'
+}
+
+Table user_account_tombstones as UserTombstones {
+  user_id uuid [pk]
+  deletion_request_id uuid [not null]
+  deleted_at timestamptz [not null]
+  Note: 'User: append-only runtime grants; prevents late activation/JWT replay'
+}
+Table user_idempotency_commands as UserCommands {
+  user_id uuid [not null, ref: > Profiles.user_id]
+  operation text [not null]
+  key uuid [not null]
+  fingerprint text [not null]
+  response jsonb [not null]
+  created_at timestamptz [not null]
+  indexes { (user_id, operation, key) [pk] }
+  Note: 'User: immutable evidence; erased by profile cascade'
+}
+Table user_inbox_events as UserInbox {
+  consumer_name text [not null]
+  event_id uuid [not null]
+  event_type text [not null]
+  processed_at timestamptz [not null]
+  indexes { (consumer_name, event_id) [pk] }
+  Note: 'User: lifecycle effect and inbox commit together'
+}
+Table user_outbox_events as UserOutbox {
+  event_id uuid [pk]
+  user_id uuid [not null]
+  event_type text [not null]
+  aggregate_version bigint [not null]
+  payload jsonb [not null]
+  occurred_at timestamptz [not null]
+  available_at timestamptz [not null]
+  claim_id uuid
+  claimed_until timestamptz
+  attempt_count integer [not null]
+  published_at timestamptz
+  last_error text
+  Note: 'User: immutable payload; runtime updates delivery columns only. RLS deletion requires account tombstone'
+}
+Table user_message_quarantine as UserQuarantine {
+  message_hash text [pk]
+  subject text [not null]
+  reason text [not null]
+  stream_sequence bigint [not null]
+  created_at timestamptz [not null]
+  Note: 'User: metadata only; original broker replay limited by stream retention'
 }
 
 //////////////////////////////////////////////////////////////////////////

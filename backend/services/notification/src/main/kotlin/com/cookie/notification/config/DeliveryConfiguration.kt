@@ -4,7 +4,7 @@ import com.cookie.notification.delivery.FcmPushSender
 import com.cookie.notification.delivery.GoogleFcmAccessToken
 import com.cookie.notification.delivery.NotificationTemplates
 import com.cookie.notification.delivery.SmtpVerificationSender
-import com.cookie.notification.security.BoundedHttpExchange
+import com.cookie.platform.web.BoundedHttpExchange
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean

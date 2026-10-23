@@ -1,0 +1,28 @@
+schema_version: 1
+id: user
+runtime: kotlin_jvm
+stateful: true
+database: user
+public_openapi:
+  source: contracts/openapi/public/user.yaml
+runtime_openapi: contracts/openapi/runtime.yaml
+messaging:
+  publishes:
+    - type: user.profile.updated
+      version: 1
+    - type: user.goal.changed
+      version: 1
+    - type: user.goal_override.changed
+      version: 1
+    - type: user.hydration_goal.changed
+      version: 1
+  consumes:
+    - type: account.activated
+      version: 1
+    - type: account.deletion.requested
+      version: 1
+synchronous_dependencies: [identity]
+infrastructure_dependencies: [postgresql, nats_jetstream, identity_jwks]
+probes:
+  liveness: /healthz
+  readiness: /readyz

@@ -9,7 +9,7 @@ import com.cookie.notification.domain.SettingsPatch
 import com.cookie.notification.messaging.NotificationEventHandler
 import com.cookie.notification.persistence.JdbcNotificationRepository
 import com.cookie.notification.scheduler.ProjectedPushEligibility
-import com.cookie.notification.security.BoundedHttpExchange
+import com.cookie.platform.web.BoundedHttpExchange
 import com.cookie.notification.security.VerificationPayloadDecryptor
 import com.sun.net.httpserver.HttpServer
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry

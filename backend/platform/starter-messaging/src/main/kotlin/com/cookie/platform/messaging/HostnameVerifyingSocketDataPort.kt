@@ -1,4 +1,4 @@
-package com.cookie.notification.messaging
+package com.cookie.platform.messaging
 
 import io.nats.client.Options
 import io.nats.client.impl.SocketDataPort

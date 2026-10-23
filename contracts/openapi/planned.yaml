@@ -61,7 +61,8 @@ paths:
     post:
       tags: [profile]
       operationId: completeOnboarding
-      summary: Завершить онбординг и рассчитать первоначальную норму
+      summary: Завершить онбординг с рассчитанными Health нормами
+      description: Planned dependency on Health nutrition assessment and idempotent initial weight recording; User persists accepted goal versions but does not own the calculation formula.
       requestBody:
         required: true
         content:
@@ -79,141 +80,6 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-
-  /me/profile:
-    get:
-      tags: [profile]
-      operationId: getProfile
-      summary: Получить профиль пользователя
-      responses:
-        "200":
-          description: Профиль
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Profile"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    patch:
-      tags: [profile]
-      operationId: updateProfile
-      summary: Частично обновить профиль
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ProfilePatch"
-      responses:
-        "200":
-          description: Обновлённый профиль
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Profile"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /me/goals/current:
-    get:
-      tags: [profile]
-      operationId: getCurrentGoal
-      summary: Получить текущую цель по КБЖУ
-      responses:
-        "200":
-          description: Текущая цель
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/NutritionGoal"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    put:
-      tags: [profile]
-      operationId: setCurrentGoal
-      summary: Задать новую цель (создаёт новую версию, не перезаписывает старую)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/NutritionGoalInput"
-      responses:
-        "200":
-          description: Новая версия цели создана
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/NutritionGoal"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /me/goals/history:
-    get:
-      tags: [profile]
-      operationId: getGoalHistory
-      summary: Получить историю версий цели
-      parameters:
-        - $ref: "#/components/parameters/Cursor"
-        - $ref: "#/components/parameters/Limit"
-      responses:
-        "200":
-          description: Список версий цели
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GoalHistoryPage"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /me/goals/overrides/{date}:
-    parameters:
-      - $ref: "#/components/parameters/DatePath"
-    put:
-      tags: [profile]
-      operationId: setDailyGoalOverride
-      summary: Задать override целей на конкретный день (в т.ч. cheat day)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DailyGoalOverrideInput"
-      responses:
-        "200":
-          description: Override создан/обновлён
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DailyGoalOverride"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "409":
-          description: Лимит cheat day на месяц уже достигнут
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                code: CHEAT_DAY_LIMIT_REACHED
-                message: Only one cheat day is allowed per calendar month.
-    delete:
-      tags: [profile]
-      operationId: deleteDailyGoalOverride
-      summary: Удалить override на день
-      responses:
-        "204":
-          description: Override удалён
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
 
   # ---------------------------------------------------------------- food
   /foods/search:
@@ -1457,6 +1323,43 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /health/nutrition-assessments:
+    post:
+      tags: [health]
+      operationId: calculateNutritionAssessment
+      summary: Рассчитать рекомендуемые КБЖУ и воду для onboarding
+      description: >-
+        Planned Health-owned calculation. Formula, eligibility, bounds and policyVersion
+        are owned by Health and must be specified before implementation. This operation
+        does not create User goal revisions or weight measurements. Internal User access
+        additionally requires a callee-owned workload policy and a generated Health client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingRequest'
+      responses:
+        '200':
+          description: Calculated recommendation; not yet accepted as User goals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nutrition, hydrationGoalMl, policyVersion]
+                properties:
+                  nutrition:
+                    $ref: '#/components/schemas/NutritionGoalInput'
+                  hydrationGoalMl:
+                    type: integer
+                    minimum: 1
+                  policyVersion:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /health/weight:
     get:
       tags: [health]
@@ -1487,6 +1390,14 @@ paths:
     post:
       tags: [health]
       operationId: addWeightMeasurement
+      description: Manual writes must honor Idempotency-Key before User onboarding integration is activated; replay returns the same measurement and changed input conflicts.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
       summary: Создать ручное измерение или idempotent upsert измерения внешнего источника
       requestBody:
         required: true

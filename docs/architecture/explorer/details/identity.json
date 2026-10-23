@@ -749,7 +749,7 @@
           "detail": "Notification обращается к настроенному JWKS URL; token-controlled jku/x5u/jwk не выбирают источник ключей. Полный HTTP exchange ограничен3 с.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 24
+            "line": 26
           }
         },
         {
@@ -785,7 +785,7 @@
           "detail": "Кэш300 с; scheduled refresh240 с, глобальный refresh cooldown30 с. Нет пригодных ключей —503, неверный токен при пригодном ключе —401.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 78
+            "line": 80
           }
         }
       ]

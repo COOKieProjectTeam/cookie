@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: user
+  datasource:
+    url: ${COOKIE_USER_DATABASE_URL}
+    username: ${COOKIE_USER_DATABASE_USER}
+    password: ${COOKIE_USER_DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 12
+      connection-timeout: 2000
+      validation-timeout: 1000
+      data-source-properties:
+        options: "-c statement_timeout=5000 -c lock_timeout=2000"
+        socketTimeout: 10
+  flyway:
+    enabled: false
+  task:
+    scheduling:
+      pool:
+        size: 3
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: none
+management:
+  endpoints:
+    web:
+      exposure:
+        exclude: "*"
+cookie:
+  user:
+    jwks-url: ${COOKIE_IDENTITY_JWKS_URL:https://api.cookie.app/v1/auth/jwks}
+    issuer: ${COOKIE_IDENTITY_ISSUER:https://api.cookie.app}
+    audience: ${COOKIE_IDENTITY_AUDIENCE:cookie-api}
+    nats-url: ${COOKIE_NATS_URL:nats://localhost:4222}
+    nats-credentials-path: ${COOKIE_NATS_CREDENTIALS_PATH:}
+    nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
+    nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
+    messaging-enabled: ${COOKIE_USER_MESSAGING_ENABLED:true}
