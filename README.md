@@ -100,3 +100,9 @@ Provisioning и deployment выполняются раздельно по
 - Технические решения фиксируются ADR рядом с кодом.
 - Интервью, персональные данные и продуктовые требования сюда не копируются.
 - Эксперимент переносится из `cookie-labs` только после зафиксированного решения.
+
+User Service is implemented under [`backend/services/user`](backend/services/user/README.md)
+with an isolated PostgreSQL schema/database, Identity JWT verification, transactional
+outbox/inbox and generated public client operations. It is not deployed by the
+current production topology. Automatic onboarding depends on the planned
+Health-owned nutrition assessment and idempotent initial weight API (ADR 0015).

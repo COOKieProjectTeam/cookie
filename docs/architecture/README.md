@@ -18,7 +18,7 @@
 
 Если Miro и Git расходятся, нельзя молча выбирать одну версию: создаётся ADR или
 атомарное изменение модели и доски. Пользовательские решения, зафиксированные в
-ADR 0003–0013, имеют приоритет над более старым содержимым доски.
+ADR 0003–0015, имеют приоритет над более старым содержимым доски.
 
 ## Reading order for an LLM
 
@@ -33,7 +33,8 @@ ADR 0003–0013, имеют приоритет над более старым с
 9. `observability.md` — правила наблюдаемости.
 10. `notification.md` — reminder rules, contracts and delivery guarantees.
 11. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
-12. `miro-snapshot.md` — происхождение модели и найденные расхождения.
+12. `../adr/0015-user-service.md` — User ownership and planned Health calculation.
+13. `miro-snapshot.md` — происхождение модели и найденные расхождения.
 13. `../adr/` — причины принятых решений.
 
 ## Non-negotiable invariants

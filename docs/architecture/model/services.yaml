@@ -105,7 +105,10 @@ services:
     name: User Service
     kind: domain_service
     stateful: true
-    purpose: profile, onboarding, nutrition goals, allergies, diet and goal overrides
+    purpose: profile, onboarding state, persisted nutrition and hydration goals, allergies, diet and goal overrides
+    synchronous_dependencies: [identity]
+    planned_dependencies: [health]
+    implementation_note: automatic onboarding awaits Health-owned nutrition assessment and idempotent initial weight recording
     openapi_tags: [profile]
     dbml: contracts/dbml/user.dbml
     publishes:
@@ -178,7 +181,7 @@ services:
     name: Health Data Service
     kind: domain_service
     stateful: true
-    purpose: domain activity and weight data synchronized from platform health providers; never operational probes
+    purpose: domain activity and weight data synchronized from platform health providers and calculation of suggested nutrition/hydration targets; never operational probes
     openapi_tags: [health]
     dbml: contracts/dbml/health.dbml
     publishes:

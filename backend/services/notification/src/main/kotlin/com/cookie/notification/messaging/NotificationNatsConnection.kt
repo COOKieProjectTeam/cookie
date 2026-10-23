@@ -1,5 +1,7 @@
 package com.cookie.notification.messaging
 
+import com.cookie.platform.messaging.HostnameVerifyingSocketDataPort
+
 import io.nats.client.*
 import io.nats.client.api.*
 import jakarta.annotation.PreDestroy

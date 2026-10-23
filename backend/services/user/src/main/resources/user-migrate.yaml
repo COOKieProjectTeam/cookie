@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: user-migration
+  flyway:
+    enabled: true
+    url: ${SPRING_FLYWAY_URL}
+    user: ${SPRING_FLYWAY_USER}
+    password: ${SPRING_FLYWAY_PASSWORD}
+    locations: classpath:db/migration

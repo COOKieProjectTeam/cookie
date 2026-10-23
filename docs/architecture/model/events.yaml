@@ -44,8 +44,8 @@ events:
     consumers: [user, food_catalog, nutrition, recipe, shopping, health, progress, notification, media, meal_planner]
     payload: [accountId, deletionRequestId, requestedAt]
     implementation_note: >-
-      Identity publishes the request; Notification consumes it and erases its
-      owned data with a minimal tombstone. Other listed consumers are target
+      Identity publishes the request; Notification and User consume it and erase their
+      owned data with minimal tombstones. Other listed consumers are target
       data owners. No acknowledgement/finalization protocol exists; the account
       therefore remains DELETION_PENDING. event_id and
       occurred_at are mandatory envelope fields and are intentionally not
@@ -71,22 +71,25 @@ events:
     aggregate_version_required: true
 
   - type: user.goal.changed
+    aggregate_version_required: true
     version: 1
     producer: user
     consumers: [progress]
     payload: [userId, nutritionGoalVersion]
 
   - type: user.goal_override.changed
+    aggregate_version_required: true
     version: 1
     producer: user
     consumers: [progress]
     payload: [userId, localDate, override]
 
   - type: user.hydration_goal.changed
+    aggregate_version_required: true
     version: 1
     producer: user
     consumers: [progress]
-    payload: [userId, targetMl]
+    payload: [userId, targetMl, effectiveFrom]
 
   - type: nutrition.meal.created
     version: 1

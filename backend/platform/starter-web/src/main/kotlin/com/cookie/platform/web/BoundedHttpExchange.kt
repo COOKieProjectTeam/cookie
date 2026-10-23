@@ -1,4 +1,4 @@
-package com.cookie.notification.security
+package com.cookie.platform.web
 
 import java.io.ByteArrayOutputStream
 import java.net.http.HttpClient

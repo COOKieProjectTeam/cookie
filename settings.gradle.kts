@@ -29,4 +29,7 @@ include(
     "backend:services:notification:domain",
     "backend:services:notification:application",
     "backend:tools:notification-sink",
+    "backend:services:user",
+    "backend:services:user:domain",
+    "backend:services:user:application",
 )

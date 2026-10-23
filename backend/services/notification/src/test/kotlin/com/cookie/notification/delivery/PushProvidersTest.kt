@@ -1,7 +1,7 @@
 package com.cookie.notification.delivery
 
 import com.cookie.notification.config.FcmProperties
-import com.cookie.notification.security.BoundedHttpExchange
+import com.cookie.platform.web.BoundedHttpExchange
 import com.sun.net.httpserver.HttpServer
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach

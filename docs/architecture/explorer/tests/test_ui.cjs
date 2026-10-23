@@ -503,3 +503,19 @@ test("schema values and embedded source text remain inert markup", () => {
   assert.ok(!rendered.includes("<script"));
   assert.ok(visibleText(rendered).includes(attack), "Source viewer displays escaped source, not executable tags");
 });
+
+test("User operations use their own facts and do not claim active production ingress", () => {
+  const data = dataSnapshot();
+  const ui = harness(data, "#api?item=getProfile&service=user");
+  assert.ok(ui.markup().includes('id="fact-user-jwks"'));
+  assert.ok(!ui.markup().includes('id="fact-notification-jwks-http"'));
+  assert.ok(!ui.markup().includes('id="fact-infra-gateway-deadlines"'));
+  assert.ok(visibleText(ui.markup()).includes("production ingress"));
+});
+
+test("event delivery names the actual implemented producer", () => {
+  const ui = harness(dataSnapshot(), "#events?item=user.profile.updated&service=user");
+  const delivery = visibleText(detailMarkup(ui)).split("Доставка и ошибки")[1];
+  assert.ok(delivery.includes("User"));
+  assert.ok(!delivery.includes("Identity"));
+});

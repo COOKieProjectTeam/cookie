@@ -1,5 +1,7 @@
 package com.cookie.notification.security
 
+import com.cookie.platform.web.BoundedHttpExchange
+
 import com.nimbusds.jose.JOSEObjectType
 import com.nimbusds.jose.JWSAlgorithm
 import com.nimbusds.jose.crypto.ECDSAVerifier

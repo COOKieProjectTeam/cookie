@@ -47,6 +47,7 @@ platform_messaging=false
 platform_testing=false
 identity=false
 notification=false
+user=false
 notification_image=false
 notification_container=false
 notification_sink=false
@@ -69,6 +70,7 @@ enable_all_gradle_checks() {
   platform_testing=true
   identity=true
   notification=true
+  user=true
   notification_sink=true
   service_contracts=true
   planned_openapi=true
@@ -159,6 +161,7 @@ while IFS= read -r -d '' path; do
     build-logic/*/CookieSpringServicePlugin.kt)
       identity=true
       notification=true
+  user=true
       notification_sink=true
       identity_image=true
       notification_image=true
@@ -171,6 +174,7 @@ while IFS= read -r -d '' path; do
       platform_testing=true
       identity=true
       notification=true
+  user=true
       notification_sink=true
       identity_image=true
       notification_image=true
@@ -198,6 +202,7 @@ while IFS= read -r -d '' path; do
           platform_web=true
           identity=true
           notification=true
+  user=true
           identity_image=true
           notification_image=true
           ;;
@@ -206,6 +211,7 @@ while IFS= read -r -d '' path; do
           platform_web=true
           identity=true
           notification=true
+  user=true
           identity_image=true
           notification_image=true
           ;;
@@ -222,6 +228,7 @@ while IFS= read -r -d '' path; do
           platform_postgres=true
           identity=true
           notification=true
+  user=true
           identity_image=true
           notification_image=true
           ;;
@@ -230,6 +237,7 @@ while IFS= read -r -d '' path; do
           platform_postgres=true
           identity=true
           notification=true
+  user=true
           identity_image=true
           notification_image=true
           ;;
@@ -246,6 +254,7 @@ while IFS= read -r -d '' path; do
           platform_messaging=true
           identity=true
           notification=true
+  user=true
           notification_sink=true
           identity_image=true
           notification_image=true
@@ -255,6 +264,7 @@ while IFS= read -r -d '' path; do
           platform_messaging=true
           identity=true
           notification=true
+  user=true
           notification_sink=true
           identity_image=true
           notification_image=true
@@ -275,6 +285,7 @@ while IFS= read -r -d '' path; do
           platform_messaging=true
           identity=true
           notification=true
+  user=true
           notification_sink=true
           ;;
         *)
@@ -284,6 +295,7 @@ while IFS= read -r -d '' path; do
           platform_messaging=true
           identity=true
           notification=true
+  user=true
           notification_sink=true
           ;;
       esac
@@ -294,6 +306,13 @@ while IFS= read -r -d '' path; do
   esac
 
   case "$path" in
+    backend/services/user/service.yaml)
+      user=true
+      service_contracts=true
+      ;;
+    backend/services/user/*)
+      user=true
+      ;;
     backend/services/identity/service.yaml)
       service_contracts=true
       ;;
@@ -302,7 +321,8 @@ while IFS= read -r -d '' path; do
       case "$path" in
         */src/main/* | */build.gradle.kts)
           identity_image=true
-          notification=true # Real Identity-to-Notification contract flow.
+          notification=true
+  user=true # Real Identity-to-Notification contract flow.
           ;;
       esac
       ;;
@@ -311,7 +331,9 @@ while IFS= read -r -d '' path; do
       compose=true
       ;;
     backend/services/notification/*)
+      user=true # Real User producer to Notification process integration.
       notification=true
+  user=true
       case "$path" in
         */src/main/* | */build.gradle.kts) notification_image=true ;;
       esac
@@ -332,16 +354,23 @@ while IFS= read -r -d '' path; do
   esac
 
   case "$path" in
+    contracts/openapi/public/user.yaml)
+      user=true
+      service_contracts=true
+      public_client=true
+      ;;
     contracts/openapi/public/identity.yaml)
       service_contracts=true
       identity=true
       notification=true
+  user=true
       public_client=true
       identity_image=true
       ;;
     contracts/openapi/public/notification.yaml)
       service_contracts=true
       notification=true
+  user=true
       public_client=true
       notification_image=true
       ;;
@@ -351,6 +380,7 @@ while IFS= read -r -d '' path; do
       ;;
     contracts/openapi/runtime.yaml)
       notification=true
+  user=true
       notification_image=true
       service_contracts=true
       identity=true
@@ -361,6 +391,7 @@ while IFS= read -r -d '' path; do
       ;;
     contracts/openapi/generation.yaml)
       notification=true
+  user=true
       notification_image=true
       service_contracts=true
       identity=true
@@ -391,6 +422,7 @@ while IFS= read -r -d '' path; do
       ;;
     docs/architecture/model/events.yaml)
       notification=true
+  user=true
       service_contracts=true
       ;;
   esac
@@ -398,6 +430,7 @@ while IFS= read -r -d '' path; do
   case "$path" in
     backend/clients/identity/*)
       notification=true
+  user=true
       case "$path" in
         */src/main/* | */build.gradle.kts) notification_image=true ;;
       esac
@@ -477,6 +510,7 @@ emit_output platform_messaging "$platform_messaging"
 emit_output platform_testing "$platform_testing"
 emit_output identity "$identity"
 emit_output notification "$notification"
+emit_output user "$user"
 emit_output notification_image "$notification_image"
 emit_output notification_container "$notification_container"
 emit_output notification_sink "$notification_sink"
