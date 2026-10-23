@@ -365,7 +365,7 @@
       "id": "notification-upstream-status",
       "label": "Реализованные producers",
       "value": "Identity и User — реализованы; Nutrition/Health/Progress — fixtures",
-      "description": "User → JetStream → Notification проверен с реальными JAR и отдельными БД. Остальные domain producers покрыты fixtures. User production deployment пока не активирован.",
+      "description": "User → JetStream → Notification проверен с реальным User Spring runtime, Notification JAR и отдельными БД. Остальные domain producers покрыты fixtures. User production deployment пока не активирован.",
       "source": {
         "path": "backend/services/user/src/test/kotlin/com/cookie/user/UserRuntimeIntegrationTest.kt",
         "line": 199
