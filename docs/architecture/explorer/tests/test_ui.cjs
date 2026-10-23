@@ -512,3 +512,10 @@ test("User operations use their own facts and do not claim active production ing
   assert.ok(!ui.markup().includes('id="fact-infra-gateway-deadlines"'));
   assert.ok(visibleText(ui.markup()).includes("production ingress"));
 });
+
+test("event delivery names the actual implemented producer", () => {
+  const ui = harness(dataSnapshot(), "#events?item=user.profile.updated&service=user");
+  const delivery = visibleText(detailMarkup(ui)).split("Доставка и ошибки")[1];
+  assert.ok(delivery.includes("User"));
+  assert.ok(!delivery.includes("Identity"));
+});

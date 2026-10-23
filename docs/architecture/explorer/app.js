@@ -107,7 +107,7 @@
     if (state.view === "facts") renderFacts();
   }
   const baseNodes = [
-    {id:"user",x:276,y:582,w:182,sub:"Local :8083 · не deployed",kind:"service"},
+    {id:"user",x:276,y:582,w:182,sub:"Local :8083 · без deploy",kind:"service"},
     {id:"user_db",x:516,y:582,w:188,sub:"PostgreSQL · goals / inbox",kind:"store"},
     {id:"mobile_client",x:18,y:80,w:176,sub:"KMP · публичный HTTP",kind:"client"},
     {id:"gateway",x:18,y:258,w:176,sub:"Yandex API Gateway",kind:"infra"},
@@ -229,7 +229,7 @@
     const eventEdge=edge.kind==="event";
     const relevantEvents = D.events.filter(e=>(state.planned||e.status==="implemented")&&(edge.to==="nats" ? e.producer===edge.from : asArray(e.consumers).includes(edge.to)));
     return `<div class="eyeline"><span class="pill">${eventEdge?"JetStream":edge.kind==="store"?"Хранилище":edge.kind==="planned"?"Целевая связь":"Синхронный вызов"}</span></div><h2>${esc(title(edge.from))} → ${esc(title(edge.to))}</h2><p class="muted">${esc(edge.label)}</p>
-      ${eventEdge?`<div class="callout">At-least-once. Дубли допустимы; порядок не гарантирован. Notification фиксирует inbox и изменения в одной транзакции до ACK.</div><h3>Точные subjects</h3>${relevantEvents.map(e=>linkButton("events",e.type,`<code>${esc(e.subject)}</code>`,"mini-link",{service:""})).join("")}`:
+      ${eventEdge?`<div class="callout">At-least-once. Дубли допустимы; порядок не гарантирован. Consumer фиксирует inbox и изменения в одной транзакции до ACK.</div><h3>Точные subjects</h3>${relevantEvents.map(e=>linkButton("events",e.type,`<code>${esc(e.subject)}</code>`,"mini-link",{service:""})).join("")}`:
       edge.id==="notification-jwks"?`<div class="callout">Публичное получение ключей с фиксированного origin. Это не вызов доменного internal API.</div>${linkButton("api","getIdentityJwks","Открыть JWKS-контракт")}`:
       edge.from==="gateway"?publicOps.filter(o=>o.service===edge.to).map(o=>linkButton("api",o.id,`${methodPill(o.method)}<code>${esc(o.path)}</code>`,"mini-link",{service:""})).join(""):
       edge.kind==="planned"?'<div class="callout warning">Разрешённая целевая зависимость. Реализация вызова, активный internal contract и его таймауты ещё не определены.</div>':
@@ -365,7 +365,7 @@
       <section class="detail-section"><h3>Маршрут события</h3><div class="flow-strip">${linkButton("map",e.producer,esc(title(e.producer)),"",{plan:e.status==="implemented"?state.planned?"1":"":"1",service:""})}<span class="arrow">→</span>${linkButton("map","nats","COOKIE_EVENTS","",{service:""})}<span class="arrow">→</span>${consumers.map(c=>linkButton("map",c,esc(title(c))+(asArray(e.implementedConsumers).includes(c)?"":" (план)"),"",{plan:asArray(e.implementedConsumers).includes(c)?"":"1",service:""})).join(", ")}</div></section>
       <section class="detail-section"><h3>Payload</h3><div class="event-payload">${Array.isArray(e.payload)?e.payload.map(p=>`<code>${esc(typeof p==="string"?p:text(p))}</code>`).join(""):`<pre>${esc(text(e.payload))}</pre>`}</div>${e.aggregate_version_required?'<div class="callout">aggregate_version обязателен. Проекция применяет только более новую версию, удаления сохраняют минимальный tombstone.</div>':""}${e.security_note?`<div class="callout warning">${esc(e.security_note)}</div>`:""}${e.implementation_note?`<p class="response-description">${esc(e.implementation_note)}</p>`:""}</section>
       <section class="detail-section"><h3>Envelope</h3>${Object.entries(D.envelope||{}).map(([group,fields])=>`<h3 class="muted">${group==="required"?"Обязательные":"Необязательные"} поля</h3><table class="routing-table">${Object.entries(fields||{}).map(([k,v])=>`<tr><td><code>${esc(k)}</code></td><td>${esc(text(v))}</td></tr>`).join("")}</table>`).join("")}</section>
-      <section class="detail-section"><h3>Доставка и ошибки</h3><p class="response-description">Identity публикует после commit через outbox; consumer сохраняет inbox, проекции и задания в одной транзакции. ACK отправляется после commit. Инфраструктурная ошибка допускает повтор, некорректное событие попадает в metadata-only quarantine.</p>${linkButton("facts","","ACK, backoff и retention","button",{service:""})}</section>${rawDetails("Полный контракт события",e)}`;
+      <section class="detail-section"><h3>Доставка и ошибки</h3><p class="response-description">${e.status==="implemented"?`${esc(title(e.producer))} публикует после commit через outbox.`:"Планируемый producer должен публиковать после commit через outbox."} Consumer сохраняет inbox и изменения в одной транзакции. ACK отправляется после commit. Инфраструктурная ошибка допускает повтор, некорректное событие попадает в metadata-only quarantine.</p>${linkButton("facts","","ACK, backoff и retention","button",{service:""})}</section>${rawDetails("Полный контракт события",e)}`;
   }
   function renderFlows() {
     const list=flows.filter(f=>matchesService(f.service)),flow=list.find(f=>f.id===state.item)||list[0];
