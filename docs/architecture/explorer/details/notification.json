@@ -364,11 +364,11 @@
     {
       "id": "notification-upstream-status",
       "label": "Реализованные producers",
-      "value": "Identity — реализован; User/Nutrition/Health/Progress — fixtures",
-      "description": "Будущие profile/meal/water/weight/progress события покрыты synthetic contract fixtures. Их production producers и замены producers сейчас не развёрнуты.",
+      "value": "Identity и User — реализованы; Nutrition/Health/Progress — fixtures",
+      "description": "User → JetStream → Notification проверен с реальными JAR и отдельными БД. Остальные domain producers покрыты fixtures. User production deployment пока не активирован.",
       "source": {
-        "path": "backend/services/notification/README.md",
-        "line": 53
+        "path": "backend/services/user/src/test/kotlin/com/cookie/user/UserRuntimeIntegrationTest.kt",
+        "line": 199
       }
     },
     {
@@ -1060,13 +1060,13 @@
     },
     {
       "id": "notification-snapshot-ingestion",
-      "title": "Будущие domain snapshots → локальные projections",
+      "title": "Domain snapshots → локальные projections",
       "operationIds": [],
-      "description": "User, Nutrition, Health и Progress пока не реализованы как producers: ниже контракт и synthetic fixture flow, не действующая production интеграция.",
+      "description": "User profile producer реализован и проверен через JetStream с Notification. Nutrition, Health и Progress остаются planned с contract fixtures. Production интеграция User ещё не активирована.",
       "steps": [
         {
           "node": "user",
-          "label": "Планируется: profile snapshot",
+          "label": "Profile snapshot",
           "detail": "user.profile.updated: userId, optional locale, positive aggregate_version. Обновляет default locale, timezone не задаёт.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
