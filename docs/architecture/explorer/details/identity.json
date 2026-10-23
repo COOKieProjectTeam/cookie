@@ -732,7 +732,8 @@
       ],
       "nextFlows": [
         "identity-outbox",
-        "notification-account-deletion"
+        "notification-account-deletion",
+        "nutrition-deletion"
       ]
     },
     {
@@ -844,7 +845,8 @@
       ],
       "nextFlows": [
         "notification-verification-email",
-        "notification-account-deletion"
+        "notification-account-deletion",
+        "nutrition-deletion"
       ]
     }
   ],

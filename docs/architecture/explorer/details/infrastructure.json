@@ -5,7 +5,7 @@
       "id": "infra-topology",
       "label": "Статус топологии",
       "value": "Начальный production: single VM, non-HA",
-      "description": "Реализованы Identity и Notification; один PostgreSQL instance с отдельными БД и один NATS node. Target HA topology ещё TBD.",
+      "description": "Production-конфигурация включает Identity и Notification, один PostgreSQL instance с изолированными БД и один NATS node. Nutrition реализован автономно, но не включён в production Compose/ingress. Target HA topology ещё TBD; состояние облака атлас не проверяет.",
       "source": {
         "path": "docs/architecture/model/services.yaml",
         "line": 52

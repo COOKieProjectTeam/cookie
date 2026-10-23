@@ -18,7 +18,7 @@
   let state = {view:"map", item:"notification", service:"", planned:false, direction:"all", flow:"", query:"", response:"", step:-1, zoom:1};
   let toastTimer;
   let filterFocus = "";
-  const titles = {mobile_client:"Мобильный клиент",gateway:"API Gateway",identity:"Identity",notification:"Notification",identity_db:"Identity DB",notification_db:"Notification DB",nats:"NATS JetStream",redis:"Redis",smtp:"SMTP",apns:"APNs",fcm:"FCM",object_storage:"Object storage",infrastructure:"Инфраструктура"};
+  const titles = {mobile_client:"Мобильный клиент",gateway:"API Gateway",identity:"Identity",notification:"Notification",identity_db:"Identity DB",nutrition:"Nutrition",nutrition_db:"Nutrition DB",nutrition_client:"HTTP клиент",nutrition_jwks:"Public JWKS файл",notification_db:"Notification DB",nats:"NATS JetStream",redis:"Redis",smtp:"SMTP",apns:"APNs",fcm:"FCM",object_storage:"Object storage",infrastructure:"Инфраструктура"};
   function title(id) { return titles[id] || serviceById.get(id)?.name?.replace(/ Service$/, "") || asArray(D.externalSystems).find(e => e.id === id)?.name || id; }
   function serviceMark(id) { return `<span class="service-dot ${esc(id)}"></span>${esc(title(id))}`; }
   function statusPill(status) { return `<span class="pill ${esc(status)}">${status === "implemented" ? "Реализовано" : "План"}</span>`; }
@@ -117,6 +117,10 @@
     {id:"redis",x:770,y:582,w:190,sub:"Индекс сроков · sorted set",kind:"store"},
     {id:"smtp",x:1047,y:35,w:165,sub:"Письма · TLS",kind:"external"},
     {id:"fcm",x:1047,y:184,w:165,sub:"Push · Android / iOS",kind:"external"},
+    {id:"nutrition_client",x:18,y:740,w:176,sub:"Локально · PORT=8083",kind:"client"},
+    {id:"nutrition",x:276,y:740,w:210,sub:"Дневник · вода · snapshots",kind:"service"},
+    {id:"nutrition_db",x:516,y:930,w:210,sub:"PostgreSQL · outbox / inbox",kind:"store"},
+    {id:"nutrition_jwks",x:18,y:930,w:210,sub:"Mount · только public keys",kind:"store"},
     {id:"apns",x:1047,y:333,w:165,sub:"iOS · через Firebase",kind:"external"}
   ];
   const baseEdges = [
@@ -131,6 +135,11 @@
     {id:"notification-redis",from:"notification",to:"redis",kind:"store",label:"После commit",path:"M938 210H996V619H960",lx:1006,ly:550},
     {id:"notification-smtp",from:"notification",to:"smtp",kind:"http",label:"SMTP",path:"M938 174H1008V72H1047",lx:976,ly:115},
     {id:"notification-fcm",from:"notification",to:"fcm",kind:"http",label:"FCM HTTP v1",path:"M938 192H1023V221H1047",lx:951,ly:181},
+    {id:"local-nutrition",from:"nutrition_client",to:"nutrition",kind:"http",label:"HTTP :8083",path:"M194 777H276",lx:196,ly:762},
+    {id:"nutrition-db",from:"nutrition",to:"nutrition_db",kind:"store",label:"Transaction + outbox/inbox",path:"M381 814V967H516",lx:396,ly:953},
+    {id:"nutrition-nats",from:"nutrition",to:"nats",kind:"event",label:"5 событий · PubAck",path:"M486 765H610V494",lx:620,ly:700},
+    {id:"nats-nutrition",from:"nats",to:"nutrition",kind:"event",label:"Account deletion · pull",path:"M552 494V690H415V740",lx:280,ly:677},
+    {id:"nutrition-jwks-file",from:"nutrition",to:"nutrition_jwks",kind:"store",label:"Чтение на каждый verify",path:"M276 794H255V967H228",lx:35,ly:895},
     {id:"fcm-apns",from:"fcm",to:"apns",kind:"http",label:"Доставка iOS",path:"M1129 258V333",lx:1018,ly:300}
   ];
   function topology() {
@@ -139,11 +148,11 @@
     const flowNodes = new Set(flows.find(f => f.id === state.flow)?.steps.map(s=>s.node) || []);
     let extra = D.services.filter(s => !present.has(s.id) && (state.planned || s.status === "implemented" || flowNodes.has(s.id)));
     if (state.planned) extra = extra.concat(asArray(D.externalSystems).filter(s => !present.has(s.id) && s.id !== "mobile_client").map(s => ({...s,status:"planned"})));
-    extra.forEach((s,i) => { if (present.has(s.id)) return; present.add(s.id); nodes.push({id:s.id,x:25+(i%5)*244,y:775+Math.floor(i/5)*160,w:202,h:78,sub:s.status === "implemented" ? "Реализованный сервис" : "Целевая архитектура",kind:"service",planned:s.status !== "implemented"}); });
+    extra.forEach((s,i) => { if (present.has(s.id)) return; present.add(s.id); nodes.push({id:s.id,x:25+(i%5)*244,y:1120+Math.floor(i/5)*160,w:202,h:78,sub:s.status === "implemented" ? "Реализованный сервис" : "Целевая архитектура",kind:"service",planned:s.status !== "implemented"}); });
     const edges = baseEdges.map(e => ({...e}));
     const nodeMap = new Map(nodes.map(n => [n.id,n]));
     const selected = state.item || state.service;
-    if (state.planned || extra.length) {
+    if (state.planned || extra.length || selected) {
       const targets = [];
       D.calls.forEach(c => {
         if (c.caller !== selected && c.callee !== selected && !(flowNodes.has(c.caller)&&flowNodes.has(c.callee))) return;
@@ -153,7 +162,7 @@
       });
       D.events.forEach(e => {
         if ((e.producer === selected || flowNodes.has(e.producer)) && nodeMap.has(e.producer) && !baseEdges.some(edge=>edge.from===e.producer&&edge.to==="nats")) targets.push({from:e.producer,to:"nats",label:"События",kind:e.status === "implemented" ? "event" : "planned"});
-        if (asArray(e.consumers).includes(selected) && nodeMap.has(selected) && !["notification"].includes(selected)) targets.push({from:"nats",to:selected,label:e.type,kind:asArray(e.implementedConsumers).includes(selected) && e.status === "implemented" ? "event" : "planned"});
+        if (asArray(e.consumers).includes(selected) && nodeMap.has(selected) && !baseEdges.some(edge=>edge.from==="nats"&&edge.to===selected)) targets.push({from:"nats",to:selected,label:e.type,kind:asArray(e.implementedConsumers).includes(selected) && e.status === "implemented" ? "event" : "planned"});
       });
       const selectedService=serviceById.get(selected);
       [...asArray(selectedService?.outbound),...asArray(selectedService?.external_dependencies)].forEach(to=>{
@@ -168,7 +177,7 @@
         edges.push({...e,id:"model-"+key,path:`M${a.x+a.w/2} ${a.y+a.h}C${a.x+a.w/2} ${a.y+a.h+55} ${b.x+b.w/2} ${b.y-55} ${b.x+b.w/2} ${b.y}`,lx:(a.x+b.x)/2,ly:(a.y+b.y)/2});
       });
     }
-    return {nodes,edges,height:extra.length ? 775+Math.ceil(extra.length/5)*160 : 704};
+    return {nodes,edges,height:extra.length ? 1120+Math.ceil(extra.length/5)*160 : 1060};
   }
   function renderMap() {
     const {nodes,edges,height} = topology();
@@ -186,10 +195,11 @@
       return selected ? (e.from===selected || e.to===selected ? "highlighted" : "dimmed") : "";
     }
     $("main").innerHTML = heading("Карта системы",state.planned ? "Реализованные компоненты и целевая модель. Выберите сервис, чтобы раскрыть его связи." : "От входящего запроса до базы и провайдера. Нажмите на компонент, связь или откройте сценарий.",linkButton("flows","","Проследить сценарий")) +
-      `<div class="map-layout ${!selectedFlow&&!chosenEdge&&!selected?"overview":""}"><section class="map-area" aria-label="Интерактивная схема сервисов"><div class="map-toolbar"><span class="map-caption">${selectedFlow ? esc(selectedFlow.title) : "Текущая реализация · начальная production-топология"}</span><div class="map-tools">${actionButton("zoom-out","−",'aria-label="Уменьшить масштаб"',"icon-button")}${actionButton("fit","⌖",'aria-label="Вписать схему"',"icon-button")}${actionButton("zoom-in","+",'aria-label="Увеличить масштаб"',"icon-button")}</div></div><div class="map-stage"><svg class="map-svg" viewBox="0 0 1240 ${height}" role="group" aria-label="Компоненты и направления взаимодействия" style="width:${100*state.zoom}%">
+      `<div class="map-layout ${!selectedFlow&&!chosenEdge&&!selected?"overview":""}"><section class="map-area" aria-label="Интерактивная схема сервисов"><div class="map-toolbar"><span class="map-caption">${selectedFlow ? esc(selectedFlow.title) : "Реализация в коде · deployment status указан отдельно"}</span><div class="map-tools">${actionButton("zoom-out","−",'aria-label="Уменьшить масштаб"',"icon-button")}${actionButton("fit","⌖",'aria-label="Вписать схему"',"icon-button")}${actionButton("zoom-in","+",'aria-label="Увеличить масштаб"',"icon-button")}</div></div><div class="map-stage"><svg class="map-svg" viewBox="0 0 1240 ${height}" role="group" aria-label="Компоненты и направления взаимодействия" style="width:${100*state.zoom}%">
       <defs>${["http","event","store","planned"].map(k=>`<marker id="arrow-${k}" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0 0L6 3L0 6" fill="none" stroke="${({http:"#386aab",event:"#a16b22",store:"#9daec2",planned:"#9daabd"})[k]}" stroke-width="1.2"/></marker>`).join("")}</defs>
       ${edges.map(e=>`<g data-action="edge" data-edge="${esc(e.id)}" tabindex="0" role="button" aria-label="${esc(title(e.from)+" → "+title(e.to)+": "+e.label)}"><path d="${e.path}" fill="none" stroke="transparent" stroke-width="16"/><path d="${e.path}" class="map-edge ${e.kind} ${edgeClass(e)}" marker-end="url(#arrow-${e.kind})"/><text x="${e.lx}" y="${e.ly}" class="edge-label ${edgeClass(e)==="dimmed"?"dimmed":""}">${esc(e.label)}</text></g>`).join("")}
-      ${nodes.some(n=>n.y>=775) ? '<text x="25" y="739" class="node-title">Модель сервисов</text><text x="205" y="739" class="node-subtitle">Плановые компоненты отмечены пунктирной рамкой</text>' : ""}
+      ${nodes.some(n=>n.y>=1120) ? '<text x="25" y="1084" class="node-title">Модель сервисов</text><text x="205" y="1084" class="node-subtitle">Плановые компоненты отмечены пунктирной рамкой</text>' : ""}
+      <text x="25" y="715" class="node-subtitle">Nutrition: реализован; production Compose и ingress ещё не подключены</text>
       ${nodes.map(n=>`<g transform="translate(${n.x},${n.y})" class="diagram-node ${n.id} ${n.planned?"planned":""} ${n.id===selected||n.id===selectedStep?.node?"selected":""} ${(selectedFlow&&!flowNodes.has(n.id)) || (!selectedFlow&&selected&&!relevant.has(n.id)&&!chosenEdge) ? "dimmed":""}" data-action="node" data-node="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(title(n.id))}${n.planned?", запланирован":""}"><rect width="${n.w}" height="${n.h}" rx="${n.kind==="store"?6:10}"/><text x="15" y="26" class="node-title">${esc(title(n.id).length>23?title(n.id).slice(0,21)+"…":title(n.id))}</text><text x="15" y="47" class="node-subtitle">${esc(n.sub)}</text>${n.kind==="service"&&!n.planned?'<circle cx="15" cy="62" r="2.5" fill="#448477"/><text x="23" y="66" class="node-status">реализовано</text>':""}</g>`).join("")}</svg></div><div class="map-legend"><span><i class="legend-line"></i>HTTP / SMTP</span><span><i class="legend-line event"></i>События</span><span><i class="legend-line store"></i>Хранилище</span>${state.planned?'<span><i class="legend-line planned"></i>План</span>':""}</div></section><aside class="inspector" aria-label="Детали выбранного элемента">${selectedFlow ? flowInspector(selectedFlow) : `${actionButton("clear-flow","Свернуть детали","","text-button")}<div style="height:15px"></div>${chosenEdge ? edgeInspector(chosenEdge) : nodeInspector(selected)}`}</aside></div>`;
   }
   function nodeInspector(id) {
@@ -203,7 +213,11 @@
       gateway:"Начальный production ingress — Yandex API Gateway. Маршрутизирует /v1/auth/* в Identity и /v1/notifications/* в Notification. Caddy — отдельный компонент целевой модели.",
       identity_db:"Изолированная PostgreSQL БД Identity. Владеет аккаунтами, попытками регистрации, сессиями, лимитами и transactional outbox. Другие сервисы не читают её таблицы.",
       notification_db:"Источник истины для настроек, устройств, inbox, проекций, tombstones, расписания, quarantine и заданий доставки.",
-      nats:"Durable stream COOKIE_EVENTS, at-least-once. Реальный producer — Identity. Notification использует durable pull consumer; будущие producers пока представлены контрактами и fixtures.",
+      nutrition:"Автономный дневник, сохранённые блюда и вода. Реализован и проверен локально; production Compose и ingress не подключены. Recipe/Media остаются планом.",
+      nutrition_client:"Прямой локальный HTTP к Nutrition, PORT=8083 при совместном запуске с Notification. Это путь ручной проверки API, не готовый экран мобильного приложения и не production gateway route.",
+      nutrition_db:"Собственная PostgreSQL БД: JSONB meals/water/saved dishes, day versions, transactional outbox, deletion inbox и append-only tombstones. Runtime работает с отдельными ограниченными grants.",
+      nutrition_jwks:"Публичный-only JWKS Identity, атомарно обновляемый оператором в mounted file. Nutrition читает файл при проверке токена; remote JWKS HTTP/cache здесь нет. Приватные ключи Identity не передаются.",
+      nats:"Durable stream COOKIE_EVENTS, at-least-once. Реальные producers — Identity и Nutrition. Notification потребляет их события; Nutrition потребляет account deletion. Остальные producers пока представлены контрактами/fixtures.",
       redis:"Эфемерный индекс сроков Notification: только идентификаторы, версии и timestamps. Потеря Redis компенсируется PostgreSQL sweep и восстановлением индекса.",
       smtp:"Email provider. Сохраняется исходный JWE; адрес и одноразовый токен расшифровываются только в памяти. Неопределённый результат после SMTP_SUBMITTING заканчивается UNKNOWN без повторов.",
       apns:"Apple Push Notification service получает iOS-сообщения от Firebase. Ключ Apple загружается в Firebase; Notification не подключается к APNs напрямую. Подтверждение FCM означает ACCEPTED, а не прочтение.",
@@ -213,8 +227,8 @@
     return `<div class="eyeline">${service ? statusPill(service.status) : '<span class="pill">Компонент</span>'}</div><h2>${esc(title(id))}</h2><p class="muted">${esc(infraDesc[id]||service?.purpose||"Внешняя зависимость целевой модели. Реализация и параметры уточняются вместе с сервисом.")}</p>${service?sourceLink(service.source,"Модель и descriptor"):""}
       ${ops.length?`<section class="inspector-section"><h3>Публичные запросы <span class="count">${ops.length}</span></h3>${ops.map(o=>linkButton("api",o.id,`${methodPill(o.method)}<code>${esc(o.path)}</code>`,"mini-link",{service:""})).join("")}</section>`:""}
       ${service?.status==="planned"?'<div class="callout warning">Активного service descriptor нет. Контракты roadmap не считаются работающим API.</div>':""}
-      ${D.calls.some(c=>c.caller===id)?`<section class="inspector-section"><h3>Синхронные зависимости</h3>${D.calls.filter(c=>c.caller===id).map(c=>`<div class="fact"><strong>${esc(title(c.callee))}</strong><p class="fact-description">${esc(c.purpose)}</p>${sourceLink(c.source)}</div>`).join("")}</section>`:""}
-      ${service?.status==="implemented"?'<section class="inspector-section"><h3>Слои сервиса</h3><p class="muted">Generated OpenAPI transport → handwritten MVC controller → application use case → domain и ports → JDBC / инфраструктурные адаптеры. Domain и application не зависят от Spring.</p></section>':""}
+      ${D.calls.some(c=>c.caller===id)?`<section class="inspector-section"><h3>Синхронные зависимости</h3>${D.calls.filter(c=>c.caller===id).map(c=>`<div class="fact"><strong>${esc(title(c.callee))}</strong> ${statusPill(c.status)}<p class="fact-description">${esc(c.purpose)}</p>${sourceLink(c.source)}</div>`).join("")}</section>`:""}
+      ${service?.status==="implemented"?'<section class="inspector-section"><h3>Слои сервиса</h3><p class="muted">Generated OpenAPI transport → handwritten обработчики → принадлежащая сервису бизнес-логика → JDBC / инфраструктурные адаптеры. Конкретные transaction boundaries и зависимости показаны в сценариях и исходниках.</p></section>':""}
       ${events.length?`<section class="inspector-section"><h3>События</h3>${events.map(e=>linkButton("events",e.type,`<span>${e.producer===id?"↗":"↙"}</span><code>${esc(e.type)}</code>`,"mini-link",{service:""})).join("")}</section>`:""}
       ${relevantFacts.length?`<section class="inspector-section compact-facts"><h3>Параметры</h3>${relevantFacts.map(factMarkup).join("")}${linkButton("facts","","Все таймауты и правила","mini-link",{service:service?owner:""})}</section>`:""}
       ${service?.dbml?`<section class="inspector-section">${sourceLink({path:service.dbml,line:1},"Схема данных · DBML")}</section>`:""}`;
@@ -223,11 +237,11 @@
     const eventEdge=edge.kind==="event";
     const relevantEvents = D.events.filter(e=>(state.planned||e.status==="implemented")&&(edge.to==="nats" ? e.producer===edge.from : asArray(e.consumers).includes(edge.to)));
     return `<div class="eyeline"><span class="pill">${eventEdge?"JetStream":edge.kind==="store"?"Хранилище":edge.kind==="planned"?"Целевая связь":"Синхронный вызов"}</span></div><h2>${esc(title(edge.from))} → ${esc(title(edge.to))}</h2><p class="muted">${esc(edge.label)}</p>
-      ${eventEdge?`<div class="callout">At-least-once. Дубли допустимы; порядок не гарантирован. Notification фиксирует inbox и изменения в одной транзакции до ACK.</div><h3>Точные subjects</h3>${relevantEvents.map(e=>linkButton("events",e.type,`<code>${esc(e.subject)}</code>`,"mini-link",{service:""})).join("")}`:
+      ${eventEdge?`<div class="callout">At-least-once. Дубли допустимы; порядок не гарантирован. Потребитель фиксирует inbox и изменения в одной транзакции до ACK; invalid envelope следует отдельной durable rejection policy.</div><h3>Точные subjects</h3>${relevantEvents.map(e=>linkButton("events",e.type,`<code>${esc(e.subject)}</code>`,"mini-link",{service:""})).join("")}`:
       edge.id==="notification-jwks"?`<div class="callout">Публичное получение ключей с фиксированного origin. Это не вызов доменного internal API.</div>${linkButton("api","getIdentityJwks","Открыть JWKS-контракт")}`:
-      edge.from==="gateway"?publicOps.filter(o=>o.service===edge.to).map(o=>linkButton("api",o.id,`${methodPill(o.method)}<code>${esc(o.path)}</code>`,"mini-link",{service:""})).join(""):
+      (edge.from==="gateway"||edge.id==="local-nutrition")?publicOps.filter(o=>o.service===edge.to).map(o=>linkButton("api",o.id,`${methodPill(o.method)}<code>${esc(o.path)}</code>`,"mini-link",{service:""})).join(""):
       edge.kind==="planned"?'<div class="callout warning">Разрешённая целевая зависимость. Реализация вызова, активный internal contract и его таймауты ещё не определены.</div>':
-      `<p class="muted">Подробные условия обработки и значения таймаутов связаны с исходным кодом.</p>${linkButton("facts","","Открыть параметры","button",{service:edge.from==="notification"?"notification":""})}`}
+      `<p class="muted">Подробные условия обработки и значения таймаутов связаны с исходным кодом.</p>${linkButton("facts","","Открыть параметры","button",{service:serviceById.has(edge.from)?edge.from:""})}`}
       <section class="inspector-section">${linkButton("map",edge.from,"Компонент отправителя")}</section>`;
   }
   function flowInspector(flow) {
@@ -264,18 +278,25 @@
     const statuses=Object.keys(op.responses||{});
     const selected=statuses.includes(state.response)?state.response:statuses[0];
     const body=op.requestBody;
+    const operationFactIds = (op.visibility === "internal" ? {
+      identity:["identity-probes"], notification:["notification-readiness"], nutrition:["nutrition-probes"]
+    } : {
+      identity:["infra-gateway-deadlines","infra-app-deadline","identity-db-defaults"],
+      notification:["infra-gateway-deadlines","notification-database","notification-jwks-http"],
+      nutrition:["nutrition-jdbc","nutrition-body","nutrition-transaction","nutrition-jwks"]
+    })[op.service] || [];
     const opNotes=asArray(notes[op.id]?.notes);
     const missingSecurity=[...new Set(security.flatMap(requirement=>Object.keys(requirement)))].filter(name=>!Object.hasOwn(op.securitySchemes||{},name));
     return `<div class="eyeline">${serviceMark(op.service)}<span class="pill ${op.visibility==="internal"?"internal":"implemented"}">${op.visibility==="internal"?"Закрыт на ingress":"Публичный маршрут"}</span><code>${esc(op.id)}</code></div>
       <div class="operation-path">${methodPill(op.method)}<code>${esc(op.path)}</code></div><h2>${esc(op.summary)}</h2><p class="description">${esc(op.description||"")}</p>${sourceLink(op.source,op.source?.path||"OpenAPI")}
-      <div class="flow-strip">${op.visibility==="internal"?`Оркестратор / оператор <span class="arrow">→</span> ${esc(title(op.service))} <span class="pill internal">без публичного gateway</span>`:`Клиент <span class="arrow">→</span> API Gateway <span class="arrow">→</span> ${esc(title(op.service))} ${flow?`<span class="arrow">·</span>${mapFlowLink(flow,"Путь запроса","")}`:""}`}</div>
+      <div class="flow-strip">${op.visibility==="internal"?`Оркестратор / оператор <span class="arrow">→</span> ${esc(title(op.service))} <span class="pill internal">без публичного gateway</span>`:`Клиент <span class="arrow">→</span> ${op.service==="nutrition"?"Локальный HTTP :8083 (ingress не подключён)":"API Gateway"} <span class="arrow">→</span> ${esc(title(op.service))} ${flow?`<span class="arrow">·</span>${mapFlowLink(flow,"Путь запроса","")}`:""}`}</div>
       ${opNotes.length?`<ul class="note-list">${opNotes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`:""}
       <section class="detail-section"><h3>Авторизация</h3>${security.length?`<div class="callout">${security.map(requirement=>Object.keys(requirement).map(name=>`<code>${esc(name)}</code>${op.securitySchemes?.[name]?.scheme==="bearer"?" · Authorization: Bearer &lt;access JWT&gt;":""}`).join(" + ")).join(" или ")}</div>${missingSecurity.length?`<div class="callout warning">Пробел контракта: ${esc(missingSecurity.join(", "))} используется в security, но не объявлен в components.securitySchemes этого файла.${op.service==="notification"?" Реализация требует Authorization: Bearer &lt;access JWT&gt;; проверка описана в сценарии и исходниках ниже.":""}</div>`:""}${rawDetails("Security schemes",op.securitySchemes||{})}`:`<p class="response-description">${op.visibility==="internal"?"Без пользовательского токена на уровне приложения. Доступ ограничен deployment-сетью.":"Bearer JWT не требуется. Proof, refresh credentials и rate limits могут проверяться самим handler."}</p>`}</section>
       <section class="detail-section"><h3>Параметры пути, query и headers <span class="count">${asArray(op.parameters).length}</span></h3>${parametersMarkup(op.parameters)}</section>
       <section class="detail-section"><h3>Тело запроса ${body?`<span class="pill">${body.required?"Обязательно":"Необязательно"}</span>`:""}</h3>${body?contentMarkup(body.content):'<p class="response-description">Тело запроса не определено контрактом.</p>'}</section>
       <section class="detail-section"><h3>Ответы</h3><div class="response-tabs" role="tablist" aria-label="Коды ответа">${statuses.map(s=>`<button type="button" role="tab" aria-selected="${s===selected}" class="response-tab ${s===selected?"active":""}" data-action="response" data-response="${esc(s)}">${esc(s)}</button>`).join("")}</div><div id="response-body">${responseMarkup(op.responses?.[selected])}</div></section>
       ${op.visibility!=="internal"?`<section class="detail-section"><div class="code-heading"><span>Пример запроса · замените placeholders</span>${actionButton("copy-curl","Скопировать cURL",`data-operation="${esc(op.id)}"`,"text-button")}</div><div class="code-block"><pre>${esc(curlExample(op))}</pre></div></section>`:""}
-      <section class="detail-section"><h3>Таймауты и ограничения</h3><div class="facts-grid">${facts.filter(f=>(op.visibility==="internal"?[op.service==="identity"?"identity-probes":"notification-readiness"]:["infra-gateway-deadlines","infra-app-deadline",...(op.service==="identity"?["identity-db-defaults"]:["notification-database","notification-jwks-http"])]).includes(f.id)).map(factMarkup).join("")}</div>${linkButton("facts","","Все параметры сервиса","mini-link",{service:op.service})}</section>
+      <section class="detail-section"><h3>Таймауты и ограничения</h3><div class="facts-grid">${facts.filter(f=>operationFactIds.includes(f.id)).map(factMarkup).join("")}</div>${linkButton("facts","","Все параметры сервиса","mini-link",{service:op.service})}</section>
       ${flow?`<section class="detail-section"><h3>Что происходит внутри</h3>${timeline(flow)}${mapFlowLink(flow)}</section>${continuations(flow)}`:""}
       ${rawDetails("Полная операция OpenAPI",op)}`;
   }

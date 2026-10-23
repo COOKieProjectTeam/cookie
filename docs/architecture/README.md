@@ -73,3 +73,12 @@ ADR 0003–0013, имеют приоритет над более старым с
 Изменение границы сервиса требует одновременно проверить OpenAPI, события,
 синхронные вызовы, DBML, deploy и ADR. Новое событие добавляется в
 `model/events.yaml` в том же PR, где добавляются producer и consumers.
+
+## Autonomous Nutrition
+
+[ADR 0014](../adr/0014-autonomous-nutrition-service.md) records the implemented
+Nutrition boundary, aggregate snapshots and Notification-compatible events.
+Recipe/Media calls remain planned. Notification #20 is now in main. The atlas includes current contracts, handwritten Nutrition flows/facts and
+topology, with local implementation distinguished from production wiring. A separate test now runs real Nutrition HTTP,
+PostgreSQL/outbox, JetStream and the Notification JAR consumer through persisted
+projections. This ingestion E2E does not establish scheduler/provider delivery.

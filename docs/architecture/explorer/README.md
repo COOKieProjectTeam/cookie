@@ -6,7 +6,9 @@
 открыть `http://127.0.0.1:8099/`.
 
 Атлас показывает реализацию в рабочем дереве, а не состояние запущенного
-production. Identity и Notification определяются по service descriptors.
+production. Identity, Notification и Nutrition определяются по service descriptors.
+Nutrition показан с локальным HTTP входом, собственной БД и mounted public
+JWKS; production Compose/ingress пока включает только Identity и Notification.
 Целевая модель, ещё не реализованные producers и consumers отмечены отдельно.
 Legacy Go bootstrap и development notification sink не являются доменными
 сервисами и не входят в перечень активных сервисов.

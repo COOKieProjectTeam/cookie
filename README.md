@@ -100,3 +100,11 @@ Provisioning и deployment выполняются раздельно по
 - Технические решения фиксируются ADR рядом с кодом.
 - Интервью, персональные данные и продуктовые требования сюда не копируются.
 - Эксперимент переносится из `cookie-labs` только после зафиксированного решения.
+
+Nutrition now implements autonomous diary, saved-dish and hydration APIs with
+transactional events. See [service instructions](backend/services/nutrition/README.md)
+and [ADR 0014](docs/adr/0014-autonomous-nutrition-service.md). Notification PR #20
+has merged into main. Nutrition HTTP → outbox → JetStream → the real Notification
+consumer is covered by ingestion E2E tests; scheduler/provider delivery is not.
+Handwritten Nutrition atlas flows/topology remain a follow-up. The generated
+atlas snapshot reflects the current contracts, including exact nutrient strings.

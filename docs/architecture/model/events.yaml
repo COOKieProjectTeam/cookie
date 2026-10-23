@@ -44,8 +44,8 @@ events:
     consumers: [user, food_catalog, nutrition, recipe, shopping, health, progress, notification, media, meal_planner]
     payload: [accountId, deletionRequestId, requestedAt]
     implementation_note: >-
-      Identity publishes the request; Notification consumes it and erases its
-      owned data with a minimal tombstone. Other listed consumers are target
+      Identity publishes the request; Notification and Nutrition consume it and erase
+      their owned data with minimal tombstones. Other listed consumers are target
       data owners. No acknowledgement/finalization protocol exists; the account
       therefore remains DELETION_PENDING. event_id and
       occurred_at are mandatory envelope fields and are intentionally not
@@ -92,7 +92,8 @@ events:
     version: 1
     producer: nutrition
     consumers: [notification]
-    payload: [mealId, userId, eatenAt, dishes]
+    payload: [mealId, userId, eatenAt]
+    aggregate_version: positive monotonic meal version
 
     aggregate_version_required: true
 
@@ -100,7 +101,8 @@ events:
     version: 1
     producer: nutrition
     consumers: [notification]
-    payload: [mealId, userId, eatenAt, changedFields]
+    payload: [mealId, userId, eatenAt]
+    aggregate_version: positive monotonic meal version
 
     aggregate_version_required: true
 
@@ -109,6 +111,7 @@ events:
     producer: nutrition
     consumers: [notification]
     payload: [mealId, userId]
+    aggregate_version: strictly higher meal tombstone version
 
     aggregate_version_required: true
 
@@ -117,12 +120,15 @@ events:
     producer: nutrition
     consumers: [progress]
     payload: [userId, localDate, nutritionTotals]
+    aggregate_version: positive monotonic version scoped to userId and localDate, survives empty days
 
   - type: nutrition.water.changed
     version: 1
     producer: nutrition
     consumers: [progress, notification]
     payload: [userId, localDate, totalMl, lastConsumedAt]
+    aggregate_version: positive monotonic version scoped to userId and localDate, survives empty days
+    implementation_note: totalMl is an integer in [0, 2147483647]; overflow is rejected atomically by Nutrition. lastConsumedAt is explicitly null when totalMl is zero; complete snapshot, never a delta
 
     aggregate_version_required: true
 
