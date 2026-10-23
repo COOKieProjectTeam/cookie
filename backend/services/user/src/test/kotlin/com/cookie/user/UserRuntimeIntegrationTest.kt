@@ -81,11 +81,15 @@ class UserRuntimeIntegrationTest {
         return http.send(b.method(method,body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.ofString())
     }
     private fun activate(user:UUID) {
-        val event=mapOf("event_id" to id(),"event_type" to "account.activated","event_version" to 1,
+        val eventId=id()
+        val event=mapOf("event_id" to eventId,"event_type" to "account.activated","event_version" to 1,
             "producer" to "identity","aggregate_type" to "account","aggregate_id" to user,"occurred_at" to Instant.now(),
             "payload" to mapOf("userId" to user,"accountMetadata" to mapOf("registeredWith" to "email")))
         Nats.connect("nats://${nats.host}:${nats.getMappedPort(4222)}").use { it.jetStream().publish("cookie.events.account.activated.v1",mapper.writeValueAsBytes(event)) }
-        await().atMost(Duration.ofSeconds(15)).until { send("GET","/v1/me/profile",token(user)).statusCode()==200 }
+        await().atMost(Duration.ofSeconds(15)).until {
+            jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id=?",Int::class.java,eventId)==1 &&
+                jdbc.queryForObject("SELECT count(*) FROM profiles WHERE user_id=?",Int::class.java,user)==1
+        }
     }
     @Test fun `existing Identity account can initialize after activation retention expired`() {
         val account=id()
@@ -133,6 +137,22 @@ class UserRuntimeIntegrationTest {
             assertThat(event.path("payload").properties().map { it.key }).containsExactlyInAnyOrder("userId","changedFields","timezone","locale","onboardingCompleted")
         }
     }
+    @Test fun `review regression contract accepts exact cents with redundant trailing zeros`() {
+        val jwt=token(id())
+        val response=send("PUT","/v1/me/goals/current",jwt,
+            """{"calories":2000.000,"proteinG":100.000,"fatG":70.000,"carbsG":230.000,"fiberG":25.000,"targetWeightKg":75.000,"targetWeightChangeKgPerWeek":-0.500}""",UUID.randomUUID())
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200)
+    }
+    @Test fun `review regression equivalent numeric representations replay original command`() {
+        val jwt=token(id());val commandId=UUID.randomUUID()
+        val first=send("PUT","/v1/me/goals/current",jwt,
+            """{"calories":2000,"proteinG":100,"fatG":70,"carbsG":230,"fiberG":25}""",commandId)
+        assertThat(first.statusCode()).withFailMessage(first.body()).isEqualTo(200)
+        val replay=send("PUT","/v1/me/goals/current",jwt,
+            """{"calories":2000.00,"proteinG":100.00,"fatG":70.00,"carbsG":230.00,"fiberG":25.00}""",commandId)
+        assertThat(replay.statusCode()).withFailMessage(replay.body()).isEqualTo(200)
+        assertThat(replay.body()).isEqualTo(first.body())
+    }
     @Test fun `consumer recovers from replaced connection and invalid event quarantine does not block healthy event`() {
         val before=jdbc.queryForObject("SELECT count(*) FROM message_quarantine",Long::class.java)!!
         context.getBean(UserBroker::class.java).close()
@@ -143,6 +163,27 @@ class UserRuntimeIntegrationTest {
         val user=id();activate(user)
         await().atMost(Duration.ofSeconds(10)).until { jdbc.queryForObject("SELECT count(*) FROM message_quarantine",Long::class.java)==before+1 }
         assertThat(send("GET","/v1/me/profile",token(user)).statusCode()).isEqualTo(200)
+    }
+    @Test fun `broker deletion commits erasure before stale token and late activation are rejected`() {
+        val user=id();activate(user);val jwt=token(user);val eventId=id()
+        val event=mapOf("event_id" to eventId,"event_type" to "account.deletion.requested","event_version" to 1,
+            "producer" to "identity","aggregate_type" to "account","aggregate_id" to user,"occurred_at" to Instant.now(),
+            "payload" to mapOf("accountId" to user,"deletionRequestId" to id(),"requestedAt" to Instant.now()))
+        Nats.connect("nats://${nats.host}:${nats.getMappedPort(4222)}").use {
+            it.jetStream().publish("cookie.events.account.deletion.requested.v1",mapper.writeValueAsBytes(event))
+        }
+        await().atMost(Duration.ofSeconds(15)).until { jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id=?",Int::class.java,eventId)==1 }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM profiles WHERE user_id=?",Int::class.java,user)).isZero()
+        assertThat(send("GET","/v1/me/profile",jwt).statusCode()).isEqualTo(403)
+        val lateId=id()
+        val late=mapOf("event_id" to lateId,"event_type" to "account.activated","event_version" to 1,
+            "producer" to "identity","aggregate_type" to "account","aggregate_id" to user,"occurred_at" to Instant.now(),
+            "payload" to mapOf("userId" to user,"accountMetadata" to emptyMap<String,String>()))
+        Nats.connect("nats://${nats.host}:${nats.getMappedPort(4222)}").use {
+            it.jetStream().publish("cookie.events.account.activated.v1",mapper.writeValueAsBytes(late))
+        }
+        await().atMost(Duration.ofSeconds(15)).until { jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id=?",Int::class.java,lateId)==1 }
+        assertThat(send("GET","/v1/me/profile",jwt).statusCode()).isEqualTo(403)
     }
     @Test fun `broker unavailable leaves HTTP ready and durable outbox resumes`() {
         val user=id();activate(user)

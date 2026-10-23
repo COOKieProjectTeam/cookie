@@ -100,7 +100,11 @@ concurrent optimistic writes/cheat-day/idempotency, history, isolation, deletion
 late replay, rollback and reviewer regression for immutable evidence.
 `UserRuntimeIntegrationTest`: actual User Spring HTTP runtime, PostgreSQL, JetStream,
 two signed fixture users, strict binding, broker pause/recovery, durable events and
-quarantine. JWKS and Identity lifecycle producer are fixtures: this is **not** full
+quarantine, inbox-confirmed lifecycle processing, deletion/stale JWT rejection,
+numeric contract replay and real User → Notification locale propagation.
+`UserMigrationIntegrationTest` executes the migration JAR on a V1 database with
+representative data and converges existing broad runtime grants.
+JWKS and Identity lifecycle producer are fixtures: this is **not** full
 Identity E2E. `IdentityTokensTest` verifies token profile/cache failures;
 `UserDomainTest` verifies quantity/patch/override boundaries.
 

@@ -6,9 +6,21 @@ BEGIN
   EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM user_app',s);
   EXECUTE format('REVOKE CREATE ON SCHEMA %I FROM PUBLIC,user_app',s);
   EXECUTE format('GRANT USAGE ON SCHEMA %I TO user_app',s);
-  FOREACH t IN ARRAY ARRAY['profiles','diet_preferences','allergies','daily_goal_overrides'] LOOP
+  FOREACH t IN ARRAY ARRAY['diet_preferences','allergies','daily_goal_overrides'] LOOP
     EXECUTE format('GRANT SELECT,INSERT,UPDATE,DELETE ON %I.%I TO user_app',s,t);
   END LOOP;
+  EXECUTE format('GRANT SELECT,INSERT,DELETE ON %I.profiles TO user_app',s);
+  EXECUTE format('GRANT UPDATE(height_cm,activity_level,timezone,locale,version,updated_at) ON %I.profiles TO user_app',s);
+  -- The parent must not bypass immutable child grants through ON DELETE CASCADE.
+  EXECUTE format('ALTER TABLE %I.profiles ENABLE ROW LEVEL SECURITY',s);
+  EXECUTE format('DROP POLICY IF EXISTS profile_read ON %I.profiles',s);
+  EXECUTE format('CREATE POLICY profile_read ON %I.profiles FOR SELECT TO user_app USING(true)',s);
+  EXECUTE format('DROP POLICY IF EXISTS profile_insert ON %I.profiles',s);
+  EXECUTE format('CREATE POLICY profile_insert ON %I.profiles FOR INSERT TO user_app WITH CHECK(NOT EXISTS (SELECT 1 FROM %I.account_tombstones t WHERE t.user_id=profiles.user_id))',s,s);
+  EXECUTE format('DROP POLICY IF EXISTS profile_update ON %I.profiles',s);
+  EXECUTE format('CREATE POLICY profile_update ON %I.profiles FOR UPDATE TO user_app USING(true) WITH CHECK(true)',s);
+  EXECUTE format('DROP POLICY IF EXISTS profile_erasure ON %I.profiles',s);
+  EXECUTE format('CREATE POLICY profile_erasure ON %I.profiles FOR DELETE TO user_app USING(EXISTS (SELECT 1 FROM %I.account_tombstones t WHERE t.user_id=profiles.user_id))',s,s);
   FOREACH t IN ARRAY ARRAY['nutrition_goal_versions','hydration_goal_versions','idempotency_commands','inbox_events'] LOOP
     EXECUTE format('GRANT SELECT,INSERT ON %I.%I TO user_app',s,t);
   END LOOP;

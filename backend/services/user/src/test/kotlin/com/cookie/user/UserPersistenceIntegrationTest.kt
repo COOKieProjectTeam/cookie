@@ -156,5 +156,18 @@ class UserPersistenceIntegrationTest {
         assertThatThrownBy { store.jdbc.execute("CREATE TABLE forbidden(x integer)") }.isInstanceOf(org.springframework.dao.DataAccessException::class.java)
         assertThatThrownBy { store.jdbc.execute("DELETE FROM flyway_schema_history") }.isInstanceOf(org.springframework.dao.DataAccessException::class.java)
     }
+    @Test fun `review regression runtime cannot erase immutable revisions through profile cascade`() {
+        val user=activate();service.setGoal(user,UUID.randomUUID(),goal())
+        val version=service.profile(user).version
+        runCatching { store.jdbc.update("DELETE FROM profiles WHERE user_id=?",user) }
+        assertThat(service.profile(user).version).isEqualTo(version)
+        assertThat(service.goalHistory(user,null,100).items).hasSize(1)
+        assertThat(owner.queryForObject("SELECT count(*) FROM idempotency_commands WHERE user_id=?",Int::class.java,user)).isEqualTo(1)
+    }
+    @Test fun `review regression runtime cannot reassign profile identity`() {
+        val user=activate()
+        assertThatThrownBy { store.jdbc.update("UPDATE profiles SET user_id=? WHERE user_id=?",id(),user) }.isInstanceOf(org.springframework.dao.DataAccessException::class.java)
+        assertThat(service.profile(user).userId).isEqualTo(user)
+    }
     companion object { @Container @JvmStatic val postgres=PostgreSQLContainer("postgres:18-alpine") }
 }

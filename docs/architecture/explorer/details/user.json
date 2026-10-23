@@ -48,7 +48,7 @@
       "description": "Новая ручная цель создаёт immutable version; newest same-date revision wins.",
       "source": {
         "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/JdbcUserStore.kt",
-        "line": 90
+        "line": 100
       }
     },
     {

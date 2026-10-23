@@ -38,7 +38,7 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
     private fun <T : Any> command(userId: UUID, key: UUID, operation: String, input: Any, type: Class<T>, block: () -> T): T =
         read(userId) {
             ensure(key.version() == 4 && key.variant() == 2)
-            val fingerprint = MessageDigest.getInstance("SHA-256").digest(mapper.writeValueAsBytes(input)).joinToString("") { "%02x".format(it) }
+            val fingerprint = MessageDigest.getInstance("SHA-256").digest(canonical(mapper.valueToTree(input)).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
             val previous = jdbc.query("SELECT fingerprint,response::text FROM idempotency_commands WHERE user_id=? AND operation=? AND key=?",
                 { rs, _ -> rs.getString(1) to rs.getString(2) },userId,operation,key).singleOrNull()
             if (previous != null) {
@@ -51,6 +51,15 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
                 result
             }
         }
+    /** JSON numbers compare by value, not BigDecimal scale or exponent spelling. */
+    private fun canonical(node: tools.jackson.databind.JsonNode): String = when {
+        node.isNumber -> node.decimalValue().stripTrailingZeros().toPlainString()
+        node.isObject -> node.properties().sortedBy { it.key }.joinToString(",", "{", "}") {
+            mapper.writeValueAsString(it.key) + ":" + canonical(it.value)
+        }
+        node.isArray -> node.joinToString(",", "[", "]") { canonical(it) }
+        else -> node.toString()
+    }
     override fun profile(userId: UUID) = read(userId) { loadProfile(userId) }
     fun loadProfile(userId: UUID): Profile = jdbc.query("SELECT * FROM profiles WHERE user_id=?", { r, _ ->
         Profile(userId,r.getString("sex")?.let(Sex::valueOf),r.getObject("birth_date",LocalDate::class.java),r.getBigDecimal("height_cm"),

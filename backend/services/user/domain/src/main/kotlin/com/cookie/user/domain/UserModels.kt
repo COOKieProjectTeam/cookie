@@ -27,7 +27,7 @@ data class ProfileChange(
 ) {
     fun validate() {
         ensure(version > 0)
-        heightCm?.let { ensure(it >= BigDecimal("30") && it <= BigDecimal("300") && it.scale() <= 2) }
+        heightCm?.let { ensure(it >= BigDecimal("30") && it <= BigDecimal("300") && it.stripTrailingZeros().scale() <= 2) }
         timezone?.let { ensure(it in ZoneId.getAvailableZoneIds()) }
         locale?.let { ensure(it in setOf("ru", "en")) }
         ensure(heightCm != null || activityLevel != null || timezone != null || locale != null || dietPreferences != null || allergies != null)
@@ -36,15 +36,15 @@ data class ProfileChange(
 data class Nutrients(val calories: BigDecimal, val proteinG: BigDecimal, val fatG: BigDecimal,
                      val carbsG: BigDecimal, val fiberG: BigDecimal) {
     fun validate() { listOf(calories, proteinG, fatG, carbsG, fiberG).forEach {
-        ensure(it.signum() >= 0 && it <= BigDecimal("999999.99") && it.scale() <= 2)
+        ensure(it.signum() >= 0 && it <= BigDecimal("999999.99") && it.stripTrailingZeros().scale() <= 2)
     } }
 }
 data class NutritionGoalCommand(val nutrients: Nutrients, val targetWeightKg: BigDecimal? = null,
                                 val targetWeightChangeKgPerWeek: BigDecimal? = null) {
     fun validate() {
         nutrients.validate()
-        targetWeightKg?.let { ensure(it >= BigDecimal("1") && it <= BigDecimal("999.99") && it.scale() <= 2) }
-        targetWeightChangeKgPerWeek?.let { ensure(it.abs() <= BigDecimal("99.99") && it.scale() <= 2) }
+        targetWeightKg?.let { ensure(it >= BigDecimal("1") && it <= BigDecimal("999.99") && it.stripTrailingZeros().scale() <= 2) }
+        targetWeightChangeKgPerWeek?.let { ensure(it.abs() <= BigDecimal("99.99") && it.stripTrailingZeros().scale() <= 2) }
     }
 }
 data class NutritionGoal(val id: UUID, val effectiveFrom: LocalDate, val revision: Long,
@@ -58,7 +58,7 @@ data class OverrideCommand(val type: OverrideType, val calories: BigDecimal? = n
                            val unlimitedCalories: Boolean = false) {
     fun validate() {
         val values = listOf(calories, proteinG, fatG, carbsG, fiberG)
-        values.filterNotNull().forEach { ensure(it.signum() >= 0 && it <= BigDecimal("999999.99") && it.scale() <= 2) }
+        values.filterNotNull().forEach { ensure(it.signum() >= 0 && it <= BigDecimal("999999.99") && it.stripTrailingZeros().scale() <= 2) }
         when(type) {
             OverrideType.CUSTOM -> ensure(calories != null && !unlimitedCalories)
             OverrideType.CHEAT_DAY -> ensure(unlimitedCalories && values.all { it == null })
