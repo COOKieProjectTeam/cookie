@@ -73,9 +73,9 @@ DELETION_PENDING until that separately designed protocol exists.
 
 ## Explicit deferrals and evidence boundary
 
-- Complete handwritten Nutrition atlas flows/facts and topology. Notification
-  #20 has now merged; the rebase refreshes only the generated contract snapshot
-  required by main CI. The agreed full-map readiness exception remains.
+- The former Nutrition atlas deferral was completed on 2026-10-23: handwritten
+  flows/facts and topology now include database, mounted public JWKS and real
+  messaging paths, without claiming production Compose/ingress wiring.
 - Nutrition → Notification ingestion now has an actual-process E2E test: HTTP,
   PostgreSQL/outbox, JetStream and Notification inbox/projections. Scheduling,
   provider delivery and Identity HTTP-driven lifecycle remain separate evidence.

@@ -78,8 +78,7 @@ ADR 0003–0013, имеют приоритет над более старым с
 
 [ADR 0014](../adr/0014-autonomous-nutrition-service.md) records the implemented
 Nutrition boundary, aggregate snapshots and Notification-compatible events.
-Recipe/Media calls remain planned. Notification #20 is now in main. The generated
-atlas snapshot includes current contracts; handwritten Nutrition flows/topology
-remain an explicit follow-up. A separate test now runs real Nutrition HTTP,
+Recipe/Media calls remain planned. Notification #20 is now in main. The atlas includes current contracts, handwritten Nutrition flows/facts and
+topology, with local implementation distinguished from production wiring. A separate test now runs real Nutrition HTTP,
 PostgreSQL/outbox, JetStream and the Notification JAR consumer through persisted
 projections. This ingestion E2E does not establish scheduler/provider delivery.

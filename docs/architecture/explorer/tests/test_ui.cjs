@@ -89,6 +89,7 @@ function harness(data = dataSnapshot(), initialHash = "#map") {
     showModal() { this.open = true; }
     close() { this.open = false; }
     scrollIntoView() {}
+    getBoundingClientRect() { return { top:0, bottom:100, left:0, right:100 }; }
   }
 
   function element(id) {
@@ -502,4 +503,60 @@ test("schema values and embedded source text remain inert markup", () => {
   assert.ok(!rendered.includes("<img"));
   assert.ok(!rendered.includes("<script"));
   assert.ok(visibleText(rendered).includes(attack), "Source viewer displays escaped source, not executable tags");
+});
+
+test("Nutrition map exposes local HTTP, owned storage and mounted keys without a production route", () => {
+  const ui = harness(undefined, "#map?item=nutrition");
+  for (const node of ["nutrition", "nutrition_db", "nutrition_jwks", "nutrition_client"])
+    assert.match(ui.markup(), new RegExp(`data-node="${node}"`));
+  for (const edge of ["local-nutrition", "nutrition-db", "nutrition-jwks-file", "nutrition-nats", "nats-nutrition"])
+    assert.match(ui.markup(), new RegExp(`data-edge="${edge}"`));
+  assert.doesNotMatch(ui.markup(), /data-edge="gateway-nutrition"/);
+  ui.navigate("#api?item=createMeal");
+  assert.match(visibleText(ui.markup()), /Локальный HTTP :8083/);
+  assert.doesNotMatch(ui.markup().match(/<div class="flow-strip">([\s\S]*?)<\/div>/)[1], /API Gateway/);
+});
+
+test("every Nutrition operation has a navigable flow and async continuations reach implemented consumers", () => {
+  const ui = harness();
+  const details = ui.data.details.find(d => d.serviceId === "nutrition");
+  assert.ok(details, "Nutrition requires handwritten flows, not only generated HTTP data");
+  const allFlows = ui.data.details.flatMap(d => d.flows);
+  for (const op of ui.data.operations.filter(o => o.service === "nutrition")) {
+    const note = details.operationNotes[op.id];
+    assert.ok(note, `${op.id} must link to its flow`);
+    assert.ok(details.flows.find(f => f.id === note.flowId).operationIds.includes(op.id));
+    ui.navigate(`#map?flow=${note.flowId}`);
+    for (const step of details.flows.find(f => f.id === note.flowId).steps)
+      assert.match(ui.markup(), new RegExp(`data-node="${step.node}"`));
+  }
+  const outbox = details.flows.find(f => f.id === "nutrition-outbox");
+  assert.ok(outbox.nextFlows.includes("notification-snapshot-ingestion"));
+  assert.ok(allFlows.some(f => f.id.startsWith("identity-") && f.nextFlows?.includes("nutrition-deletion")));
+  ui.navigate("#events?service=nutrition&direction=published");
+  assert.equal(catalogIds(ui).length, 5);
+  ui.navigate("#events?service=nutrition&direction=consumed");
+  assert.deepEqual(catalogIds(ui), ["account.deletion.requested"]);
+});
+
+test("Nutrition probes distinguish dependency-free liveness from readiness", () => {
+  const ui = harness();
+  const details = ui.data.details.find(d => d.serviceId === "nutrition");
+  const flowFor = id => details.flows.find(f => f.id === details.operationNotes[id].flowId);
+  const live = flowFor("nutrition:getLiveness");
+  const ready = flowFor("nutrition:getReadiness");
+  assert.ok(live.steps.some(s => s.node === "nutrition"));
+  assert.ok(!live.steps.some(s => ["nutrition_db", "nutrition_jwks"].includes(s.node)));
+  for (const node of ["nutrition", "nutrition_db", "nutrition_jwks"])
+    assert.ok(ready.steps.some(s => s.node === node));
+});
+
+test("Nutrition operation limits come from its own runtime, never Notification or gateway", () => {
+  const ui = harness();
+  for (const operation of ["createMeal", "nutrition:getReadiness", "nutrition:getLiveness"]) {
+    ui.navigate(`#api?item=${encodeURIComponent(operation)}`);
+    const panel = ui.markup().split('<h3>Таймауты и ограничения</h3>')[1].split('<section class="detail-section">')[0];
+    assert.match(panel, /fact-nutrition-/);
+    assert.doesNotMatch(panel, /fact-notification-|fact-infra-gateway-/);
+  }
 });

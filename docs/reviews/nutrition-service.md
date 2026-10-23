@@ -136,3 +136,51 @@ reproductions. The existing Identity95+44 and Notification94+72 test suites and
 four platform checks pass but do not cover all listed fault/configuration paths.
 They remain explicit follow-ups; no foreign service implementation was copied
 or changed in the Nutrition diff.
+
+## Atlas completion — 2026-10-23
+
+The user explicitly authorized completing the former handwritten-atlas deferral.
+This follow-up starts at `304d136`; runtime implementation/contracts are unchanged.
+The final commit and its CI run are recorded in PR21. Nutrition is still absent
+from main, so this work stays in its existing independent PR rather than creating
+a stacked map PR. PR22 remains separate; its recovery/key-policy fixes are not
+presented as already included here.
+
+Added 28 source-linked Nutrition facts and 10 flows covering all 21 public
+operations and both probes, with explicit liveness/readiness separation. Map
+nodes cover local HTTP, owned PostgreSQL, mounted public JWKS, producer outbox
+and deletion consumer. Nutrition→Notification continuation reflects real
+implemented ingestion; remaining User/Health/Progress producers stay planned.
+Production Compose and ingress status are explicitly separate from implementation.
+Recipe/Media sync dependencies carry planned badges.
+
+An independent reviewer audited all 123 existing facts, 21 scenarios and 12
+operation notes for Identity, Notification and infrastructure against current
+sources. Corrected stale Nutrition producer status, current recovery-failure
+semantics, no-store scope and the production-vs-implementation description.
+Identity deletion continuations now reach Nutrition as well as Notification.
+The audit checked code/configuration, not live cloud state.
+
+A second independent reviewer checked new facts, flows and UI. Findings corrected:
+saved-dish route, conflated probe flows, and a pre-existing Identity/otherwise-
+Notification timeout selector that mislabelled Nutrition operation pages. Final
+read-only follow-up found no remaining confirmed issue in that scope.
+
+Validation:
+
+- 14 generator tests and 56 UI tests passed; generated snapshots are fresh and
+  JavaScript syntax / diff whitespace checks passed.
+- Three new map/operation/probe regressions fail on isolated `304d136` atlas
+  sources and pass with the completed map. The unrelated-timeout regression
+  separately failed before the selector fix and passes after it.
+- Identity, Nutrition, Notification and all four platform check tasks, plus
+  service descriptor validation, passed. Runtime integration evidence above
+  remains for unchanged source inputs; fresh full CI is linked in PR21.
+- Browser: ordinary viewport and 390px iframe viewport, map scrolling and
+  Nutrition inspector, local HTTP entry, own timeout/JWKS facts, and navigation
+  from meal HTTP through map/outbox to Notification projections checked. This
+  is responsive browser QA, not a native mobile application test.
+
+The handwritten Nutrition atlas task is complete. Recipe/Media implementation,
+production rollout/wiring, and broader scheduling/provider/mobile E2E remain
+outside this follow-up.

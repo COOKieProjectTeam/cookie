@@ -41,9 +41,6 @@ remain planned until their authenticated internal contracts and services exist.
 
 ## Explicit follow-ups
 
-- Complete handwritten Nutrition flows/facts and topology in the HTML atlas.
-  Notification #20 is now in main; this rebase refreshes the generated contract
-  snapshot for its mandatory CI check. Full map integration remains a follow-up.
 - Full notification delivery/scheduling and Identity HTTP → Nutrition lifecycle
   remain outside the Nutrition → Notification ingestion test. That test now runs
   the actual Notification JAR, migrations and consumer against a separate DB.
@@ -133,3 +130,10 @@ strings to a decimal type for arithmetic. `NutritionInput` stays a bounded JSON
 number (maximum 1000000, six fractional places after removing trailing zeros).
 Database documents and domain events retain exact numeric values. Saved-dish
 consumption documents both first-create 201 and idempotent-replay 200.
+
+## Architecture atlas
+
+The [HTML atlas](../../../docs/architecture/explorer/index.html) includes Nutrition
+API flows, source-linked limits, its database, mounted public JWKS and actual
+JetStream paths. Local implementation is distinguished from production wiring.
+The former handwritten-map deferral is complete.

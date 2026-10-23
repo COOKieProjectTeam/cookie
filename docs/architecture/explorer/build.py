@@ -26,7 +26,7 @@ MODEL = Path("docs/architecture/model")
 METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 SOURCE_ROOTS = ("backend/", "contracts/", "docs/architecture/", "docs/adr/", "deploy/", "infra/terraform/")
 SOURCE_SUFFIXES = {".kt", ".kts", ".yaml", ".yml", ".json", ".md", ".sql", ".dbml", ".mmd", ".sh", ".tf", ".tftpl", ".conf", ".py"}
-NODE_ALIASES = {"mobile_client", "gateway", "identity_db", "notification_db", "nats", "redis", "smtp", "apns", "fcm", "object_storage"}
+NODE_ALIASES = {"mobile_client", "gateway", "identity_db", "notification_db", "nutrition_db", "nutrition_client", "nutrition_jwks", "nats", "redis", "smtp", "apns", "fcm", "object_storage"}
 
 
 class BuildError(ValueError):
