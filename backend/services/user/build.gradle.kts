@@ -114,6 +114,9 @@ tasks.named("check") {
 }
 
 tasks.named<Test>("test") {
+    val contract = rootProject.layout.projectDirectory.file("contracts/openapi/public/user.yaml")
+    inputs.file(contract)
+    systemProperty("cookie.test.user-contract", contract.asFile.absolutePath)
     useJUnitPlatform {
         excludeTags("integration")
     }

@@ -29,7 +29,7 @@ class ProfileController(private val service:UserService,private val tokens:Ident
     override fun updateProfile(idempotencyKey:UUID,profilePatch:ProfilePatch):ResponseEntity<ProfileDto> {
         val p=profilePatch
         return ok(service.update(account(),idempotencyKey,ProfileChange(p.version,p.heightCm?.let(BigDecimal::valueOf),
-            p.activityLevel?.value?.let(com.cookie.user.domain.ActivityLevel::valueOf),p.timezone,p.locale,
+            p.activityLevel?.value?.let(com.cookie.user.domain.ActivityLevel::valueOf),p.timezone,p.locale?.value,
             p.dietPreferences?.map { com.cookie.user.domain.DietType.valueOf(it.value) }?.sortedBy { it.name }?.toSet(),
             p.allergies?.map { com.cookie.user.domain.Allergen.valueOf(it.value) }?.sortedBy { it.name }?.toSet())).dto())
     }
@@ -54,7 +54,7 @@ class ProfileController(private val service:UserService,private val tokens:Ident
     }
 }
 fun com.cookie.user.domain.Profile.dto()=ProfileDto(sex?.name?.let(com.cookie.user.generated.model.Sex::forValue),birthDate,heightCm?.toDouble(),
-    activityLevel?.name?.let(com.cookie.user.generated.model.ActivityLevel::forValue),timezone,locale,
+    activityLevel?.name?.let(com.cookie.user.generated.model.ActivityLevel::forValue),timezone,ProfileDto.Locale.forValue(locale),
     dietPreferences.map { com.cookie.user.generated.model.DietType.forValue(it.name) }.toSet(),allergies.map { com.cookie.user.generated.model.Allergen.forValue(it.name) }.toSet(),onboardingCompleted,version,userId)
 fun com.cookie.user.domain.NutritionGoal.dto()=GoalDto(value.nutrients.calories,value.nutrients.proteinG,value.nutrients.fatG,value.nutrients.carbsG,value.nutrients.fiberG,
     id,effectiveFrom,GoalDto.Source.forValue(source),revision,value.targetWeightKg?.toDouble(),value.targetWeightChangeKgPerWeek?.toDouble())

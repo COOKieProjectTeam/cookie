@@ -18,4 +18,8 @@ ADR фиксируют долгоживущие технические реше�
 - `0011-account-deletion-lifecycle.md` — asynchronous account deletion, immediate access closure and staged distributed cleanup.
 - `0012-yandex-single-environment-deployment.md` — local dev, один минимальный Yandex production и per-service image delivery.
 - `0013-notification-service.md` — Notification, durable inbox/delivery, Redis scheduling and expanded production.
-- `0015-user-service.md` — User profile/goals, lifecycle and Health-owned calculation dependency (0014 is reserved by the independent Nutrition PR).
+
+- [0014 — Autonomous Nutrition](0014-autonomous-nutrition-service.md): independent
+  diary/water service, snapshots, transactional events and deferred integrations.
+
+- `0015-user-service.md` — User profile/goals, lifecycle and Health-owned calculation dependency.

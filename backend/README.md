@@ -10,3 +10,11 @@
 
 Контракты, общая инфраструктура и deployment остаются в корневых `contracts`,
 `infra` и `deploy`, потому что используются не только backend-сервисами.
+
+## Nutrition
+
+[Autonomous Nutrition](services/nutrition/README.md) owns diary snapshots, saved
+meals and water on main's Identity/platform foundation. Its real producer tests
+require PostgreSQL and JetStream. Run `:backend:services:nutrition:check` and
+`:backend:services:nutrition:integrationTest`. Recipe/Media, the Notification
+end-to-end check, and HTML atlas addition are explicit follow-ups in ADR 0014.

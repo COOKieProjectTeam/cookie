@@ -335,7 +335,7 @@
       "id": "notification-nats-retry",
       "label": "Ошибка ingestion",
       "value": "NAK с задержкой 2^min(deliveredCount,8) s",
-      "description": "Точный верхний предел этой формулы — 256 s (последующий coerceAtMost(300) его не увеличивает). Все ошибки кроме InvalidNotificationEvent повторяются без лимита; broker delivery count не превращает outage в poison.",
+      "description": "Предел формулы —256 s. При обычной transient ошибке выполняется попытка NAK без лимита retries. Ошибки quarantine/ACK/metadata/NAK могут прервать fetched batch; unACKed messages остаются для redelivery. Изоляция recovery из отдельного PR22 ещё не включена в эту ветку.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
         "line": 38
@@ -364,8 +364,8 @@
     {
       "id": "notification-upstream-status",
       "label": "Реализованные producers",
-      "value": "Identity и User — реализованы; Nutrition/Health/Progress — fixtures",
-      "description": "User → JetStream → Notification проверен с реальным User Spring runtime, Notification JAR и отдельными БД. Остальные domain producers покрыты fixtures. User production deployment пока не активирован.",
+      "value": "Identity, User и Nutrition — реализованы; Health/Progress — fixtures",
+      "description": "User → JetStream → Notification проверен с реальным User Spring runtime, Notification JAR и отдельными БД. Nutrition HTTP → outbox → JetStream → Notification также проверен до inbox/projections. Health/Progress покрыты fixtures; production rollout User/Nutrition и provider delivery этим не подтверждаются.",
       "source": {
         "path": "backend/services/user/src/test/kotlin/com/cookie/user/UserRuntimeIntegrationTest.kt",
         "line": 199
@@ -575,7 +575,7 @@
       "id": "notification-http-errors",
       "label": "Ошибки API",
       "value": "400 /401 /403 /404 /413 /503",
-      "description": "Invalid input400; invalid JWT401; local deleted account403; missing own device404; body limit413; DB/transaction/unusable signing keys503 с Retry-After:1. Ошибки и successful settings/device responses имеют no-store.",
+      "description": "Invalid input400; invalid JWT401; deleted account403; missing own device404; body limit413; DB/transaction/unusable keys503 с Retry-After:1. Ответы controller/advice и settings/device имеют no-store; body-limit filter413 этот header не устанавливает.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/transport/ApiExceptionHandler.kt",
         "line": 26
@@ -1062,7 +1062,7 @@
       "id": "notification-snapshot-ingestion",
       "title": "Domain snapshots → локальные projections",
       "operationIds": [],
-      "description": "User profile producer реализован и проверен через JetStream с Notification. Nutrition, Health и Progress остаются planned с contract fixtures. Production интеграция User ещё не активирована.",
+      "description": "User profile и Nutrition meal/water producers реализованы и проверены через JetStream с Notification до inbox/projections. Health/Progress остаются planned с contract fixtures. Production rollout User/Nutrition ещё не активирован.",
       "steps": [
         {
           "node": "user",
@@ -1075,8 +1075,8 @@
         },
         {
           "node": "nutrition",
-          "label": "Планируется: meal/water snapshots",
-          "detail": "Meal create/update/delete дают mealId и eatenAt/tombstone; water.changed — localDate,totalMl,lastConsumedAt (explicit null для empty day).",
+          "label": "Реализовано: meal/water snapshots",
+          "detail": "Meal create/update/delete дают mealId и eatenAt/tombstone; water.changed — localDate,totalMl,lastConsumedAt (explicit null для empty day). Producer Nutrition реализован; реальный ingestion проверен локально, rollout не утверждается.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
             "line": 99
@@ -1254,7 +1254,7 @@
         {
           "node": "notification",
           "label": "Классифицировать сбой",
-          "detail": "Только InvalidNotificationEvent считается poison. Все остальные exceptions дают unlimited NAK, задержка по deliveredCount максимум256 s.",
+          "detail": "InvalidNotificationEvent направляется в durable quarantine. Обычные transient errors пытаются NAK с задержкой до256 s. Сбой recovery может оборвать fetched batch; unACKed messages ждут redelivery. Отдельный PR22 устраняет эту задержку.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
             "line": 38

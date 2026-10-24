@@ -46,6 +46,7 @@ platform_postgres=false
 platform_messaging=false
 platform_testing=false
 identity=false
+nutrition=false
 notification=false
 user=false
 notification_image=false
@@ -69,6 +70,7 @@ enable_all_gradle_checks() {
   platform_messaging=true
   platform_testing=true
   identity=true
+  nutrition=true
   notification=true
   user=true
   notification_sink=true
@@ -159,6 +161,7 @@ while IFS= read -r -d '' path; do
       notification_image=true
       ;;
     build-logic/*/CookieSpringServicePlugin.kt)
+      nutrition=true
       identity=true
       notification=true
   user=true
@@ -167,6 +170,7 @@ while IFS= read -r -d '' path; do
       notification_image=true
       ;;
     build-logic/*/CookieKotlinLibraryPlugin.kt)
+      nutrition=true
       platform=true
       platform_web=true
       platform_postgres=true
@@ -180,6 +184,7 @@ while IFS= read -r -d '' path; do
       notification_image=true
       ;;
     build-logic/*/CookieKotlinMultiplatformPlugin.kt)
+      nutrition=true
       mobile=true
       ;;
     build-logic/*)
@@ -187,6 +192,12 @@ while IFS= read -r -d '' path; do
       enable_all_gradle_checks
       identity_image=true
       notification_image=true
+      ;;
+  esac
+
+  case "$path" in
+    backend/services/notification/*/src/main/* | backend/services/notification/*/build.gradle.kts | backend/services/notification/src/main/* | backend/services/notification/build.gradle.kts | apps/mobile/shared/src/commonMain/* | apps/mobile/shared/src/jvmMain/* | apps/mobile/shared/build.gradle.kts | backend/platform/*/src/main/* | backend/platform/*/build.gradle.kts | contracts/openapi/runtime.yaml | contracts/openapi/generation.yaml | contracts/openapi/public/*.yaml | docs/architecture/model/events.yaml | docs/architecture/model/services.yaml | deploy/docker/nutrition.Dockerfile)
+      nutrition=true
       ;;
   esac
 
@@ -312,6 +323,11 @@ while IFS= read -r -d '' path; do
       ;;
     backend/services/user/*)
       user=true
+      ;;
+
+    backend/services/nutrition/*)
+      nutrition=true
+      service_contracts=true
       ;;
     backend/services/identity/service.yaml)
       service_contracts=true
@@ -509,6 +525,7 @@ emit_output platform_postgres "$platform_postgres"
 emit_output platform_messaging "$platform_messaging"
 emit_output platform_testing "$platform_testing"
 emit_output identity "$identity"
+emit_output nutrition "$nutrition"
 emit_output notification "$notification"
 emit_output user "$user"
 emit_output notification_image "$notification_image"

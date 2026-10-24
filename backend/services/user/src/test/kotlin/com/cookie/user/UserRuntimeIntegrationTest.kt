@@ -106,7 +106,7 @@ class UserRuntimeIntegrationTest {
         assertThat(send("GET","/v1/healthz").statusCode()).isEqualTo(404)
         assertThat(send("GET","/v1/me/profile").statusCode()).isEqualTo(401)
         assertThat(send("GET","/v1/me/profile",token(a,"https://wrong.example")).statusCode()).isEqualTo(401)
-        for(body in listOf("""{"version":1,"locale":123}""","""{"version":1,"locale":null}""","""{"version":1,"userId":"$b","locale":"en"}""", """{"version":1,"allergies":["MILK","MILK"]}""")) {
+        for(body in listOf("""{"version":1,"locale":123}""","""{"version":1,"locale":null}""","""{"version":1,"locale":"de"}""","""{"version":1,"locale":"en-US"}""","""{"version":1,"userId":"$b","locale":"en"}""", """{"version":1,"allergies":["MILK","MILK"]}""")) {
             assertThat(send("PATCH","/v1/me/profile",jwt,body,UUID.randomUUID()).statusCode()).isEqualTo(400)
         }
         val change="""{"version":1,"locale":"en","timezone":"Europe/Moscow"}"""

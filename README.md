@@ -106,3 +106,11 @@ with an isolated PostgreSQL schema/database, Identity JWT verification, transact
 outbox/inbox and generated public client operations. It is not deployed by the
 current production topology. Automatic onboarding depends on the planned
 Health-owned nutrition assessment and idempotent initial weight API (ADR 0015).
+
+Nutrition now implements autonomous diary, saved-dish and hydration APIs with
+transactional events. See [service instructions](backend/services/nutrition/README.md)
+and [ADR 0014](docs/adr/0014-autonomous-nutrition-service.md). Notification PR #20
+has merged into main. Nutrition HTTP → outbox → JetStream → the real Notification
+consumer is covered by ingestion E2E tests; scheduler/provider delivery is not.
+The atlas includes handwritten User/Nutrition flows and topology. Its generated
+snapshot reflects both active contracts, including exact nutrient strings.

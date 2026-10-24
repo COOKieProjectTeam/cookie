@@ -9,11 +9,11 @@ servers:
 tags:
 - name: profile
   description: Profile and goals
-security:
-- BearerAuth: []
 paths:
   /me/profile:
     get:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: getProfile
@@ -68,6 +68,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
     patch:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: updateProfile
@@ -139,6 +141,8 @@ paths:
           format: uuid
   /me/goals/current:
     get:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: getCurrentGoal
@@ -193,6 +197,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
     put:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: setCurrentGoal
@@ -264,6 +270,8 @@ paths:
           format: uuid
   /me/goals/history:
     get:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: getGoalHistory
@@ -324,6 +332,8 @@ paths:
     parameters:
     - $ref: '#/components/parameters/DatePath'
     put:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: setDailyGoalOverride
@@ -394,6 +404,8 @@ paths:
           type: string
           format: uuid
     delete:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: deleteDailyGoalOverride
@@ -454,6 +466,8 @@ paths:
           type: string
           format: uuid
     get:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: getDailyGoalOverride
@@ -508,6 +522,8 @@ paths:
                 $ref: '#/components/schemas/UserError'
   /me/goals/hydration:
     get:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: getHydrationGoal
@@ -561,6 +577,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
     put:
+      security:
+      - accessToken: []
       tags:
       - profile
       operationId: setHydrationGoal
@@ -631,10 +649,13 @@ paths:
           format: uuid
 components:
   securitySchemes:
-    BearerAuth:
+    accessToken:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: >-
+        Identity access JWT: ES256, typ=at+jwt, expected issuer and audience,
+        and mandatory valid sub, sid, jti, iat and exp claims.
   parameters:
     DatePath:
       name: date
@@ -724,6 +745,9 @@ components:
         heightCm:
           type: number
           format: double
+          minimum: 30
+          maximum: 300
+          multipleOf: 0.01
           nullable: true
         activityLevel:
           allOf:
@@ -732,9 +756,11 @@ components:
         timezone:
           type: string
           maxLength: 100
+          description: IANA timezone identifier supported by the service, for example Europe/Moscow or UTC.
         locale:
           type: string
           maxLength: 100
+          enum: [ru, en]
         dietPreferences:
           type: array
           uniqueItems: true
@@ -767,14 +793,19 @@ components:
         heightCm:
           type: number
           format: double
+          minimum: 30
+          maximum: 300
+          multipleOf: 0.01
         activityLevel:
           $ref: '#/components/schemas/ActivityLevel'
         timezone:
           type: string
           maxLength: 100
+          description: IANA timezone identifier supported by the service, for example Europe/Moscow or UTC.
         locale:
           type: string
           maxLength: 100
+          enum: [ru, en]
         dietPreferences:
           type: array
           uniqueItems: true
@@ -823,9 +854,15 @@ components:
         targetWeightKg:
           type: number
           format: double
+          minimum: 1
+          maximum: 999.99
+          multipleOf: 0.01
         targetWeightChangeKgPerWeek:
           type: number
           format: double
+          minimum: -99.99
+          maximum: 99.99
+          multipleOf: 0.01
       additionalProperties: false
     GoalHistoryPage:
       type: object
@@ -882,9 +919,15 @@ components:
         targetWeightKg:
           type: number
           format: double
+          minimum: 1
+          maximum: 999.99
+          multipleOf: 0.01
         targetWeightChangeKgPerWeek:
           type: number
           format: double
+          minimum: -99.99
+          maximum: 99.99
+          multipleOf: 0.01
         id:
           type: string
           format: uuid

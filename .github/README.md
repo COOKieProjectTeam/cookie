@@ -91,3 +91,13 @@ The `User service` job runs User unit and real PostgreSQL/JetStream HTTP integra
 checks. User source/contracts and common JVM/platform/CI changes select it, and
 `CI required` aggregates its result. User does not yet participate in production
 image publication or ingress; creating a workflow does not change branch rulesets.
+
+Nutrition has an independent mandatory job for unit/OpenAPI and real
+PostgreSQL/JetStream integration checks. Service files and its public contract
+select that job; shared Gradle/CI/platform runtime inputs select it as well.
+The actual Notification JAR and generated KMP client are test dependencies:
+Notification module sources/build files, active public contracts and KMP inputs
+also select Nutrition. The integration task fingerprints the Notification JAR
+and runtime-grants script, so dependency changes invalidate cached test results.
+`CI required` incorporates its selected result. This registration does not
+modify GitHub branch-protection settings.

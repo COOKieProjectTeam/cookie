@@ -15,7 +15,7 @@ notification-run:
 test:
 	$(GO_ENV) go test ./apps/api/...
 	$(GO_ENV) go vet ./apps/api/...
-	./gradlew validatePlannedOpenApi validateServiceDescriptors :backend:platform:starter-web:check :backend:platform:starter-postgres:check :backend:platform:starter-messaging:check :backend:platform:starter-testing:check :backend:services:identity:check :backend:services:notification:check :backend:services:user:check :backend:tools:notification-sink:check compileKmpPublicClient
+	./gradlew validatePlannedOpenApi validateServiceDescriptors :backend:platform:starter-web:check :backend:platform:starter-postgres:check :backend:platform:starter-messaging:check :backend:platform:starter-testing:check :backend:services:identity:check :backend:services:notification:check :backend:services:user:check :backend:services:nutrition:check :backend:tools:notification-sink:check compileKmpPublicClient
 
 fmt:
 	gofmt -w $$(find apps/api -name '*.go' -type f)

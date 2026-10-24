@@ -34,3 +34,5 @@
 }
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 @media print{.sidebar,.top-actions,.heading-actions,.map-tools,.source-link{display:none}.layout{display:block;height:auto}.topbar{position:static}.catalog{display:block}.catalog-list{display:none}.map-layout{display:block}.inspector{max-height:none}.map-area{min-height:0}.detail-panel{padding:20px 0}details{break-inside:avoid}.code-block{max-height:none}}
+
+.service-dot.nutrition{background:#668754}.diagram-node.nutrition rect{stroke:#8ca97b}

@@ -149,7 +149,9 @@ services:
       - nutrition.day.changed
       - nutrition.water.changed
     consumes: [account.deletion.requested]
-    synchronous_dependencies: [recipe, media]
+    synchronous_dependencies: []
+    planned_synchronous_dependencies: [recipe, media]
+    implementation_note: Autonomous diary; Recipe import and Media attachments await real callees.
 
   - id: recipe
     name: Recipe Service

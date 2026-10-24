@@ -22,6 +22,7 @@ include(
     "backend:platform:starter-postgres",
     "backend:platform:starter-messaging",
     "backend:platform:starter-testing",
+    "backend:services:nutrition",
     "backend:services:identity",
     "backend:services:identity:domain",
     "backend:services:identity:application",

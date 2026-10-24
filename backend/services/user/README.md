@@ -107,6 +107,8 @@ representative data and converges existing broad runtime grants.
 JWKS and Identity lifecycle producer are fixtures: this is **not** full
 Identity E2E. `IdentityTokensTest` verifies token profile/cache failures;
 `UserDomainTest` verifies quantity/patch/override boundaries.
+`UserContractTest` compares locale and numeric boundary acceptance in the public
+request/response schemas with the domain, including redundant trailing zeros.
 
 See ADR 0015 and the revision-specific review report for remaining dependencies,
 checks and independent review. Automatic onboarding remains planned pending Health.

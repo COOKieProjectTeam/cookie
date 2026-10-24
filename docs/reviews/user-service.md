@@ -1,5 +1,44 @@
 # User Service review evidence
 
+## 2026-10-24: P3 contract correction and current main integration
+
+This follow-up starts from PR head `e4f3578bc92fc63823a878f3c79377524e882344`
+and merges main `3200797` (the completed Nutrition service). Historical evidence
+below applies to its named revisions; the PR description records the new exact
+head and its CI result separately.
+
+The active User schemas now expose the existing runtime limits: locale ru/en,
+height 30–300 cm, target weight 1–999.99 kg, weekly change -99.99–99.99 kg,
+and exact 0.01 increments. IANA timezone semantics are documented. Accepted
+wire values are unchanged; regenerated Kotlin locale properties are now enums,
+and the handwritten transport maps them to/from domain strings.
+
+| Invariant | Implementation path | Evidence | Follow-up result | Unverified area |
+| --- | --- | --- | --- | --- |
+| Contract acceptance matches domain validation | User OpenAPI and UserContractTest | Locale, height and both weight fields: accepted/rejected boundaries and trailing zeros, for request and response schemas | All 3 new tests fail on the original contract and pass after correction | The focused evaluator covers enum/minimum/maximum/multipleOf, not every JSON Schema keyword |
+| Generated callers and transport compile together | User ProfileController and generated KMP client | User/Nutrition/Identity/Notification checks; compileKmpPublicClient and OpenAPI/descriptor validation | 343 backend JVM tests plus 1 generated-client HTTP test pass on native Windows, no failures/skips; generation and compilation pass | Container tests require CI because local Docker daemon is unavailable |
+| Generation configuration uses portable contract paths | build.gradle.kts contractPath | validateOpenApiGenerationConfig rejected Windows backslashes before normalization and passes afterward | Native Windows pass; no validation gate disabled | Linux result belongs to the new CI run |
+| Both service checks survive the merge | CI selector/workflow/aggregate | test-detect-ci-scope.sh covers User, Nutrition and their shared inputs | Pass under Git Bash | Effective GitHub ruleset not changed or re-verified |
+| Atlas preserves both services and current contracts | Explorer sources and generated snapshots | 14 generator tests, 70 UI tests, snapshot check; browser User schema and HTTP → flow/map inspection | Pass | No production-topology claim |
+
+User security is explicit on every operation and uses the shared accessToken
+scheme. A separate BearerAuth scheme made the generated setBearerToken() helper
+configure a different authenticator, so User requests omitted Authorization.
+GeneratedUserClientTest reproduces the missing header before the correction and
+checks a real local HTTP request afterward; the public-client CI job runs it.
+CI jobs, source filters, model facts and atlas scenarios retain both services.
+An independent reviewer checked the combined service integration; the NATS
+inspector now includes User among implemented producers and lifecycle consumers.
+Full Identity E2E, production TLS/NATS ACL and publisher crash/lease fault injection
+remain the limitations recorded below. No deployment or main-branch merge occurred.
+
+PR #22 was inspected at `0f68e0ba87d250b403c3afac6b22b55f8a07b5f5` before
+updating this branch. Its Identity/Notification recovery and JWKS changes remain
+separate; those runtime sources and the Identity contract were not changed by
+this follow-up. Shared atlas descriptions preserve both User and Nutrition.
+
+## Original implementation evidence
+
 Base: `bf0ad8b270306c469df200effe929a694db8d860` (main). Initial implementation:
 `b29df891a61049bf5409bb6a91e1bde34ca36124`. Reviewed behavioral fixes:
 `d6c1b7c5a8b13c57a468d2b427487131b5d2f87d`. This report and subsequent atlas-only
