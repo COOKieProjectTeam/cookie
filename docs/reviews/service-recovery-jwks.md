@@ -1,5 +1,35 @@
 # Identity / Notification recovery and signing-key compatibility
 
+## Main integration, 2026-10-25
+
+Merged main `32007973b28d15834b002421e571cc790970ce4a` into the previously
+reviewed PR head `0f68e0ba87d250b403c3afac6b22b55f8a07b5f5`. The final integration
+commit and its CI run are recorded in PR #22. The original review below remains
+historical evidence for the pre-merge revision.
+
+Conflicts were limited to two Notification atlas recovery descriptions and the
+generated `data.js` / `index.html`. The descriptions retain the fixed recovery
+behavior; the generated files were rebuilt with main's Nutrition model, facts,
+flows and topology. Identity/Notification runtime and test sources, the shared
+key policy and Identity contract are unchanged from the previously reviewed PR
+head. Nutrition runtime and its atlas implementation are unchanged from main.
+PR #23 remains separate and is not included in this merge.
+
+| Invariant | Implementation | Verification | Result / limit |
+| --- | --- | --- | --- |
+| Key bounds, recovery isolation and interruption remain intact | Unchanged Identity/Notification source trees and shared key policy | Identity 101 and Notification 100 service unit tests; source comparison with the reviewed head | Passed; container tests were not rerun locally because Docker is unavailable. |
+| Nutrition remains compatible with the merged platform/contracts | Nutrition source tree from main, generated transport and KMP client | Nutrition check, all four platform checks, service descriptors and KMP compilation | Passed. Across backend modules, 347 JVM test results have no failures or skips; unchanged domain/application results include Gradle cache hits. |
+| Atlas preserves Nutrition and represents the fixed recovery behavior | Three details files and regenerated atlas | Snapshot freshness, 14 Python generator tests, 56 UI tests, browser inspection of topology/recovery/key-policy source | Passed. Independent read-only merge review checked preservation of both branches. |
+| CI selects affected services | Main's CI selector and workflow | Git Bash `test-detect-ci-scope.sh` | Passed. Exact-head remote CI is recorded in the PR. |
+
+Native Windows Gradle validation excluded only `validateOpenApiGenerationConfig`
+because its existing host-path separator comparison still fails on this branch.
+The fix belongs to unmerged PR #23; it was not copied into this PR. Linux CI must
+run that validation without exclusions. No migrations, runtime grants or
+production deployment changes were introduced by this conflict resolution.
+
+## Original implementation review
+
 Review base: `bf0ad8b270306c469df200effe929a694db8d860` (`main`).
 Scope: the commit containing this report on `fix/service-recovery-jwks`;
 final head and CI evidence are recorded in the PR to avoid a self-referential hash.

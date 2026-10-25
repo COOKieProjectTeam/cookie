@@ -1,0 +1,994 @@
+{
+  "serviceId": "nutrition",
+  "facts": [
+    {
+      "id": "nutrition-scope",
+      "label": "Граница сервиса",
+      "value": "Дневник · блюда · снимки продуктов · вода",
+      "description": "Автономный сервис. Recipe/Media не вызываются; внешний source хранит происхождение, а не подтверждение пищевых значений.",
+      "source": {
+        "path": "backend/services/nutrition/service.yaml",
+        "line": 24
+      }
+    },
+    {
+      "id": "nutrition-deployment",
+      "label": "Статус запуска",
+      "value": "Реализовано; вне production Compose/ingress",
+      "description": "Для совместного локального запуска используйте PORT=8083: Notification занимает8082. Нужны отдельная БД и public JWKS mount; карта не утверждает развёртывание.",
+      "source": {
+        "path": "backend/services/nutrition/README.md",
+        "line": 119
+      }
+    },
+    {
+      "id": "nutrition-auth",
+      "label": "Access JWT",
+      "value": "ES256 · at+jwt · P-256 · UUIDv7 sub/sid/jti",
+      "description": "Проверяются issuer, единственный audience, подпись и iat/exp/nbf без skew. Запрещены token-controlled jwk/jku/x5u и crit. В отличие от Notification, отдельная проверка максимального lifetime24h здесь отсутствует.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+        "line": 38
+      }
+    },
+    {
+      "id": "nutrition-jwks",
+      "label": "Публичный JWKS файл",
+      "value": "≤64 KiB · 1…16 ключей · чтение на каждый verify",
+      "description": "Только публичные EC/P-256 signing keys с уникальным непустым kid. Атомарная замена файла обновляет current/retiring keys без рестарта. HTTP-запроса к Identity нет; неверный файл →503, неверный token →401.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+        "line": 25
+      }
+    },
+    {
+      "id": "nutrition-ownership",
+      "label": "Account isolation",
+      "value": "Verified sub + SQL user_id + deletion tombstone",
+      "description": "Все операции входят в transaction, проверяют tombstone; чужой объект даёт404, локально удалённый аккаунт403. ID клиента не выбирает владельца.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+        "line": 22
+      }
+    },
+    {
+      "id": "nutrition-transaction",
+      "label": "Транзакция",
+      "value": "5 s · advisory lock на account",
+      "description": "Даже чтения используют account lock. Запись агрегата, версий дня и outbox атомарна; broker вызывается после transaction другим worker. Hash collision лишь сериализует accounts.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionApplication.kt",
+        "line": 20
+      }
+    },
+    {
+      "id": "nutrition-jdbc",
+      "label": "JDBC defaults",
+      "value": "pool10 · acquire2 s · validation1 s · socket10 s",
+      "description": "PostgreSQL statement_timeout5 s и lock_timeout2 s; это отдельные бюджеты, не общий HTTP deadline.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/resources/application.yaml",
+        "line": 12
+      }
+    },
+    {
+      "id": "nutrition-body",
+      "label": "HTTP body",
+      "value": "256 KiB",
+      "description": "RequestIdFilter → bounded body → authentication. Точное JSON-дерево сохраняется до generated transport, чтобы не терять десятичную точность через Double.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionApplication.kt",
+        "line": 22
+      }
+    },
+    {
+      "id": "nutrition-decimal",
+      "label": "Количество и нутриенты",
+      "value": "≤1 000 000 · ≤6 дробных знаков; итог HALF_UP до3",
+      "description": "Конечные неотрицательные числа; amount и serving положительные. Trailing zeros нормализуются. PIECE требует serving.baseAmount; G/ML совпадают с baseUnit. Неизвестные macros остаются null.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Snapshots.kt",
+        "line": 34
+      }
+    },
+    {
+      "id": "nutrition-decimal-http",
+      "label": "Точный HTTP ответ",
+      "value": "Nutrition fields — decimal strings",
+      "description": "Внутри JSONB/events сохраняются числа BigDecimal; только HTTP представление нутриентов становится строками. Количество остаётся числовым.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/DiaryController.kt",
+        "line": 19
+      }
+    },
+    {
+      "id": "nutrition-aggregate-limits",
+      "label": "Размер снимка",
+      "value": "≤50 dishes / meal · ≤100 items / dish",
+      "description": "Новый meal содержит минимум1 dish; последующее удаление детей может оставить пустой meal. Saved-dish содержит1…100 items.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+        "line": 167
+      }
+    },
+    {
+      "id": "nutrition-versions",
+      "label": "Optimistic concurrency",
+      "value": "Версии meal / dish / item / water / saved-dish",
+      "description": "PATCH проверяет version, DELETE — ifMatchVersion. Child edit увеличивает version родительского meal. Stale version и изменённый idempotency payload дают409.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Snapshots.kt",
+        "line": 124
+      }
+    },
+    {
+      "id": "nutrition-idempotency",
+      "label": "Создание meal/water и consume",
+      "value": "account-scoped clientGeneratedId + canonical hash",
+      "description": "Первое создание201, exact replay200 с текущей записью. Изменённый body либо удалённый client key →409. Saved-dish CRUD не имеет такой creation idempotency.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+        "line": 150
+      }
+    },
+    {
+      "id": "nutrition-dates",
+      "label": "Дата и часовой пояс",
+      "value": "IANA zone + совпадение instant/localDate",
+      "description": "Timezone фиксирован для записи. Перенос даты требует согласованного timestamp и публикует snapshots старого и нового дня.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Snapshots.kt",
+        "line": 50
+      }
+    },
+    {
+      "id": "nutrition-saved",
+      "label": "Saved-dish consumption",
+      "value": "Независимые IDs и снимки",
+      "description": "Replay проверяется до чтения изменяемого шаблона. Изменение/удаление saved-dish не меняет уже записанный meal. CRUD шаблонов не публикует diary events.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+        "line": 83
+      }
+    },
+    {
+      "id": "nutrition-water",
+      "label": "Вода",
+      "value": "entry≤100 000 ml · day≤2 147 483 647 ml",
+      "description": "Превышение daily cap откатывает весь write/outbox. Пустой день публикует totalMl=0 и lastConsumedAt=null; water day version сохраняется.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+        "line": 236
+      }
+    },
+    {
+      "id": "nutrition-events",
+      "label": "События",
+      "value": "5 Nutrition v1 subjects",
+      "description": "Meal created/updated/deleted и water.changed потребляет Notification. day.changed предназначен Progress, который ещё planned. Ни блюда, ни список продуктов не входят в meal reminder payload.",
+      "source": {
+        "path": "backend/services/nutrition/service.yaml",
+        "line": 10
+      }
+    },
+    {
+      "id": "nutrition-correlation",
+      "label": "Event correlation",
+      "value": "HTTP request ID → persisted correlation_id",
+      "description": "Передаётся controller → transaction → envelope. Exact replay не создаёт новое событие и не заменяет первоначальную correlation.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/DiaryController.kt",
+        "line": 17
+      }
+    },
+    {
+      "id": "nutrition-outbox",
+      "label": "Outbox",
+      "value": "poll500 ms · batch20 · lease30 s · ACK10 s",
+      "description": "SKIP LOCKED; fencing claim_id; published только после PubAck. Shared batch ACK budget10 s. Stable Nats-Msg-Id=event_id; доставка at-least-once.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+        "line": 22
+      }
+    },
+    {
+      "id": "nutrition-outbox-retry",
+      "label": "Outbox retry",
+      "value": "1 s →5 min, jitter",
+      "description": "Failed release оставляет durable lease для recovery; здоровые записи продолжаются. Прямой InterruptedException при submit/ACK останавливает обход и восстанавливает flag.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+        "line": 31
+      }
+    },
+    {
+      "id": "nutrition-retention",
+      "label": "Outbox retention",
+      "value": "каждые60 s · ≤500 rows · published старше7 days",
+      "description": "Непубликованные записи не удаляются этой очисткой. Автоматического retention для inbox/rejected/tombstones сейчас нет.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+        "line": 63
+      }
+    },
+    {
+      "id": "nutrition-nats",
+      "label": "NATS transport",
+      "value": "connect2 s · reconnect1 s · unlimited reconnect",
+      "description": "Production требует tls://, workload credentials и truststore; DNS/IP SAN проверяется по исходному имени в том числе при reconnect. Dev/test могут provision stream.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NatsJetStreamConnection.kt",
+        "line": 101
+      }
+    },
+    {
+      "id": "nutrition-deletion-consumer",
+      "label": "Deletion consumer",
+      "value": "poll500 ms · fetch20/200 ms · ackSync2 s",
+      "description": "nutrition-account-deletion-v1; explicit ACK, ack_wait30 s, max_ack_pending20. Dev/test создают consumer; production требует отдельного provisioning.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+        "line": 93
+      }
+    },
+    {
+      "id": "nutrition-deletion",
+      "label": "Удаление аккаунта",
+      "value": "Inbox + append-only tombstone + owned erase",
+      "description": "В одной account transaction стираются meals/water/saved/day versions/outbox; ACK после commit. Уже claimed event может уйти позже, поэтому downstream tombstones остаются обязательными.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+        "line": 69
+      }
+    },
+    {
+      "id": "nutrition-rejection",
+      "label": "Invalid deletion envelope",
+      "value": "Metadata rejection перед TERM; retry5 s для infrastructure",
+      "description": "rejected_events хранит stream sequence/reason без payload. Ошибка recovery не обрывает хвост; нет TERM до durable записи. Operator replay требует отдельного доступа к retained original.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+        "line": 108
+      }
+    },
+    {
+      "id": "nutrition-grants",
+      "label": "Runtime permissions",
+      "value": "Отдельный nutrition_runtime; Flyway по умолчанию выключен",
+      "description": "Миграции применяет schema owner; runtime-grants.sql проверяет ownership, flags, memberships и effective/default grants. Runtime не меняет schema/history и не update/delete tombstones.",
+      "source": {
+        "path": "backend/services/nutrition/README.md",
+        "line": 81
+      }
+    },
+    {
+      "id": "nutrition-probes",
+      "label": "Operational probes",
+      "value": "healthz200; readyz PostgreSQL + public keys",
+      "description": "NATS не входит в readiness; broker outage сохраняет durable HTTP writes. Probes не являются публичными gateway routes.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/RuntimeController.kt",
+        "line": 14
+      }
+    },
+    {
+      "id": "nutrition-errors",
+      "label": "HTTP outcomes",
+      "value": "400 /401 /403 /404 /409 /413 /503",
+      "description": "Invalid input, token, deletion, ownership/not-found, version/idempotency conflict, body size и инфраструктура соответственно. Общее server request deadline явно не задано.",
+      "source": {
+        "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/RuntimeController.kt",
+        "line": 20
+      }
+    }
+  ],
+  "flows": [
+    {
+      "id": "nutrition-read",
+      "title": "Nutrition: чтение дневника и recent foods",
+      "operationIds": [
+        "getDiaryDay",
+        "getRecentFoods",
+        "listWaterEntries"
+      ],
+      "description": "Account-scoped чтение; внешние каталоги не вызываются.",
+      "steps": [
+        {
+          "node": "nutrition_client",
+          "label": "GET diary/day, foods/recent или water",
+          "detail": "Локальный HTTP к Nutrition с PORT=8083; в текущем production gateway маршрута Nutrition нет.",
+          "source": {
+            "path": "contracts/openapi/public/nutrition.yaml",
+            "line": 22
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Проверить JWT и exact JSON",
+          "detail": "Verified Identity sub выбирает account. Public-only JWKS читается из mount; отсутствующий/непригодный файл503, неверный token401.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+            "line": 38
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Transaction и account lock",
+          "detail": "Пятисекундная transaction: advisory lock, проверка account tombstone и SQL ownership. Чужая запись404, tombstone403.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 22
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Прочитать собственные snapshots",
+          "detail": "День агрегирует сохранённые meals; recent foods сканирует собственные meals, сортирует по eatenAt, dedup source+name и ограничивает limit1…100.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 48
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Ответ с точными нутриентами",
+          "detail": "После commit HTTP возвращает decimal strings для нутриентов; null не превращается в0. Generated server/client используют активный контракт.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/DiaryController.kt",
+            "line": 19
+          }
+        }
+      ]
+    },
+    {
+      "id": "nutrition-meal",
+      "title": "Nutrition: создание, правка и удаление meal",
+      "operationIds": [
+        "createMeal",
+        "updateMeal",
+        "deleteMeal"
+      ],
+      "description": "JSONB meal aggregate, idempotency, optimistic version и события в одной transaction.",
+      "steps": [
+        {
+          "node": "nutrition_client",
+          "label": "POST / PATCH / DELETE meals",
+          "detail": "Локальный HTTP к Nutrition с PORT=8083; в текущем production gateway маршрута Nutrition нет.",
+          "source": {
+            "path": "contracts/openapi/public/nutrition.yaml",
+            "line": 57
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Проверить JWT и exact JSON",
+          "detail": "Verified Identity sub выбирает account. Public-only JWKS читается из mount; отсутствующий/непригодный файл503, неверный token401.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+            "line": 38
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Transaction и account lock",
+          "detail": "Пятисекундная transaction: advisory lock, проверка account tombstone и SQL ownership. Чужая запись404, tombstone403.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 22
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Валидировать snapshot и retry",
+          "detail": "IANA date/time, bounded exact decimals и account-scoped clientGeneratedId/hash. Exact create replay200, первый201; изменённый request или stale version409.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 161
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Сохранить meal и outbox",
+          "detail": "Mutation публикует meal event и day snapshot, при переносе — оба дня. Delete хранит key/hash/version tombstone и публикует более новую meal.deleted version.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 212
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Ответ с точными нутриентами",
+          "detail": "После commit HTTP возвращает decimal strings для нутриентов; null не превращается в0. Generated server/client используют активный контракт.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/DiaryController.kt",
+            "line": 19
+          }
+        }
+      ],
+      "nextFlows": [
+        "nutrition-outbox"
+      ]
+    },
+    {
+      "id": "nutrition-children",
+      "title": "Nutrition: редактирование блюда и продукта",
+      "operationIds": [
+        "addDishToMeal",
+        "updateDish",
+        "deleteDish",
+        "addFoodEntry",
+        "updateFoodEntry",
+        "deleteFoodEntry"
+      ],
+      "description": "Дети живут внутри meal JSONB; изменения увеличивают версии и пересчитывают totals.",
+      "steps": [
+        {
+          "node": "nutrition_client",
+          "label": "POST / PATCH / DELETE dishes/items",
+          "detail": "Локальный HTTP к Nutrition с PORT=8083; в текущем production gateway маршрута Nutrition нет.",
+          "source": {
+            "path": "contracts/openapi/public/nutrition.yaml",
+            "line": 317
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Проверить JWT и exact JSON",
+          "detail": "Verified Identity sub выбирает account. Public-only JWKS читается из mount; отсутствующий/непригодный файл503, неверный token401.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+            "line": 38
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Transaction и account lock",
+          "detail": "Пятисекундная transaction: advisory lock, проверка account tombstone и SQL ownership. Чужая запись404, tombstone403.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 22
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Найти child только в своём meal",
+          "detail": "Поиск childId выполняется с user_id. Меняются собственный snapshot, child/parent versions и meal totals; immutable source остаётся provenance.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 177
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Записать meal.updated и day.changed",
+          "detail": "Сохранение meal и полных snapshots событий входит в ту же transaction.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 212
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Ответ с точными нутриентами",
+          "detail": "После commit HTTP возвращает decimal strings для нутриентов; null не превращается в0. Generated server/client используют активный контракт.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/DiaryController.kt",
+            "line": 19
+          }
+        }
+      ],
+      "nextFlows": [
+        "nutrition-outbox"
+      ]
+    },
+    {
+      "id": "nutrition-saved",
+      "title": "Nutrition: библиотека сохранённых блюд",
+      "operationIds": [
+        "createSavedDish",
+        "getSavedDish",
+        "listSavedDishes",
+        "updateSavedDish",
+        "deleteSavedDish"
+      ],
+      "description": "Независимые шаблоны; без событий до consumption.",
+      "steps": [
+        {
+          "node": "nutrition_client",
+          "label": "CRUD /v1/saved-dishes",
+          "detail": "Локальный HTTP к Nutrition с PORT=8083; в текущем production gateway маршрута Nutrition нет.",
+          "source": {
+            "path": "contracts/openapi/public/nutrition.yaml",
+            "line": 480
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Проверить JWT и exact JSON",
+          "detail": "Verified Identity sub выбирает account. Public-only JWKS читается из mount; отсутствующий/непригодный файл503, неверный token401.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+            "line": 38
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Transaction и account lock",
+          "detail": "Пятисекундная transaction: advisory lock, проверка account tombstone и SQL ownership. Чужая запись404, tombstone403.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 22
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Шаблон, версия и cursor",
+          "detail": "Список: UUID cursor, limit1…100. PATCH/DELETE проверяют version. Удаление физическое; ранее consumed meals не меняются.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 64
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Ответ с точными нутриентами",
+          "detail": "После commit HTTP возвращает decimal strings для нутриентов; null не превращается в0. Generated server/client используют активный контракт.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/DiaryController.kt",
+            "line": 19
+          }
+        }
+      ]
+    },
+    {
+      "id": "nutrition-consume",
+      "title": "Nutrition: записать сохранённое блюдо",
+      "operationIds": [
+        "consumeSavedDish"
+      ],
+      "description": "Создаётся независимый meal; exact replay работает даже после изменения шаблона.",
+      "steps": [
+        {
+          "node": "nutrition_client",
+          "label": "POST saved-dishes/{id}/consume",
+          "detail": "Локальный HTTP к Nutrition с PORT=8083; в текущем production gateway маршрута Nutrition нет.",
+          "source": {
+            "path": "contracts/openapi/public/nutrition.yaml",
+            "line": 675
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Проверить JWT и exact JSON",
+          "detail": "Verified Identity sub выбирает account. Public-only JWKS читается из mount; отсутствующий/непригодный файл503, неверный token401.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+            "line": 38
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Transaction и account lock",
+          "detail": "Пятисекундная transaction: advisory lock, проверка account tombstone и SQL ownership. Чужая запись404, tombstone403.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 22
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Проверить replay до mutable template",
+          "detail": "Hash включает savedDishId и input. Existing exact retry200; иначе клонируются snapshots с новыми child IDs.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 83
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Создать meal и события",
+          "detail": "Первый consumption201. Meal/day outbox записываются атомарно с meal.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 161
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Ответ с точными нутриентами",
+          "detail": "После commit HTTP возвращает decimal strings для нутриентов; null не превращается в0. Generated server/client используют активный контракт.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/DiaryController.kt",
+            "line": 19
+          }
+        }
+      ],
+      "nextFlows": [
+        "nutrition-outbox"
+      ]
+    },
+    {
+      "id": "nutrition-water",
+      "title": "Nutrition: запись и изменение воды",
+      "operationIds": [
+        "addWaterEntry",
+        "updateWaterEntry",
+        "deleteWaterEntry"
+      ],
+      "description": "Water entry и полный water-day snapshot; даты и daily cap проверяются атомарно.",
+      "steps": [
+        {
+          "node": "nutrition_client",
+          "label": "POST / PATCH / DELETE water",
+          "detail": "Локальный HTTP к Nutrition с PORT=8083; в текущем production gateway маршрута Nutrition нет.",
+          "source": {
+            "path": "contracts/openapi/public/nutrition.yaml",
+            "line": 757
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Проверить JWT и exact JSON",
+          "detail": "Verified Identity sub выбирает account. Public-only JWKS читается из mount; отсутствующий/непригодный файл503, неверный token401.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+            "line": 38
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Transaction и account lock",
+          "detail": "Пятисекундная transaction: advisory lock, проверка account tombstone и SQL ownership. Чужая запись404, tombstone403.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 22
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Изменить entry и affected days",
+          "detail": "Версии и idempotency account-scoped. В каждой затронутой дате totalMl≤Int.MAX_VALUE; overflow откатывает всю mutation. Empty day сохраняет version и публикует0/null.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/NutritionService.kt",
+            "line": 236
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Ответ с точными нутриентами",
+          "detail": "После commit HTTP возвращает decimal strings для нутриентов; null не превращается в0. Generated server/client используют активный контракт.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/DiaryController.kt",
+            "line": 19
+          }
+        }
+      ],
+      "nextFlows": [
+        "nutrition-outbox"
+      ]
+    },
+    {
+      "id": "nutrition-outbox",
+      "title": "Nutrition: PostgreSQL → JetStream → Notification",
+      "operationIds": [],
+      "description": "Реальный producer и consumer; Progress для day.changed пока planned. Provider delivery не доказана ingestion E2E.",
+      "steps": [
+        {
+          "node": "nutrition_db",
+          "label": "Claim pending events",
+          "detail": "SKIP LOCKED batch20, token-fenced lease30 s; business writes уже committed.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+            "line": 22
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Publish и общий ACK budget",
+          "detail": "Stable Nats-Msg-Id, shared ACK budget10 s; recovery ошибок изолирован по item.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+            "line": 37
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Durable PubAck",
+          "detail": "Субъекты cookie.events.nutrition.*.v1; published помечается только после подтверждения.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+            "line": 48
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Fenced completion или retry",
+          "detail": "Stale claim не меняет состояние. Failed release сохраняет lease; ambiguous ACK может дать duplicate.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+            "line": 30
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Inbox и projections после commit",
+          "detail": "Actual Notification process принимает meal/water snapshots, dedup event_id и отклоняет stale aggregate_version / локально deleted accounts.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 19
+          }
+        }
+      ],
+      "nextFlows": [
+        "notification-snapshot-ingestion"
+      ]
+    },
+    {
+      "id": "nutrition-deletion",
+      "title": "Nutrition: account deletion и поздние события",
+      "operationIds": [],
+      "description": "Identity event → durable local erasure; никакого выдуманного deletion completion event.",
+      "steps": [
+        {
+          "node": "identity",
+          "label": "Запрос удаления в outbox",
+          "detail": "Identity публикует account.deletion.requested. Формат владельца accountId определён контрактом.",
+          "source": {
+            "path": "backend/services/identity/service.yaml",
+            "line": 13
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Durable deletion consumer",
+          "detail": "Только cookie.events.account.deletion.requested.v1; poll500 ms, fetch20/200 ms.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+            "line": 93
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Проверить envelope",
+          "detail": "Проверяются subject/type/v1/producer=identity, required IDs и timestamps. Invalid →metadata rejection перед TERM; transient →NAK5 s.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+            "line": 69
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Inbox + tombstone + erase",
+          "detail": "Под тем же account lock dedup eventId, сохранить append-only tombstone и удалить owned diary/outbox. Поздний API запрещён; уже claimed broker bytes нельзя отозвать.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+            "line": 81
+          }
+        },
+        {
+          "node": "nats",
+          "label": "ACK только после commit",
+          "detail": "ackSync≤2 s. Ошибка quarantine/TERM/NAK остаётся recoverable и не прерывает независимый хвост.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/Messaging.kt",
+            "line": 110
+          }
+        }
+      ]
+    },
+    {
+      "id": "nutrition-readiness",
+      "title": "Nutrition: readiness",
+      "operationIds": [
+        "nutrition:getReadiness"
+      ],
+      "description": "Проверка PostgreSQL и public JWKS; NATS не входит в readiness.",
+      "steps": [
+        {
+          "node": "nutrition_client",
+          "label": "GET /readyz",
+          "detail": "Оператор вызывает readiness напрямую; публичный gateway probes не открывает.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/RuntimeController.kt",
+            "line": 12
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "RuntimeController",
+          "detail": "Проверить JDBC и mounted public keys, ответить200 или503.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/RuntimeController.kt",
+            "line": 14
+          }
+        },
+        {
+          "node": "nutrition_db",
+          "label": "Проверить JDBC connection",
+          "detail": "isValid(1) и public-only key ring. NATS/provider/Recipe/Media не опрашиваются.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/RuntimeController.kt",
+            "line": 15
+          }
+        },
+        {
+          "node": "nutrition_jwks",
+          "label": "Проверить mounted public keys",
+          "detail": "Ключи должны соответствовать Identity, private keys запрещены.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/AccessTokens.kt",
+            "line": 25
+          }
+        }
+      ]
+    },
+    {
+      "id": "nutrition-liveness",
+      "title": "Nutrition: liveness",
+      "operationIds": [
+        "nutrition:getLiveness"
+      ],
+      "description": "Проверка живого HTTP процесса без обращения к зависимостям.",
+      "steps": [
+        {
+          "node": "nutrition_client",
+          "label": "GET /healthz",
+          "detail": "Операционная проверка процесса, закрытая от публичного ingress.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/RuntimeController.kt",
+            "line": 12
+          }
+        },
+        {
+          "node": "nutrition",
+          "label": "Безусловный ответ200",
+          "detail": "getLiveness не проверяет PostgreSQL, JWKS или NATS.",
+          "source": {
+            "path": "backend/services/nutrition/src/main/kotlin/com/cookie/nutrition/RuntimeController.kt",
+            "line": 13
+          }
+        }
+      ]
+    }
+  ],
+  "operationNotes": {
+    "getDiaryDay": {
+      "flowId": "nutrition-read",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "getRecentFoods": {
+      "flowId": "nutrition-read",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "listWaterEntries": {
+      "flowId": "nutrition-read",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "createMeal": {
+      "flowId": "nutrition-meal",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "updateMeal": {
+      "flowId": "nutrition-meal",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "deleteMeal": {
+      "flowId": "nutrition-meal",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "addDishToMeal": {
+      "flowId": "nutrition-children",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "updateDish": {
+      "flowId": "nutrition-children",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "deleteDish": {
+      "flowId": "nutrition-children",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "addFoodEntry": {
+      "flowId": "nutrition-children",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "updateFoodEntry": {
+      "flowId": "nutrition-children",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "deleteFoodEntry": {
+      "flowId": "nutrition-children",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "createSavedDish": {
+      "flowId": "nutrition-saved",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "getSavedDish": {
+      "flowId": "nutrition-saved",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "listSavedDishes": {
+      "flowId": "nutrition-saved",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "updateSavedDish": {
+      "flowId": "nutrition-saved",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "deleteSavedDish": {
+      "flowId": "nutrition-saved",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "consumeSavedDish": {
+      "flowId": "nutrition-consume",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "addWaterEntry": {
+      "flowId": "nutrition-water",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "updateWaterEntry": {
+      "flowId": "nutrition-water",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "deleteWaterEntry": {
+      "flowId": "nutrition-water",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "nutrition:getLiveness": {
+      "flowId": "nutrition-liveness",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    },
+    "nutrition:getReadiness": {
+      "flowId": "nutrition-readiness",
+      "notes": [
+        "Nutrition реализован автономно; локальный PORT=8083, production ingress/Compose пока не подключены."
+      ]
+    }
+  }
+}

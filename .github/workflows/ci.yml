@@ -25,6 +25,7 @@ jobs:
       platform_messaging: ${{ steps.scope.outputs.platform_messaging }}
       platform_testing: ${{ steps.scope.outputs.platform_testing }}
       identity: ${{ steps.scope.outputs.identity }}
+      nutrition: ${{ steps.scope.outputs.nutrition }}
       notification: ${{ steps.scope.outputs.notification }}
       notification_image: ${{ steps.scope.outputs.notification_image }}
       notification_container: ${{ steps.scope.outputs.notification_container }}
@@ -149,6 +150,33 @@ jobs:
           ./gradlew
           :backend:services:notification:check
           :backend:services:notification:integrationTest
+
+  nutrition:
+    name: Nutrition service
+    if: needs.changes.outputs.nutrition == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+      - name: Require Docker for Testcontainers
+        run: docker info
+      - name: Run Nutrition unit and integration tests
+        run: >-
+          ./gradlew
+          :backend:services:nutrition:check
+          :backend:services:nutrition:integrationTest
+          :backend:services:nutrition:bootJar
+      - name: Build standalone Nutrition image
+        run: docker build -f deploy/docker/nutrition.Dockerfile -t cookie-nutrition:ci .
 
   notification_sink:
     name: Notification sink
@@ -442,6 +470,7 @@ jobs:
       - legacy_api
       - backend_platform
       - identity
+      - nutrition
       - notification
       - notification_sink
       - service_contracts
@@ -468,6 +497,8 @@ jobs:
           PLATFORM_POSTGRES_SELECTED: ${{ needs.changes.outputs.platform_postgres }}
           PLATFORM_MESSAGING_SELECTED: ${{ needs.changes.outputs.platform_messaging }}
           PLATFORM_TESTING_SELECTED: ${{ needs.changes.outputs.platform_testing }}
+          NUTRITION_EXPECTED: ${{ needs.changes.outputs.nutrition }}
+          NUTRITION_RESULT: ${{ needs.nutrition.result }}
           IDENTITY_EXPECTED: ${{ needs.changes.outputs.identity }}
           IDENTITY_RESULT: ${{ needs.identity.result }}
           NOTIFICATION_EXPECTED: ${{ needs.changes.outputs.notification }}
@@ -509,6 +540,7 @@ jobs:
               "platform_postgres:${PLATFORM_POSTGRES_SELECTED}" \
               "platform_messaging:${PLATFORM_MESSAGING_SELECTED}" \
               "platform_testing:${PLATFORM_TESTING_SELECTED}" \
+              "nutrition:${NUTRITION_EXPECTED}" \
               "identity:${IDENTITY_EXPECTED}" \
               "notification:${NOTIFICATION_EXPECTED}" \
               "notification_image:${NOTIFICATION_IMAGE_SELECTED}" \
@@ -554,6 +586,7 @@ jobs:
             "architecture_explorer:true:${ARCHITECTURE_EXPLORER_RESULT}" \
             "legacy_api:${LEGACY_API_EXPECTED}:${LEGACY_API_RESULT}" \
             "backend_platform:${BACKEND_PLATFORM_EXPECTED}:${BACKEND_PLATFORM_RESULT}" \
+            "nutrition:${NUTRITION_EXPECTED}:${NUTRITION_RESULT}" \
             "identity:${IDENTITY_EXPECTED}:${IDENTITY_RESULT}" \
             "notification:${NOTIFICATION_EXPECTED}:${NOTIFICATION_RESULT}" \
             "notification_container:${NOTIFICATION_CONTAINER_EXPECTED}:${NOTIFICATION_CONTAINER_RESULT}" \

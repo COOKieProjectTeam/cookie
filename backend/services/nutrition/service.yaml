@@ -1,0 +1,28 @@
+schema_version: 1
+id: nutrition
+runtime: kotlin_jvm
+stateful: true
+database: nutrition
+public_openapi:
+  source: contracts/openapi/public/nutrition.yaml
+runtime_openapi: contracts/openapi/runtime.yaml
+messaging:
+  publishes:
+    - type: nutrition.meal.created
+      version: 1
+    - type: nutrition.meal.updated
+      version: 1
+    - type: nutrition.meal.deleted
+      version: 1
+    - type: nutrition.day.changed
+      version: 1
+    - type: nutrition.water.changed
+      version: 1
+  consumes:
+    - type: account.deletion.requested
+      version: 1
+synchronous_dependencies: []
+infrastructure_dependencies: [postgresql, nats_jetstream, identity_public_jwks]
+probes:
+  liveness: /healthz
+  readiness: /readyz
