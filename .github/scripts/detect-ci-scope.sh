@@ -39,15 +39,37 @@ else
   exit 2
 fi
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repository_root="$(cd "$script_dir/../.." && pwd)"
+service_selector="$script_dir/service-ci-scope.py"
+service_inventory="$(python3 "$service_selector" --inventory)"
+ci_service_checks=()
+ci_service_outputs=()
+while IFS=$'\t' read -r service_check service_image; do
+  ci_service_checks+=("$service_check")
+  ci_service_outputs+=("$service_check")
+  printf -v "$service_check" false
+  if [[ "$service_image" != "-" ]]; then
+    ci_service_outputs+=("$service_image")
+    printf -v "$service_image" false
+  fi
+done <<< "$service_inventory"
+ci_paths=()
+ci_path_count=0
+
+enable_service_checks() {
+  local service_check
+  for service_check in "${ci_service_checks[@]}"; do
+    printf -v "$service_check" true
+  done
+}
+
 go_api=false
 platform=false
 platform_web=false
 platform_postgres=false
 platform_messaging=false
 platform_testing=false
-identity=false
-nutrition=false
-notification=false
 notification_image=false
 notification_container=false
 notification_sink=false
@@ -63,14 +85,12 @@ unmapped_paths=()
 changed_count=0
 
 enable_all_gradle_checks() {
+  enable_service_checks
   platform=true
   platform_web=true
   platform_postgres=true
   platform_messaging=true
   platform_testing=true
-  identity=true
-  nutrition=true
-  notification=true
   notification_sink=true
   service_contracts=true
   planned_openapi=true
@@ -109,6 +129,9 @@ while IFS= read -r -d '' path; do
       continue
       ;;
   esac
+
+  ci_paths+=("$path")
+  ((ci_path_count += 1))
 
   case "$path" in
     .github/workflows/* | .github/actions/* | .github/scripts/*)
@@ -159,28 +182,23 @@ while IFS= read -r -d '' path; do
       notification_image=true
       ;;
     build-logic/*/CookieSpringServicePlugin.kt)
-      nutrition=true
-      identity=true
-      notification=true
+      enable_service_checks
       notification_sink=true
       identity_image=true
       notification_image=true
       ;;
     build-logic/*/CookieKotlinLibraryPlugin.kt)
-      nutrition=true
+      enable_service_checks
       platform=true
       platform_web=true
       platform_postgres=true
       platform_messaging=true
       platform_testing=true
-      identity=true
-      notification=true
       notification_sink=true
       identity_image=true
       notification_image=true
       ;;
     build-logic/*/CookieKotlinMultiplatformPlugin.kt)
-      nutrition=true
       mobile=true
       ;;
     build-logic/*)
@@ -188,12 +206,6 @@ while IFS= read -r -d '' path; do
       enable_all_gradle_checks
       identity_image=true
       notification_image=true
-      ;;
-  esac
-
-  case "$path" in
-    backend/services/notification/*/src/main/* | backend/services/notification/*/build.gradle.kts | backend/services/notification/src/main/* | backend/services/notification/build.gradle.kts | apps/mobile/shared/src/commonMain/* | apps/mobile/shared/src/jvmMain/* | apps/mobile/shared/build.gradle.kts | backend/platform/*/src/main/* | backend/platform/*/build.gradle.kts | contracts/openapi/runtime.yaml | contracts/openapi/generation.yaml | contracts/openapi/public/*.yaml | docs/architecture/model/events.yaml | docs/architecture/model/services.yaml | deploy/docker/nutrition.Dockerfile)
-      nutrition=true
       ;;
   esac
 
@@ -207,18 +219,10 @@ while IFS= read -r -d '' path; do
         */src/main/* | */build.gradle.kts)
           platform=true
           platform_web=true
-          identity=true
-          notification=true
-          identity_image=true
-          notification_image=true
           ;;
         *)
           platform=true
           platform_web=true
-          identity=true
-          notification=true
-          identity_image=true
-          notification_image=true
           ;;
       esac
       ;;
@@ -231,18 +235,10 @@ while IFS= read -r -d '' path; do
         */src/main/* | */build.gradle.kts)
           platform=true
           platform_postgres=true
-          identity=true
-          notification=true
-          identity_image=true
-          notification_image=true
           ;;
         *)
           platform=true
           platform_postgres=true
-          identity=true
-          notification=true
-          identity_image=true
-          notification_image=true
           ;;
       esac
       ;;
@@ -255,20 +251,12 @@ while IFS= read -r -d '' path; do
         */src/main/* | */build.gradle.kts)
           platform=true
           platform_messaging=true
-          identity=true
-          notification=true
           notification_sink=true
-          identity_image=true
-          notification_image=true
           ;;
         *)
           platform=true
           platform_messaging=true
-          identity=true
-          notification=true
           notification_sink=true
-          identity_image=true
-          notification_image=true
           ;;
       esac
       ;;
@@ -284,8 +272,6 @@ while IFS= read -r -d '' path; do
           platform_testing=true
           platform_web=true
           platform_messaging=true
-          identity=true
-          notification=true
           notification_sink=true
           ;;
         *)
@@ -293,8 +279,6 @@ while IFS= read -r -d '' path; do
           platform_testing=true
           platform_web=true
           platform_messaging=true
-          identity=true
-          notification=true
           notification_sink=true
           ;;
       esac
@@ -305,35 +289,12 @@ while IFS= read -r -d '' path; do
   esac
 
   case "$path" in
-    backend/services/nutrition/*)
-      nutrition=true
-      service_contracts=true
-      ;;
-    backend/services/identity/service.yaml)
-      service_contracts=true
-      ;;
-    backend/services/identity/*)
-      identity=true
-      case "$path" in
-        */src/main/* | */build.gradle.kts)
-          identity_image=true
-          notification=true # Real Identity-to-Notification contract flow.
-          ;;
-      esac
-      ;;
-    backend/services/notification/service.yaml)
-      service_contracts=true
-      compose=true
-      ;;
-    backend/services/notification/*)
-      notification=true
-      case "$path" in
-        */src/main/* | */build.gradle.kts) notification_image=true ;;
-      esac
-      ;;
     backend/services/*/*)
-      # A new service must declare its own path-to-test mapping before it can merge.
-      unmapped_component=true
+      service_path="${path#backend/services/}"
+      service_id="${service_path%%/*}"
+      if [[ ! -f "$repository_root/backend/services/$service_id/service.yaml" ]]; then
+        unmapped_component=true
+      fi
       ;;
     backend/tools/service-template/*)
       enable_all_gradle_checks
@@ -347,40 +308,19 @@ while IFS= read -r -d '' path; do
   esac
 
   case "$path" in
-    contracts/openapi/public/identity.yaml)
-      service_contracts=true
-      identity=true
-      notification=true
-      public_client=true
-      identity_image=true
-      ;;
-    contracts/openapi/public/notification.yaml)
-      service_contracts=true
-      notification=true
-      public_client=true
-      notification_image=true
-      ;;
     contracts/openapi/public/*)
       service_contracts=true
       public_client=true
       ;;
     contracts/openapi/runtime.yaml)
-      notification=true
-      notification_image=true
       service_contracts=true
-      identity=true
-      identity_image=true
       ;;
     contracts/openapi/planned.yaml)
       planned_openapi=true
       ;;
     contracts/openapi/generation.yaml)
-      notification=true
-      notification_image=true
       service_contracts=true
-      identity=true
       public_client=true
-      identity_image=true
       ;;
     contracts/openapi/openapi.yaml)
       if [[ "$explicit_paths" == "false" ]] \
@@ -405,17 +345,13 @@ while IFS= read -r -d '' path; do
       public_client=true
       ;;
     docs/architecture/model/events.yaml)
-      notification=true
       service_contracts=true
       ;;
   esac
 
   case "$path" in
     backend/clients/identity/*)
-      notification=true
-      case "$path" in
-        */src/main/* | */build.gradle.kts) notification_image=true ;;
-      esac
+      # Consumers are selected by service descriptor inputs.
       ;;
     backend/clients/*)
       unmapped_component=true
@@ -466,6 +402,13 @@ while IFS= read -r -d '' path; do
   fi
 done < "$changed_paths_file"
 
+if ((ci_path_count > 0)); then
+  selected_service_outputs="$(printf '%s\0' "${ci_paths[@]}" | python3 "$service_selector")"
+  while IFS= read -r service_output; do
+    [[ -z "$service_output" ]] || printf -v "$service_output" true
+  done <<< "$selected_service_outputs"
+fi
+
 if [[ "$identity_image" == "true" ]]; then
   identity_container=true
 fi
@@ -484,16 +427,15 @@ emit_output() {
   fi
 }
 
+for service_output in "${ci_service_outputs[@]}"; do
+  emit_output "$service_output" "${!service_output}"
+done
 emit_output go_api "$go_api"
 emit_output platform "$platform"
 emit_output platform_web "$platform_web"
 emit_output platform_postgres "$platform_postgres"
 emit_output platform_messaging "$platform_messaging"
 emit_output platform_testing "$platform_testing"
-emit_output identity "$identity"
-emit_output nutrition "$nutrition"
-emit_output notification "$notification"
-emit_output notification_image "$notification_image"
 emit_output notification_container "$notification_container"
 emit_output notification_sink "$notification_sink"
 emit_output service_contracts "$service_contracts"
@@ -502,7 +444,6 @@ emit_output public_client "$public_client"
 emit_output mobile "$mobile"
 emit_output compose "$compose"
 emit_output terraform "$terraform"
-emit_output identity_image "$identity_image"
 emit_output identity_container "$identity_container"
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

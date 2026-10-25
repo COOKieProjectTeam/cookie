@@ -21,3 +21,5 @@ ADR фиксируют долгоживущие технические реше�
 
 - [0014 — Autonomous Nutrition](0014-autonomous-nutrition-service.md): independent
   diary/water service, snapshots, transactional events and deferred integrations.
+
+- `0015-user-service.md` — User profile/goals, lifecycle and Health-owned calculation dependency.

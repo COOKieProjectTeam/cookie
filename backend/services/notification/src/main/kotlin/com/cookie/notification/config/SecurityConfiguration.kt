@@ -1,6 +1,6 @@
 package com.cookie.notification.config
 
-import com.cookie.notification.security.BoundedHttpExchange
+import com.cookie.platform.web.BoundedHttpExchange
 import com.cookie.notification.security.HttpJwksSource
 import com.cookie.notification.security.RemoteJwksAccessTokenVerifier
 import com.cookie.notification.security.VerificationPayloadDecryptor

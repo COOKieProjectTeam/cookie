@@ -12,12 +12,16 @@ erDiagram
     boolean onboarding_completed
     timestamptz created_at
     timestamptz updated_at
-    bigint version
+    bigint profile_version
+    bigint aggregate_version
+    bigint goal_revision
+    bigint hydration_revision
   }
 
   NutritionGoalVersions {
     uuid id PK
     uuid user_id
+    bigint revision
     date effective_from
     decimal target_weight_kg
     decimal target_weight_change_per_week
@@ -33,6 +37,7 @@ erDiagram
   HydrationGoalVersions {
     uuid id PK
     uuid user_id
+    bigint revision
     date effective_from
     integer target_ml
     varchar source
@@ -70,3 +75,41 @@ erDiagram
   Profiles ||--o{ DietPreferences : "user_id"
   Profiles ||--o{ Allergies : "user_id"
   Profiles ||--o{ DailyGoalOverrides : "user_id"
+
+  UserTombstones {
+    uuid user_id PK
+    uuid deletion_request_id
+    timestamptz deleted_at
+  }
+  UserCommands {
+    uuid user_id PK
+    text operation PK
+    uuid key PK
+    text fingerprint
+    jsonb response
+  }
+  UserInbox {
+    text consumer_name PK
+    uuid event_id PK
+    text event_type
+    timestamptz processed_at
+  }
+  UserOutbox {
+    uuid event_id PK
+    uuid user_id
+    text event_type
+    bigint aggregate_version
+    jsonb payload
+    uuid claim_id
+    timestamptz claimed_until
+    timestamptz available_at
+    timestamptz published_at
+    int attempt_count
+  }
+  UserQuarantine {
+    text message_hash PK
+    text subject
+    text reason
+    bigint stream_sequence
+  }
+  Profiles ||--o{ UserCommands : "user_id cascade"

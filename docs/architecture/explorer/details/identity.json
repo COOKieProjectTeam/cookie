@@ -749,8 +749,8 @@
           "label": "Запрос к фиксированному HTTPS origin",
           "detail": "Notification обращается к настроенному JWKS URL; token-controlled jku/x5u/jwk не выбирают источник ключей. Полный HTTP exchange ограничен3 с.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 24
+            "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+            "line": 26
           }
         },
         {
@@ -783,10 +783,10 @@
         {
           "node": "notification",
           "label": "Кэш и fail-closed",
-          "detail": "Кэш300 с; scheduled refresh240 с, глобальный refresh cooldown30 с. Нет пригодных ключей —503, неверный токен при пригодном ключе —401.",
+          "detail": "Общий platform verifier: cache300с, scheduled refresh240с/cooldown30с. Один fetch; другие request threads не ждут monitor. Нет нужного пригодного ключа при refresh —503, неверный токен при пригодном ключе —401.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 78
+            "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+            "line": 97
           }
         }
       ]
@@ -838,8 +838,8 @@
           "label": "Consumer → inbox → обработка",
           "detail": "Notification подтверждает сообщение только после успешного handler commit; replay тех же eventId не создаёт повторную delivery.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-            "line": 40
+            "path": "backend/platform/starter-messaging/src/main/kotlin/com/cookie/platform/messaging/JetStreamPullConsumer.kt",
+            "line": 52
           }
         }
       ],

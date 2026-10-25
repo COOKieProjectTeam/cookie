@@ -146,6 +146,11 @@ Terminal email jobs erase ciphertext. Secret mounts and key rotation procedures
 are documented in the production runbook. JWKS retrieval uses a configured origin,
 no redirects/token-controlled key URLs, a five-minute cache and bounded refresh.
 Missing usable keys gives `503`; invalid credentials give `401`.
+User and Notification share this verifier in starter-web. One refresh owns the
+network call; other requests use still-valid cached keys or return `503` promptly
+when their key is unavailable. Token and cache expiry are checked after discovery.
+Their NATS adapters also share connection validation/lifecycle and a pull runner
+with per-item recovery isolation and exponential equal jitter capped at 300s.
 
 Deployment completes migrations in a separate one-shot process before starting
 the production runtime. Readiness requires PostgreSQL, validated configuration,

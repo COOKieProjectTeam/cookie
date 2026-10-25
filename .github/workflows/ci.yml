@@ -27,6 +27,7 @@ jobs:
       identity: ${{ steps.scope.outputs.identity }}
       nutrition: ${{ steps.scope.outputs.nutrition }}
       notification: ${{ steps.scope.outputs.notification }}
+      user: ${{ steps.scope.outputs.user }}
       notification_image: ${{ steps.scope.outputs.notification_image }}
       notification_container: ${{ steps.scope.outputs.notification_container }}
       notification_sink: ${{ steps.scope.outputs.notification_sink }}
@@ -151,6 +152,30 @@ jobs:
           :backend:services:notification:check
           :backend:services:notification:integrationTest
 
+  user:
+    name: User service
+    if: needs.changes.outputs.user == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+      - name: Require Docker for Testcontainers
+        run: docker info
+      - name: Run User unit and integration tests
+        run: >-
+          ./gradlew
+          :backend:services:user:check
+          :backend:services:user:integrationTest
+
   nutrition:
     name: Nutrition service
     if: needs.changes.outputs.nutrition == 'true'
@@ -270,8 +295,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-provider: basic
-      - name: Generate and compile the public KMP client
-        run: ./gradlew compileKmpPublicClient
+      - name: Generate, compile and test the public KMP client
+        run: ./gradlew compileKmpPublicClient :apps:mobile:shared:jvmTest
 
   identity_container:
     name: Identity image build
@@ -472,6 +497,7 @@ jobs:
       - identity
       - nutrition
       - notification
+      - user
       - notification_sink
       - service_contracts
       - planned_openapi
@@ -501,6 +527,8 @@ jobs:
           NUTRITION_RESULT: ${{ needs.nutrition.result }}
           IDENTITY_EXPECTED: ${{ needs.changes.outputs.identity }}
           IDENTITY_RESULT: ${{ needs.identity.result }}
+          USER_EXPECTED: ${{ needs.changes.outputs.user }}
+          USER_RESULT: ${{ needs.user.result }}
           NOTIFICATION_EXPECTED: ${{ needs.changes.outputs.notification }}
           NOTIFICATION_RESULT: ${{ needs.notification.result }}
           NOTIFICATION_CONTAINER_EXPECTED: ${{ github.event_name == 'pull_request' && needs.changes.outputs.notification_container == 'true' }}
@@ -542,6 +570,7 @@ jobs:
               "platform_testing:${PLATFORM_TESTING_SELECTED}" \
               "nutrition:${NUTRITION_EXPECTED}" \
               "identity:${IDENTITY_EXPECTED}" \
+              "user:${USER_EXPECTED}" \
               "notification:${NOTIFICATION_EXPECTED}" \
               "notification_image:${NOTIFICATION_IMAGE_SELECTED}" \
               "notification_container:${NOTIFICATION_CONTAINER_SELECTED}" \
@@ -588,6 +617,7 @@ jobs:
             "backend_platform:${BACKEND_PLATFORM_EXPECTED}:${BACKEND_PLATFORM_RESULT}" \
             "nutrition:${NUTRITION_EXPECTED}:${NUTRITION_RESULT}" \
             "identity:${IDENTITY_EXPECTED}:${IDENTITY_RESULT}" \
+            "user:${USER_EXPECTED}:${USER_RESULT}" \
             "notification:${NOTIFICATION_EXPECTED}:${NOTIFICATION_RESULT}" \
             "notification_container:${NOTIFICATION_CONTAINER_EXPECTED}:${NOTIFICATION_CONTAINER_RESULT}" \
             "notification_sink:${NOTIFICATION_SINK_EXPECTED}:${NOTIFICATION_SINK_RESULT}" \

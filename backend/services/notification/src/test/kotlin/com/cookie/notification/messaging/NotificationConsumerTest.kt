@@ -4,6 +4,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.nats.client.Message
 import io.nats.client.impl.NatsJetStreamMetaData
 import org.junit.jupiter.api.Test
+import org.assertj.core.api.Assertions.assertThat
+import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.*
@@ -29,7 +31,9 @@ class NotificationConsumerTest {
         prepare()
         doThrow(DataAccessResourceFailureException("offline")).`when`(handler).handle(eventSubject,eventBytes)
         consumer.consume(message)
-        verify(message).nakWithDelay(Duration.ofSeconds(256))
+        val delay = ArgumentCaptor.forClass(Duration::class.java)
+        verify(message).nakWithDelay(delay.capture())
+        assertThat(delay.value).isBetween(Duration.ofSeconds(150), Duration.ofSeconds(300))
         verify(message,never()).ack()
         verifyNoInteractions(quarantine)
     }
@@ -40,5 +44,18 @@ class NotificationConsumerTest {
         val order=inOrder(quarantine,message)
         order.verify(quarantine).record(eventSubject,eventBytes,23,"invalid_json")
         order.verify(message).ack()
+    }
+    @Test fun `quarantine outage retries poison without acknowledging and the next event succeeds`() {
+        prepare()
+        doThrow(InvalidNotificationEvent("invalid_json")).`when`(handler).handle(eventSubject,eventBytes)
+        doThrow(DataAccessResourceFailureException("offline")).`when`(quarantine).record(eventSubject,eventBytes,23,"invalid_json")
+        consumer.consume(message)
+        verify(message, never()).ack()
+        verify(message).nakWithDelay(any(Duration::class.java))
+        val healthy = mock(Message::class.java)
+        `when`(healthy.subject).thenReturn("healthy")
+        `when`(healthy.data).thenReturn(byteArrayOf(2))
+        consumer.consume(healthy)
+        verify(healthy).ack()
     }
 }

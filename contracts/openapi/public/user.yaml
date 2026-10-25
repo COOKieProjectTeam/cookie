@@ -1,0 +1,1081 @@
+openapi: 3.0.3
+info:
+  title: COOKie User API
+  version: 1.0.0
+  description: User-owned profile, immutable manual goals and daily overrides. Identity
+    activation is asynchronous; the first verified request also initializes an incomplete
+    profile when needed. Runtime/probes are private.
+servers:
+- url: /v1
+tags:
+- name: profile
+  description: Profile and goals
+paths:
+  /me/profile:
+    get:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: getProfile
+      summary: Получить профиль пользователя
+      responses:
+        '200':
+          description: Профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+    patch:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: updateProfile
+      summary: Частично обновить профиль
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfilePatch'
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: UUIDv4 for one logical command; keep the key across retries.
+          Changed payload with the same operation/key conflicts. Evidence retained
+          until account deletion.
+        schema:
+          type: string
+          format: uuid
+  /me/goals/current:
+    get:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: getCurrentGoal
+      summary: Получить текущую цель по КБЖУ
+      responses:
+        '200':
+          description: Текущая цель
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NutritionGoal'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+    put:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: setCurrentGoal
+      summary: Задать новую цель (создаёт новую версию, не перезаписывает старую)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NutritionGoalInput'
+      responses:
+        '200':
+          description: Новая версия цели создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NutritionGoal'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: UUIDv4 for one logical command; keep the key across retries.
+          Changed payload with the same operation/key conflicts. Evidence retained
+          until account deletion.
+        schema:
+          type: string
+          format: uuid
+  /me/goals/history:
+    get:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: getGoalHistory
+      summary: Получить историю версий цели
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Список версий цели
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalHistoryPage'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+  /me/goals/overrides/{date}:
+    parameters:
+    - $ref: '#/components/parameters/DatePath'
+    put:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: setDailyGoalOverride
+      summary: Задать override целей на конкретный день (в т.ч. cheat day)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DailyGoalOverrideInput'
+      responses:
+        '200':
+          description: Override создан/обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyGoalOverride'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: UUIDv4 for one logical command; keep the key across retries.
+          Changed payload with the same operation/key conflicts. Evidence retained
+          until account deletion.
+        schema:
+          type: string
+          format: uuid
+    delete:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: deleteDailyGoalOverride
+      summary: Удалить override на день
+      responses:
+        '204':
+          description: Override удалён
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: UUIDv4 for one logical command; keep the key across retries.
+          Changed payload with the same operation/key conflicts. Evidence retained
+          until account deletion.
+        schema:
+          type: string
+          format: uuid
+    get:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: getDailyGoalOverride
+      responses:
+        '200':
+          description: Daily override
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyGoalOverride'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+  /me/goals/hydration:
+    get:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: getHydrationGoal
+      responses:
+        '200':
+          description: Hydration goal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HydrationGoal'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+    put:
+      security:
+      - accessToken: []
+      tags:
+      - profile
+      operationId: setHydrationGoal
+      responses:
+        '200':
+          description: Hydration goal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HydrationGoal'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '401':
+          description: Invalid Identity access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '403':
+          description: Account deletion received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '404':
+          description: Goal or override not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '409':
+          description: Version/idempotency/cheat-day conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+        '503':
+          description: Dependency unavailable; retry with the same key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HydrationGoalInput'
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: UUIDv4 for one logical command; keep the key across retries.
+          Changed payload with the same operation/key conflicts. Evidence retained
+          until account deletion.
+        schema:
+          type: string
+          format: uuid
+components:
+  securitySchemes:
+    accessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Identity access JWT: ES256, typ=at+jwt, expected issuer and audience,
+        and mandatory valid sub, sid, jti, iat and exp claims.
+  parameters:
+    DatePath:
+      name: date
+      in: path
+      required: true
+      schema:
+        type: string
+        format: date
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  schemas:
+    Sex:
+      type: string
+      enum:
+      - MALE
+      - FEMALE
+    ActivityLevel:
+      type: string
+      enum:
+      - LOW
+      - MODERATE
+      - HIGH
+    DietType:
+      type: string
+      enum:
+      - BALANCED
+      - HIGH_PROTEIN
+      - VEGETARIAN
+      - VEGAN
+      - PESCATARIAN
+      - LOW_CARB
+      - KETO
+      - MEDITERRANEAN
+      - GLUTEN_FREE
+      - LACTOSE_FREE
+    Allergen:
+      type: string
+      enum:
+      - GLUTEN
+      - CRUSTACEANS
+      - EGGS
+      - FISH
+      - PEANUTS
+      - SOY
+      - MILK
+      - TREE_NUTS
+      - CELERY
+      - MUSTARD
+      - SESAME
+      - SULPHITES
+      - LUPIN
+      - MOLLUSCS
+    Profile:
+      type: object
+      required:
+      - sex
+      - birthDate
+      - heightCm
+      - activityLevel
+      - timezone
+      - locale
+      - dietPreferences
+      - allergies
+      - onboardingCompleted
+      - version
+      - userId
+      properties:
+        sex:
+          allOf:
+          - $ref: '#/components/schemas/Sex'
+          nullable: true
+        birthDate:
+          type: string
+          format: date
+          nullable: true
+        heightCm:
+          type: number
+          format: double
+          minimum: 30
+          maximum: 300
+          multipleOf: 0.01
+          nullable: true
+        activityLevel:
+          allOf:
+          - $ref: '#/components/schemas/ActivityLevel'
+          nullable: true
+        timezone:
+          type: string
+          maxLength: 100
+          description: IANA timezone identifier supported by the service, for example Europe/Moscow or UTC.
+        locale:
+          type: string
+          maxLength: 100
+          enum: [ru, en]
+        dietPreferences:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/DietType'
+        allergies:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Allergen'
+        onboardingCompleted:
+          type: boolean
+        version:
+          type: integer
+          format: int64
+          description: Profile-only optimistic version. Goal, hydration and daily override
+            changes do not advance this value.
+        userId:
+          type: string
+          format: uuid
+      additionalProperties: false
+    ProfilePatch:
+      type: object
+      required:
+      - version
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          format: int64
+          description: The profile version returned by GET or the previous successful
+            profile PATCH. A concurrent profile change causes VERSION_CONFLICT.
+        heightCm:
+          type: number
+          format: double
+          minimum: 30
+          maximum: 300
+          multipleOf: 0.01
+        activityLevel:
+          $ref: '#/components/schemas/ActivityLevel'
+        timezone:
+          type: string
+          maxLength: 100
+          description: IANA timezone identifier supported by the service, for example Europe/Moscow or UTC.
+        locale:
+          type: string
+          maxLength: 100
+          enum: [ru, en]
+        dietPreferences:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/DietType'
+        allergies:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Allergen'
+      additionalProperties: false
+    NutritionGoalInput:
+      type: object
+      required:
+      - calories
+      - proteinG
+      - fatG
+      - carbsG
+      - fiberG
+      properties:
+        calories:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        proteinG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        fatG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        carbsG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        fiberG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        targetWeightKg:
+          type: number
+          format: double
+          minimum: 1
+          maximum: 999.99
+          multipleOf: 0.01
+        targetWeightChangeKgPerWeek:
+          type: number
+          format: double
+          minimum: -99.99
+          maximum: 99.99
+          multipleOf: 0.01
+      additionalProperties: false
+    GoalHistoryPage:
+      type: object
+      required:
+      - items
+      - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NutritionGoal'
+        nextCursor:
+          type: string
+          nullable: true
+      additionalProperties: false
+    NutritionGoal:
+      type: object
+      required:
+      - calories
+      - proteinG
+      - fatG
+      - carbsG
+      - fiberG
+      - id
+      - effectiveFrom
+      - source
+      - revision
+      properties:
+        calories:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        proteinG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        fatG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        carbsG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        fiberG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        targetWeightKg:
+          type: number
+          format: double
+          minimum: 1
+          maximum: 999.99
+          multipleOf: 0.01
+        targetWeightChangeKgPerWeek:
+          type: number
+          format: double
+          minimum: -99.99
+          maximum: 99.99
+          multipleOf: 0.01
+        id:
+          type: string
+          format: uuid
+        effectiveFrom:
+          type: string
+          format: date
+        source:
+          type: string
+          enum:
+          - MANUAL
+          - CALCULATED
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+      additionalProperties: false
+    DailyGoalOverrideInput:
+      type: object
+      required:
+      - type
+      - unlimitedCalories
+      properties:
+        type:
+          type: string
+          enum:
+          - CUSTOM
+          - CHEAT_DAY
+        unlimitedCalories:
+          type: boolean
+        calories:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        proteinG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        fatG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        carbsG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        fiberG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+      description: CUSTOM requires calories and unlimitedCalories=false. CHEAT_DAY
+        requires unlimitedCalories=true and no nutrient values. One cheat day per
+        account/calendar month.
+      additionalProperties: false
+    DailyGoalOverride:
+      type: object
+      required:
+      - id
+      - localDate
+      - type
+      - unlimitedCalories
+      properties:
+        id:
+          type: string
+          format: uuid
+        localDate:
+          type: string
+          format: date
+        type:
+          type: string
+          enum:
+          - CUSTOM
+          - CHEAT_DAY
+        unlimitedCalories:
+          type: boolean
+        calories:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        proteinG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        fatG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        carbsG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+        fiberG:
+          type: number
+          minimum: 0
+          maximum: 999999.99
+          multipleOf: 0.01
+      additionalProperties: false
+    HydrationGoalInput:
+      type: object
+      required:
+      - targetMl
+      properties:
+        targetMl:
+          type: integer
+          minimum: 1
+          maximum: 20000
+      additionalProperties: false
+    HydrationGoal:
+      type: object
+      required:
+      - id
+      - effectiveFrom
+      - revision
+      - targetMl
+      properties:
+        id:
+          type: string
+          format: uuid
+        effectiveFrom:
+          type: string
+          format: date
+        revision:
+          type: integer
+          format: int64
+        targetMl:
+          type: integer
+      additionalProperties: false
+    UserError:
+      type: object
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      additionalProperties: false

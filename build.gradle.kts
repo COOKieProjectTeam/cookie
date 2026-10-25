@@ -473,6 +473,7 @@ abstract class ValidateServiceDescriptorsTask : DefaultTask() {
             "infrastructure_dependencies",
             "probes",
             "access",
+            "ci",
         )
         private val HTTP_METHODS = setOf("get", "put", "post", "delete", "options", "head", "patch", "trace")
         private val RESERVED_RUNTIME_PATHS = setOf("/healthz", "/readyz")
@@ -655,6 +656,32 @@ val validatePlannedOpenApi = tasks.register<ValidateTask>("validatePlannedOpenAp
     group = "verification"
     description = "Validate the non-active public API roadmap without using it for generation."
     inputSpec.set(layout.projectDirectory.file("contracts/openapi/planned.yaml").asFile.absolutePath)
+    doLast {
+        val document = Yaml(SafeConstructor(LoaderOptions())).load<Map<String, Any?>>(inputSpec.get().asFile.readText())
+        val visited = mutableSetOf<String>()
+        fun visit(value: Any?) {
+            when (value) {
+                is Map<*, *> -> {
+                    val ref = value["\$ref"] as? String
+                    if (ref != null && ref.startsWith("#/") && visited.add(ref)) {
+                        var target: Any? = document
+                        for (part in ref.removePrefix("#/").split('/')) {
+                            target = (target as? Map<*, *>)?.get(part.replace("~1", "/").replace("~0", "~"))
+                        }
+                        require(target != null) { "Unresolved planned OpenAPI reference: $ref" }
+                        visit(target)
+                    }
+                    value.values.forEach(::visit)
+                }
+                is List<*> -> value.forEach(::visit)
+            }
+        }
+        visit(document["paths"])
+        val components = document["components"] as? Map<*, *> ?: emptyMap<Any, Any>()
+        val schemas = components["schemas"] as? Map<*, *> ?: emptyMap<Any, Any>()
+        val unused = schemas.keys.filter { "#/components/schemas/$it" !in visited }
+        require(unused.isEmpty()) { "Unused planned OpenAPI schemas: $unused; remove them or reference them from planned operations" }
+    }
 }
 
 val validateServiceDescriptors = tasks.register<ValidateServiceDescriptorsTask>("validateServiceDescriptors") {
@@ -719,6 +746,8 @@ tasks.register("compileKmpPublicClient") {
 }
 
 gradle.projectsEvaluated {
+    // Contract paths are portable identifiers, independent of host path separators.
+    fun contractPath(file: java.io.File) = relativePath(file).replace(java.io.File.separatorChar, '/')
     val bundle = bundlePublicOpenApi.get()
     val generators = allprojects.flatMap { it.tasks.withType(GenerateTask::class.java).toList() }
         .filter {
@@ -727,17 +756,17 @@ gradle.projectsEvaluated {
         }
     validateOpenApiGenerationConfig.configure {
         implementedGeneration.set(mapOf(
-            "bundleOutput" to relativePath(bundle.outputSpec.get().asFile),
-            "tagOwnerSource" to relativePath(bundle.architectureModel.get().asFile),
-            "publicContracts" to bundle.sourceSpecs.files.map { relativePath(it) }.sorted(),
-            "roadmapValidation" to relativePath(validatePlannedOpenApi.get().inputSpec.get().asFile),
-            "bundleValidation" to relativePath(validateBundledPublicOpenApi.get().inputSpec.get().asFile),
+            "bundleOutput" to contractPath(bundle.outputSpec.get().asFile),
+            "tagOwnerSource" to contractPath(bundle.architectureModel.get().asFile),
+            "publicContracts" to bundle.sourceSpecs.files.map { contractPath(it) }.sorted(),
+            "roadmapValidation" to contractPath(validatePlannedOpenApi.get().inputSpec.get().asFile),
+            "bundleValidation" to contractPath(validateBundledPublicOpenApi.get().inputSpec.get().asFile),
             "serviceOutputs" to allprojects.filter { it.path.matches(Regex(":backend:services:[^:]+")) }
-                .associate { it.name to relativePath(it.layout.buildDirectory.dir("generated/openapi").get().asFile) },
+                .associate { it.name to contractPath(it.layout.buildDirectory.dir("generated/openapi").get().asFile) },
             "tasks" to generators.associate { generator -> generator.path to mapOf(
                 "enabled" to (generator.enabled && !generator.dryRun.getOrElse(false)),
-                "input" to (generator.inputSpec.orNull?.asFile?.let { relativePath(it) } ?: ""),
-                "output" to (generator.outputDir.orNull?.asFile?.let { relativePath(it) } ?: ""),
+                "input" to (generator.inputSpec.orNull?.asFile?.let { contractPath(it) } ?: ""),
+                "output" to (generator.outputDir.orNull?.asFile?.let { contractPath(it) } ?: ""),
                 "generator" to generator.generatorName.getOrElse(""),
                 "library" to generator.library.getOrElse(""),
                 "customTemplates" to (generator.templateDir.isPresent || !generator.templateResourcePath.orNull.isNullOrBlank()),

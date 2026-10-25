@@ -1,16 +1,14 @@
 package com.cookie.notification.messaging
 
+import com.cookie.platform.messaging.JetStreamPullConsumer
 import io.micrometer.core.instrument.MeterRegistry
-import io.nats.client.JetStreamSubscription
 import io.nats.client.Message
-import io.nats.client.PullSubscribeOptions
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.context.annotation.Profile
 import tools.jackson.databind.ObjectMapper
 import java.security.MessageDigest
-import java.time.Duration
 import java.util.UUID
 
 @Component
@@ -22,37 +20,26 @@ class NotificationConsumer(
     private val quarantine:NotificationQuarantine,
     registry:MeterRegistry,
 ) {
-    private var subscription:JetStreamSubscription?=null
     private val processed=registry.counter("notification.inbox.processed")
     private val failures=registry.counter("notification.inbox.failures")
     private val quarantined=registry.counter("notification.inbox.quarantined")
+    private val runner = JetStreamPullConsumer(
+        connection = nats::connection,
+        stream = NotificationNatsConnection.STREAM,
+        durable = NotificationEventHandler.CONSUMER,
+        handle = { handler.handle(it.subject, it.data) },
+        invalidReason = { (it as? InvalidNotificationEvent)?.reason },
+        quarantine = { message, reason -> quarantine.record(message.subject, message.data,
+            message.metaData().streamSequence(), reason) },
+        processed = { processed.increment() },
+        quarantined = { quarantined.increment() },
+        failed = { failures.increment() },
+    )
     @Scheduled(fixedDelayString="\${cookie.notification.consumer-poll-millis:100}")
     fun poll() {
-        if(!properties.consumerEnabled) return
-        try {
-            val active=subscription?.takeIf { it.isActive }?:nats.connection().jetStream()
-                .subscribe(null,PullSubscribeOptions.bind(NotificationNatsConnection.STREAM,NotificationEventHandler.CONSUMER)).also { subscription=it }
-            active.fetch(20,Duration.ofSeconds(1)).forEach(::consume)
-        } catch (_:Exception) { failures.increment() }
+        if (properties.consumerEnabled) runner.poll()
     }
-    fun consume(message:Message) {
-        try {
-            handler.handle(message.subject,message.data)
-            message.ack()
-            processed.increment()
-        } catch (invalid:InvalidNotificationEvent) {
-            // If durable quarantine fails, do not acknowledge: a DB outage cannot lose evidence.
-            quarantine.record(message.subject,message.data,message.metaData().streamSequence(),invalid.reason)
-            message.ack()
-            quarantined.increment()
-        } catch (_:Exception) {
-            failures.increment()
-            // Broker delivery count includes infrastructure outages, not just handler failures.
-            // Only explicit InvalidNotificationEvent is poison; all other failures retry indefinitely.
-            val seconds=(1L shl message.metaData().deliveredCount().coerceIn(0,8).toInt()).coerceAtMost(300)
-            message.nakWithDelay(Duration.ofSeconds(seconds))
-        }
-    }
+    fun consume(message: Message) = runner.consume(message)
 }
 
 @Component

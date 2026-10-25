@@ -47,18 +47,18 @@
       "value": "ES256 / at+jwt / P-256",
       "description": "Проверяются подпись, точный issuer и единственный audience, iat/exp/nbf без clock skew; lifetime ≤24 h; sub/sid/jti — UUIDv7. Token-controlled jwk/jku/x5u и crit запрещены.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-        "line": 44
+        "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+        "line": 86
       }
     },
     {
       "id": "notification-jwks-cache",
       "label": "JWKS cache и unknown kid",
       "value": "TTL 300 s; refresh 240 s; cooldown 30 s",
-      "description": "Неизвестный kid или истёкший cache вызывает refresh, ограниченный общим cooldown. Старый cache используется только до expiry; неизвестный kid после успешного refresh даёт 401, отсутствие пригодных ключей — 503. Cache/refresh/cooldown зафиксированы в коде, env overrides для этих интервалов нет.",
+      "description": "Неизвестный kid или истёкший cache вызывает shared platform refresh с общим cooldown. Один fetch не блокирует остальные request threads: действующие ключи работают, отсутствие нужного ключа во время refresh даёт503. Старый cache используется только до expiry; неизвестный kid после успешного refresh даёт401. Cache/refresh/cooldown фиксированы в коде.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-        "line": 80
+        "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+        "line": 54
       }
     },
     {
@@ -67,8 +67,8 @@
       "value": "полный обмен ≤3 s",
       "description": "Источник задан COOKIE_IDENTITY_JWKS_URL, а issuer/audience — COOKIE_IDENTITY_ISSUER / COOKIE_IDENTITY_AUDIENCE. HTTP разрешён только dev/test; production требует HTTPS.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-        "line": 24
+        "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+        "line": 26
       }
     },
     {
@@ -87,7 +87,7 @@
       "value": "≤65536 bytes; deadline включает body",
       "description": "BoundedHttpExchange ограничивает размер ответа и весь обмен, включая зависшее тело; при timeout отменяет future.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/BoundedHttpExchange.kt",
+        "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/BoundedHttpExchange.kt",
         "line": 15
       }
     },
@@ -297,8 +297,8 @@
       "value": "connect 2 s; reconnect 1 s; unlimited reconnect",
       "description": "Production требует tls://, workload credentials и JKS truststore с hostname verification. HappyEyeballs сохраняет исходное имя брокера для проверки DNS/IP SAN, включая reconnect. COOKIE_NATS_URL/CREDENTIALS_PATH/TRUSTSTORE_PATH/TRUSTSTORE_PASSWORD; приложение bind-ится к заранее созданному consumer.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
-        "line": 71
+        "path": "backend/platform/starter-messaging/src/main/kotlin/com/cookie/platform/messaging/NatsConnectionSupport.kt",
+        "line": 36
       }
     },
     {
@@ -317,8 +317,8 @@
       "value": "ACK wait 60 s; max_ack_pending=100",
       "description": "Локальный bootstrap создаёт/обновляет stream и consumer. Эти значения отличаются от production provisioning.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationNatsConnection.kt",
-        "line": 52
+        "path": "backend/platform/starter-messaging/src/main/kotlin/com/cookie/platform/messaging/NatsConnectionSupport.kt",
+        "line": 101
       }
     },
     {
@@ -328,17 +328,17 @@
       "description": "cookie.notification.consumer-poll-millis переопределяет задержку между poll. COOKIE_NOTIFICATION_CONSUMER_ENABLED включает/выключает consumption. ACK только после завершения handler transaction.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-        "line": 29
+        "line": 38
       }
     },
     {
       "id": "notification-nats-retry",
       "label": "Ошибка ingestion",
-      "value": "NAK с задержкой 2^min(deliveredCount,8) s",
-      "description": "Предел формулы —256 s. При обычной transient ошибке выполняется попытка NAK без лимита retries. Ошибки quarantine/ACK/metadata/NAK могут прервать fetched batch; unACKed messages остаются для redelivery. Изоляция recovery из отдельного PR22 ещё не включена в эту ветку.",
+      "value": "equal jitter: 0.5..1 × min(2^min(deliveredCount,9),300) s",
+      "description": "Transient failures повторяются без лимита. Shared runner изолирует quarantine/ACK/metadata/NAK failure в пределах одного сообщения, сохраняя прогресс следующего. Максимальная задержка300s; replaced connection пересоздаёт subscription.",
       "source": {
-        "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-        "line": 38
+        "path": "backend/platform/starter-messaging/src/main/kotlin/com/cookie/platform/messaging/JetStreamPullConsumer.kt",
+        "line": 11
       }
     },
     {
@@ -364,11 +364,11 @@
     {
       "id": "notification-upstream-status",
       "label": "Реализованные producers",
-      "value": "Identity и Nutrition — реализованы; User/Health/Progress — fixtures",
-      "description": "Настоящий Nutrition producer проверен через HTTP, PostgreSQL/outbox, JetStream и Notification process до inbox/projections. Scheduling/provider delivery и production rollout Nutrition этим не подтверждаются.",
+      "value": "Identity, User и Nutrition — реализованы; Health/Progress — fixtures",
+      "description": "User → JetStream → Notification проверен с реальным User Spring runtime, Notification JAR и отдельными БД. Nutrition HTTP → outbox → JetStream → Notification также проверен до inbox/projections. Health/Progress покрыты fixtures; production rollout User/Nutrition и provider delivery этим не подтверждаются.",
       "source": {
-        "path": "backend/services/nutrition/service.yaml",
-        "line": 11
+        "path": "backend/services/user/src/test/kotlin/com/cookie/user/UserRuntimeIntegrationTest.kt",
+        "line": 199
       }
     },
     {
@@ -518,7 +518,7 @@
       "description": "InvalidNotificationEvent сохраняет hash,eventId,subject,reason,stream sequence без payload; ACK только после успешной записи. Недоступная БД оставляет сообщение без ACK.",
       "source": {
         "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-        "line": 43
+        "line": 46
       }
     },
     {
@@ -663,8 +663,8 @@
           "label": "JWKS только при refresh",
           "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 54
+            "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+            "line": 97
           }
         },
         {
@@ -754,8 +754,8 @@
           "label": "JWKS только при refresh",
           "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 54
+            "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+            "line": 97
           }
         },
         {
@@ -827,8 +827,8 @@
           "label": "JWKS только при refresh",
           "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 54
+            "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+            "line": 97
           }
         },
         {
@@ -891,8 +891,8 @@
           "label": "JWKS только при refresh",
           "detail": "Configured JWKS origin; cache300 s, background refresh240 s, общий cooldown30 s также при unknown kid. Запрос не выполняется для каждого API call.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 54
+            "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+            "line": 97
           }
         },
         {
@@ -998,8 +998,8 @@
           "label": "ACK после commit",
           "detail": "После успешного handler возвращения отправляется ACK. DB/transaction failure приводит к NAK/retry, poison — metadata quarantine.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-            "line": 38
+            "path": "backend/platform/starter-messaging/src/main/kotlin/com/cookie/platform/messaging/JetStreamPullConsumer.kt",
+            "line": 52
           }
         },
         {
@@ -1060,13 +1060,13 @@
     },
     {
       "id": "notification-snapshot-ingestion",
-      "title": "Nutrition и будущие producers → локальные projections",
+      "title": "Domain snapshots → локальные projections",
       "operationIds": [],
-      "description": "Реальные meal/water snapshots Nutrition; User/Health/Progress пока planned. Deduplication и версии защищают локальные projections, отдельно от scheduling и provider delivery.",
+      "description": "User profile и Nutrition meal/water producers реализованы и проверены через JetStream с Notification до inbox/projections. Health/Progress остаются planned с contract fixtures. Production rollout User/Nutrition ещё не активирован.",
       "steps": [
         {
           "node": "user",
-          "label": "Планируется: profile snapshot",
+          "label": "Profile snapshot",
           "detail": "user.profile.updated: userId, optional locale, positive aggregate_version. Обновляет default locale, timezone не задаёт.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
@@ -1132,8 +1132,8 @@
           "label": "ACK durable result",
           "detail": "Duplicate/старое событие также безопасно ACK после transaction; неисправность инфраструктуры даёт unlimited retry.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-            "line": 38
+            "path": "backend/platform/starter-messaging/src/main/kotlin/com/cookie/platform/messaging/JetStreamPullConsumer.kt",
+            "line": 52
           }
         }
       ]
@@ -1254,10 +1254,10 @@
         {
           "node": "notification",
           "label": "Классифицировать сбой",
-          "detail": "InvalidNotificationEvent направляется в durable quarantine. Обычные transient errors пытаются NAK с задержкой до256 s. Сбой recovery может оборвать fetched batch; unACKed messages ждут redelivery. Отдельный PR22 устраняет эту задержку.",
+          "detail": "InvalidNotificationEvent направляется в durable quarantine. Обычные transient errors пытаются NAK с equal jitter до300s. Shared runner изолирует quarantine/ACK/NAK failure, поэтому healthy следующий item продолжает обработку.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-            "line": 38
+            "path": "backend/platform/starter-messaging/src/main/kotlin/com/cookie/platform/messaging/JetStreamPullConsumer.kt",
+            "line": 52
           }
         },
         {
@@ -1266,7 +1266,7 @@
           "detail": "SHA-256,message eventId,subject,reason,stream sequence; no raw envelope. Failed DB insert оставляет сообщение не ACKed.",
           "source": {
             "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationConsumer.kt",
-            "line": 59
+            "line": 46
           }
         },
         {

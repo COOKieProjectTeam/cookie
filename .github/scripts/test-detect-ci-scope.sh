@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 detector="${script_dir}/detect-ci-scope.sh"
+python3 "${script_dir}/test-service-ci-scope.py"
 
 case_output=""
 
@@ -321,6 +322,18 @@ expect_flag notification false
 classify contracts/openapi/public/identity.yaml
 expect_flag notification true
 expect_flag notification_image false
+
+classify backend/services/user/src/main/kotlin/example.kt
+expect_flag user true
+expect_flag identity false
+classify contracts/openapi/public/user.yaml
+expect_flag user true
+expect_flag public_client true
+expect_flag service_contracts true
+for path in settings.gradle.kts backend/platform/starter-web/src/main/kotlin/example.kt backend/platform/starter-messaging/src/main/kotlin/example.kt backend/platform/starter-testing/src/main/kotlin/example.kt; do
+  classify "$path"
+  expect_flag user true
+done
 
 classify backend/services/nutrition/src/main/kotlin/Example.kt
 expect_flag nutrition true

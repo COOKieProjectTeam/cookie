@@ -1,6 +1,6 @@
 package com.cookie.notification.delivery
 
-import com.cookie.notification.security.BoundedHttpExchange
+import com.cookie.platform.web.BoundedHttpExchange
 import com.google.api.client.http.HttpTransport
 import com.google.api.client.http.LowLevelHttpRequest
 import com.google.api.client.http.LowLevelHttpResponse

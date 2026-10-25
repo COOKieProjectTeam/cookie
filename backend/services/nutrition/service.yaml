@@ -26,3 +26,31 @@ infrastructure_dependencies: [postgresql, nats_jetstream, identity_public_jwks]
 probes:
   liveness: /healthz
   readiness: /readyz
+ci: {
+  "check": "nutrition",
+  "image": null,
+  "runtime_inputs": [
+    "backend/platform/starter-web/**",
+    "backend/platform/starter-postgres/**",
+    "backend/platform/starter-messaging/**",
+    "contracts/openapi/public/nutrition.yaml",
+    "contracts/openapi/runtime.yaml",
+    "contracts/openapi/generation.yaml"
+  ],
+  "test_inputs": [
+    "backend/platform/starter-testing/**",
+    "build-logic/*/CookieKotlinMultiplatformPlugin.kt",
+    "backend/services/notification/**/src/main/**",
+    "backend/services/notification/src/main/**",
+    "backend/services/notification/**/build.gradle.kts",
+    "backend/services/notification/build.gradle.kts",
+    "apps/mobile/shared/src/commonMain/**",
+    "apps/mobile/shared/src/jvmMain/**",
+    "apps/mobile/shared/build.gradle.kts",
+    "contracts/openapi/public/*.yaml",
+    "docs/architecture/model/events.yaml",
+    "docs/architecture/model/services.yaml",
+    "deploy/docker/nutrition.Dockerfile"
+  ],
+  "descriptor_outputs": ["service_contracts"]
+}

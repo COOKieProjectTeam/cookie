@@ -468,8 +468,8 @@
           "label": "Фиксированный HTTPS JWKS endpoint",
           "detail": "URL настроен конфигурацией, connect2с, весь JWKS exchange3с; URL из JWT headers не используется. Cache300с, refresh240с/cooldown30с.",
           "source": {
-            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/security/RemoteJwksAccessTokenVerifier.kt",
-            "line": 24
+            "path": "backend/platform/starter-web/src/main/kotlin/com/cookie/platform/web/security/IdentityAccessTokenVerifier.kt",
+            "line": 26
           }
         },
         {
