@@ -26,3 +26,28 @@ infrastructure_dependencies: [postgresql, nats_jetstream, identity_jwks]
 probes:
   liveness: /healthz
   readiness: /readyz
+ci: {
+  "check": "user",
+  "image": null,
+  "runtime_inputs": [
+    "backend/platform/starter-web/**",
+    "backend/platform/starter-postgres/**",
+    "backend/platform/starter-messaging/**",
+    "contracts/openapi/public/user.yaml",
+    "contracts/openapi/runtime.yaml",
+    "contracts/openapi/generation.yaml"
+  ],
+  "test_inputs": [
+    "backend/platform/starter-testing/**",
+    "backend/services/notification/**",
+    "backend/services/identity/**/src/main/**",
+    "backend/services/identity/src/main/**",
+    "backend/services/identity/**/build.gradle.kts",
+    "backend/services/identity/build.gradle.kts",
+    "backend/clients/identity/**",
+    "contracts/openapi/public/identity.yaml",
+    "contracts/openapi/public/notification.yaml",
+    "docs/architecture/model/events.yaml"
+  ],
+  "descriptor_outputs": ["service_contracts"]
+}

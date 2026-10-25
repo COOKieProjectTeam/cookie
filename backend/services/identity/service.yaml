@@ -25,3 +25,17 @@ infrastructure_dependencies:
 probes:
   liveness: /healthz
   readiness: /readyz
+ci: {
+  "check": "identity",
+  "image": "identity_image",
+  "runtime_inputs": [
+    "backend/platform/starter-web/**",
+    "backend/platform/starter-postgres/**",
+    "backend/platform/starter-messaging/**",
+    "contracts/openapi/public/identity.yaml",
+    "contracts/openapi/runtime.yaml",
+    "contracts/openapi/generation.yaml"
+  ],
+  "test_inputs": ["backend/platform/starter-testing/**"],
+  "descriptor_outputs": ["service_contracts"]
+}

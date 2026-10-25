@@ -19,6 +19,8 @@ import java.time.*
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 @Tag("integration")
 @Testcontainers
@@ -73,6 +75,57 @@ class UserPersistenceIntegrationTest {
         } }
         assertThat(calls.count { it.join().isSuccess }).isEqualTo(1)
         assertThat(calls.mapNotNull { it.join().exceptionOrNull()?.message }).containsExactly("VERSION_CONFLICT")
+    }
+    @Test fun `subresource writes preserve profile version and independent goal revisions`() {
+        val user=activate(); val profile=service.profile(user)
+        val first=service.setGoal(user,UUID.randomUUID(),goal())
+        val water=service.setHydration(user,UUID.randomUUID(),2000)
+        val date=LocalDate.parse("2026-10-23")
+        service.setOverride(user,UUID.randomUUID(),date,OverrideCommand(OverrideType.CUSTOM,calories=BigDecimal("2500")))
+        service.deleteOverride(user,UUID.randomUUID(),date)
+        val second=service.setGoal(user,UUID.randomUUID(),goal("2100"))
+        val updated=service.update(user,UUID.randomUUID(),ProfileChange(profile.version,locale="en"))
+        assertThat(updated.version).isEqualTo(profile.version+1)
+        assertThat(listOf(first.revision,second.revision)).containsExactly(1L,2L)
+        assertThat(water.revision).isEqualTo(1)
+        assertThat(owner.queryForList("SELECT aggregate_version FROM outbox_events WHERE user_id=? ORDER BY aggregate_version",Long::class.java,user))
+            .containsExactly(1L,2L,3L,4L,5L,6L,7L)
+    }
+    @Test fun `existing account reads share locks while deletion waits for readers`() {
+        val user=activate()
+        val source=DriverManagerDataSource(postgres.jdbcUrl,postgres.username,postgres.password)
+        source.connection.use { blocker ->
+            blocker.autoCommit=false
+            blocker.prepareStatement("SELECT pg_advisory_xact_lock_shared(?)").use {
+                it.setLong(1,user.mostSignificantBits xor user.leastSignificantBits);it.execute()
+            }
+            val read=CompletableFuture.supplyAsync { service.profile(user) }
+            try {
+                assertThat(read.get(2,TimeUnit.SECONDS).userId).isEqualTo(user)
+                val deletion=CompletableFuture.runAsync {
+                    events.handle("cookie.events.account.deletion.requested.v1",event(user,"account.deletion.requested"))
+                }
+                try {
+                    assertThatThrownBy { deletion.get(200,TimeUnit.MILLISECONDS) }.isInstanceOf(TimeoutException::class.java)
+                } finally { blocker.commit() }
+                deletion.get(5,TimeUnit.SECONDS)
+                assertThatThrownBy { service.profile(user) }.hasMessage("ACCOUNT_DELETED")
+            } finally { blocker.rollback();read.get(5,TimeUnit.SECONDS) }
+        }
+    }
+    @Test fun `parallel first reads bootstrap one profile without lock upgrade deadlock`() {
+        val user=id()
+        val reads=(1..8).map { CompletableFuture.supplyAsync { service.profile(user) } }
+        assertThat(reads.map { it.get(10,TimeUnit.SECONDS).version }).containsOnly(1L)
+        assertThat(owner.queryForObject("SELECT count(*) FROM outbox_events WHERE user_id=?",Int::class.java,user)).isEqualTo(1)
+    }
+    @Test fun `goal and hydration reads need timezone but not diet or allergies`() {
+        val user=activate();service.setGoal(user,UUID.randomUUID(),goal());service.setHydration(user,UUID.randomUUID(),2000)
+        owner.execute("REVOKE SELECT ON diet_preferences,allergies FROM user_app")
+        try {
+            assertThat(service.currentGoal(user).value.nutrients.calories).isEqualByComparingTo("2000")
+            assertThat(service.hydration(user).targetMl).isEqualTo(2000)
+        } finally { owner.execute("SELECT user_apply_runtime_grants()") }
     }
     @Test fun `goals keep history and same-day latest revision with account isolation`() {
         val a=activate();val b=activate()

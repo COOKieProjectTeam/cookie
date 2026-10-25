@@ -27,7 +27,7 @@ class ApiErrors {
     private fun response(status:Int,code:String):ResponseEntity<UserError> {
         val builder=ResponseEntity.status(status).cacheControl(CacheControl.noStore())
         if(status==401) builder.header("WWW-Authenticate","Bearer")
-        if(status==503 || code=="PROFILE_NOT_READY") builder.header("Retry-After","1")
+        if(status==503) builder.header("Retry-After","1")
         return builder.body(UserError(code,code))
     }
 }

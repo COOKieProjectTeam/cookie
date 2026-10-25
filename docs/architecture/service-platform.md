@@ -82,6 +82,12 @@ deadline and cancellation hooks, безопасную сериализацию, 
 места расширения для authentication/authorization. Бизнес-handlers остаются в
 сервисе и реализуют generated OpenAPI interfaces.
 
+`starter-web/security/IdentityAccessTokenVerifier` реализует общую политику
+Identity access JWT для User и Notification, включая bounded JWKS source,
+локальный кеш ключей и single-flight refresh без ожидания monitor другими
+request threads. Service-local adapters преобразуют общие ошибки в свой HTTP
+контракт. Бизнес-модели и user authorization остаются в сервисах.
+
 ### HTTP client and security starters
 
 HTTP client starter создаёт standard client wiring для per-callee generated
@@ -105,13 +111,15 @@ database access layer и не разрешает читать таблицы д�
 
 ### Messaging starter
 
-Сейчас Messaging starter реализует общий event envelope, subject mapping и
-NATS client primitives. Первая outbox-реализация остаётся локальным adapter
-Identity; переносить её в platform до второго реального publisher нельзя.
-Первый inbox runtime реализован локально в Notification и станет
-общим только после проверки повторным потребителем. Domain event payloads и
-handlers всегда принадлежат сервисам. Broker acknowledgement consumer выполняет
-только после commit consumer transaction.
+Messaging starter реализует общий event envelope, subject mapping, безопасную
+NATS connection configuration/lifecycle и pull-consumer runner, используемый
+Notification и User. Credentials и truststore проверяются как readable regular
+files; production TLS сохраняет hostname verification. Runner пересоздаёт
+subscription после замены connection и изолирует quarantine/ACK/NAK failures
+между items. Transient retry использует bounded exponential equal jitter до300s.
+Domain event payloads, handlers, quarantine schemas и durable names принадлежат
+сервисам. Broker acknowledgement выполняется только после commit handler или
+quarantine. Outbox storage/claiming остаётся локальным adapter каждого сервиса.
 
 ### Testing starter
 

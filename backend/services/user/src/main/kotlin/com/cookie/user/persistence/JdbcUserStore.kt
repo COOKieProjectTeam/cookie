@@ -18,10 +18,11 @@ import java.util.UUID
 @Repository
 class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplate,
                     val mapper: ObjectMapper, val clock: Clock) : UserStore {
-    /** Advisory locks also serialize activation/deletion before a profile row exists. */
-    fun lock(userId: UUID) {
+    /** Shared readers run concurrently; mutations and lifecycle use the exclusive form. */
+    fun lock(userId: UUID, shared: Boolean = false) {
         check(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
-        jdbc.queryForObject("SELECT pg_advisory_xact_lock(?)", Any::class.java, userId.mostSignificantBits xor userId.leastSignificantBits)
+        val function = if (shared) "pg_advisory_xact_lock_shared" else "pg_advisory_xact_lock"
+        jdbc.queryForObject("SELECT $function(?)", Any::class.java, userId.mostSignificantBits xor userId.leastSignificantBits)
     }
     fun deleted(userId: UUID) = jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM account_tombstones WHERE user_id=?)", Boolean::class.java, userId) == true
     fun active(userId: UUID) {
@@ -32,11 +33,25 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
         val created=jdbc.update("INSERT INTO profiles(user_id,locale) VALUES (?,'ru') ON CONFLICT DO NOTHING",userId)
         if(created==1) profileEvent(loadProfile(userId),listOf("created"))
     }
-    private fun <T : Any> read(userId: UUID, block: () -> T): T = requireNotNull(transactions.execute {
-        lock(userId); active(userId); block()
-    })
+    private fun <T : Any> read(userId: UUID, block: () -> T): T {
+        val result = transactions.execute {
+            lock(userId, shared = true)
+            val exists = jdbc.query("""SELECT
+                EXISTS(SELECT 1 FROM account_tombstones WHERE user_id=?) AS deleted,
+                EXISTS(SELECT 1 FROM profiles WHERE user_id=?) AS present""", { row, _ ->
+                if (row.getBoolean("deleted")) throw UserFailure("ACCOUNT_DELETED",403)
+                row.getBoolean("present")
+            }, userId, userId).single()
+            if (exists) block() else null
+        }
+        if (result != null) return result
+        // Release the shared lock before acquiring exclusive ownership: concurrent
+        // first reads must not deadlock while upgrading. Recheck tombstones under it.
+        return requireNotNull(transactions.execute { lock(userId); active(userId); block() })
+    }
     private fun <T : Any> command(userId: UUID, key: UUID, operation: String, input: Any, type: Class<T>, block: () -> T): T =
-        read(userId) {
+        requireNotNull(transactions.execute {
+            lock(userId); active(userId)
             ensure(key.version() == 4 && key.variant() == 2)
             val fingerprint = MessageDigest.getInstance("SHA-256").digest(canonical(mapper.valueToTree(input)).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
             val previous = jdbc.query("SELECT fingerprint,response::text FROM idempotency_commands WHERE user_id=? AND operation=? AND key=?",
@@ -50,7 +65,7 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
                     userId,operation,key,fingerprint,mapper.writeValueAsString(result))
                 result
             }
-        }
+        })
     /** JSON numbers compare by value, not BigDecimal scale or exponent spelling. */
     private fun canonical(node: tools.jackson.databind.JsonNode): String = when {
         node.isNumber -> node.decimalValue().stripTrailingZeros().toPlainString()
@@ -66,13 +81,14 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
             r.getString("activity_level")?.let(ActivityLevel::valueOf),r.getString("timezone"),r.getString("locale"),
             jdbc.query("SELECT diet_type FROM diet_preferences WHERE user_id=? ORDER BY diet_type",{ row,_ -> DietType.valueOf(row.getString(1)) },userId).toSet(),
             jdbc.query("SELECT allergen FROM allergies WHERE user_id=? ORDER BY allergen",{ row,_ -> Allergen.valueOf(row.getString(1)) },userId).toSet(),
-            r.getBoolean("onboarding_completed"),r.getLong("version"))
+            r.getBoolean("onboarding_completed"),r.getLong("profile_version"))
     },userId).single()
     override fun update(userId: UUID,key: UUID,value: ProfileChange): Profile = command(userId,key,"profile",value,Profile::class.java) {
         val old = loadProfile(userId)
         if(old.version != value.version) throw UserFailure("VERSION_CONFLICT",409)
         jdbc.update("""UPDATE profiles SET height_cm=COALESCE(?,height_cm),activity_level=COALESCE(?,activity_level),
-            timezone=COALESCE(?,timezone),locale=COALESCE(?,locale),version=version+1,updated_at=now() WHERE user_id=?""",
+            timezone=COALESCE(?,timezone),locale=COALESCE(?,locale),profile_version=profile_version+1,
+            aggregate_version=aggregate_version+1,updated_at=now() WHERE user_id=?""",
             value.heightCm,value.activityLevel?.name,value.timezone,value.locale,userId)
         value.dietPreferences?.let { values ->
             jdbc.update("DELETE FROM diet_preferences WHERE user_id=?",userId)
@@ -88,22 +104,27 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
         profileEvent(updated,changed)
         updated
     }
-    fun profileEvent(profile: Profile,changed: List<String>) = event(profile.userId,"user.profile.updated",profile.version,
+    fun profileEvent(profile: Profile,changed: List<String>) = event(profile.userId,"user.profile.updated",
+        jdbc.queryForObject("SELECT aggregate_version FROM profiles WHERE user_id=?",Long::class.java,profile.userId)!!,
         mapOf("userId" to profile.userId,"changedFields" to changed,"timezone" to profile.timezone,"locale" to profile.locale,"onboardingCompleted" to profile.onboardingCompleted))
     fun event(userId: UUID,type: String,version: Long,payload: Any) {
         jdbc.update("INSERT INTO outbox_events(event_id,user_id,event_type,aggregate_version,payload) VALUES (?,?,?,?,?::jsonb)",
             newId(),userId,type,version,mapper.writeValueAsString(payload))
     }
-    private fun bump(userId: UUID): Long = jdbc.queryForObject("UPDATE profiles SET version=version+1,updated_at=now() WHERE user_id=? RETURNING version",Long::class.java,userId)!!
-    private fun today(userId: UUID) = LocalDate.now(clock.withZone(ZoneId.of(loadProfile(userId).timezone)))
+    private fun bump(userId: UUID): Long = jdbc.queryForObject("UPDATE profiles SET aggregate_version=aggregate_version+1 WHERE user_id=? RETURNING aggregate_version",Long::class.java,userId)!!
+    private fun today(userId: UUID): LocalDate {
+        val timezone = jdbc.queryForObject("SELECT timezone FROM profiles WHERE user_id=?",String::class.java,userId)!!
+        return LocalDate.now(clock.withZone(ZoneId.of(timezone)))
+    }
     override fun currentGoal(userId: UUID) = read(userId) {
         jdbc.query("SELECT * FROM nutrition_goal_versions WHERE user_id=? AND effective_from<=? ORDER BY effective_from DESC,revision DESC LIMIT 1",
             { r,_ -> goal(r) },userId,today(userId)).singleOrNull() ?: throw UserFailure("GOAL_NOT_FOUND",404)
     }
     override fun setGoal(userId: UUID,key: UUID,value: NutritionGoalCommand): NutritionGoal = command(userId,key,"goal",value,NutritionGoal::class.java) {
-        val goal = NutritionGoal(newId(),today(userId),bump(userId),value)
+        val revision = jdbc.queryForObject("UPDATE profiles SET goal_revision=goal_revision+1 WHERE user_id=? RETURNING goal_revision",Long::class.java,userId)!!
+        val goal = NutritionGoal(newId(),today(userId),revision,value)
         insertGoal(userId,goal)
-        event(userId,"user.goal.changed",goal.revision,mapOf("userId" to userId,"nutritionGoalVersion" to goal))
+        event(userId,"user.goal.changed",bump(userId),mapOf("userId" to userId,"nutritionGoalVersion" to goal))
         goal
     }
     fun insertGoal(userId: UUID,goal: NutritionGoal) {
@@ -126,10 +147,11 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
             .singleOrNull() ?: throw UserFailure("GOAL_NOT_FOUND",404)
     }
     override fun setHydration(userId: UUID,key: UUID,targetMl: Int): HydrationGoal = command(userId,key,"hydration",targetMl,HydrationGoal::class.java) {
-        val goal=HydrationGoal(newId(),today(userId),bump(userId),targetMl)
+        val revision = jdbc.queryForObject("UPDATE profiles SET hydration_revision=hydration_revision+1 WHERE user_id=? RETURNING hydration_revision",Long::class.java,userId)!!
+        val goal=HydrationGoal(newId(),today(userId),revision,targetMl)
         jdbc.update("INSERT INTO hydration_goal_versions(id,user_id,revision,effective_from,target_ml,source) VALUES (?,?,?,?,?,'MANUAL')",
             goal.id,userId,goal.revision,goal.effectiveFrom,targetMl)
-        event(userId,"user.hydration_goal.changed",goal.revision,mapOf("userId" to userId,"targetMl" to targetMl,"effectiveFrom" to goal.effectiveFrom))
+        event(userId,"user.hydration_goal.changed",bump(userId),mapOf("userId" to userId,"targetMl" to targetMl,"effectiveFrom" to goal.effectiveFrom))
         goal
     }
     override fun override(userId: UUID,date: LocalDate) = read(userId) { loadOverride(userId,date) ?: throw UserFailure("OVERRIDE_NOT_FOUND",404) }

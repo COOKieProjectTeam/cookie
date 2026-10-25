@@ -3,7 +3,8 @@ info:
   title: COOKie User API
   version: 1.0.0
   description: User-owned profile, immutable manual goals and daily overrides. Identity
-    activation is asynchronous. Runtime/probes are private.
+    activation is asynchronous; the first verified request also initializes an incomplete
+    profile when needed. Runtime/probes are private.
 servers:
 - url: /v1
 tags:
@@ -50,23 +51,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
     patch:
       security:
       - accessToken: []
@@ -112,23 +113,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
       parameters:
       - name: Idempotency-Key
         in: header
@@ -179,23 +180,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
     put:
       security:
       - accessToken: []
@@ -241,23 +242,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
       parameters:
       - name: Idempotency-Key
         in: header
@@ -311,23 +312,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
   /me/goals/overrides/{date}:
     parameters:
     - $ref: '#/components/parameters/DatePath'
@@ -364,17 +365,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '403':
           description: Account deletion received
           content:
@@ -393,6 +388,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
       parameters:
       - name: Idempotency-Key
         in: header
@@ -438,23 +439,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
       parameters:
       - name: Idempotency-Key
         in: header
@@ -503,23 +504,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
   /me/goals/hydration:
     get:
       security:
@@ -559,23 +560,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
     put:
       security:
       - accessToken: []
@@ -614,23 +615,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserError'
         '409':
-          description: Version/idempotency/cheat-day conflict or activation not yet
-            received
+          description: Version/idempotency/cheat-day conflict
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Optional delay when PROFILE_NOT_READY
-              schema:
-                type: integer
         '503':
           description: Dependency unavailable; retry with the same key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserError'
+          headers:
+            Retry-After:
+              description: Delay in seconds before retrying a temporarily unavailable dependency
+              schema:
+                type: integer
+                minimum: 1
       requestBody:
         required: true
         content:
@@ -776,6 +777,8 @@ components:
         version:
           type: integer
           format: int64
+          description: Profile-only optimistic version. Goal, hydration and daily override
+            changes do not advance this value.
         userId:
           type: string
           format: uuid
@@ -790,6 +793,8 @@ components:
           type: integer
           minimum: 1
           format: int64
+          description: The profile version returned by GET or the previous successful
+            profile PATCH. A concurrent profile change causes VERSION_CONFLICT.
         heightCm:
           type: number
           format: double

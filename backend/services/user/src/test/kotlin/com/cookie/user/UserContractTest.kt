@@ -21,6 +21,16 @@ class UserContractTest {
         return properties[name] as Map<*, *>
     }
 
+    @Test fun `conflicts do not advertise an unreachable activation retry`() {
+        val paths = contract.getValue("paths") as Map<*, *>
+        for (path in paths.values) for (operation in (path as Map<*, *>).values.filterIsInstance<Map<*, *>>()) {
+            val responses = operation["responses"] as? Map<*, *> ?: continue
+            val conflict = responses["409"] as? Map<*, *> ?: continue
+            assertThat(conflict["description"].toString()).doesNotContain("activation")
+            assertThat((conflict["headers"] as? Map<*, *>)?.keys.orEmpty()).doesNotContain("Retry-After")
+        }
+    }
+
     @Test fun `profile locale schemas accept exactly the supported domain locales`() {
         for (locale in listOf("ru", "en", "de", "en-US", "")) {
             val domainAccepts = runCatching { ProfileChange(1, locale = locale).validate() }.isSuccess

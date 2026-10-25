@@ -1,5 +1,60 @@
 # User Service review evidence
 
+## 2026-10-25: PR review corrections
+
+Base/HEAD: `2117b1d62c98cd4175265e8bd6b387551da4e4e2`; evidence below
+applies to the uncommitted working-tree fixes on that base. Earlier sections
+describe historical revisions and are not evidence for this change.
+
+All ten review topics were addressed: profile and event counters are separated;
+goal and hydration histories have independent revisions; existing-profile reads
+share a lock and never execute bootstrap INSERTs; timezone lookup no longer
+loads diet/allergies; the unreachable activation error and four unused planned
+schemas are removed; JWKS policy and NATS connection/consumer mechanics have two
+real platform consumers; CI fan-out comes from validated service descriptors.
+Profile.version remains the public wire field; the internal column is now
+profile_version. V003 preserves existing profile versions and seeds counters
+from retained revisions/outbox rather than restarting sequences.
+
+| Invariant | Evidence in this working tree | Result | Unverified area |
+| --- | --- | --- | --- |
+| Subresource commands do not invalidate profile patches; histories and events remain ordered | `subresource writes preserve profile version and independent goal revisions` | Real PostgreSQL pass; same test fails with VERSION_CONFLICT on the base | Production rollout/rollback not performed; migrate before starting upgraded User |
+| Concurrent reads remain compatible with deletion and bootstrap | `existing account reads share locks while deletion waits for readers`; `parallel first reads bootstrap one profile without lock upgrade deadlock`; existing lifecycle tests | Pass; old exclusive read times out in the first regression | Load/latency benchmark not run |
+| Goal reads only require timezone, not diet/allergies | `goal and hydration reads need timezone but not diet or allergies` revokes SELECT on both irrelevant tables | Pass; base fails with permission denied on diet_preferences | No production query tracing |
+| Upgrade preserves counters and restrictive grants | `isolated migration upgrades existing counters and preserves restricted runtime grants`, starting at V002 with profile version8 and history7/6, using the migration JAR and user_app | Pass; next revisions8/7, profile9, event11; immutable/identity grants remain restricted | Large-volume migration and deployment rollback not exercised |
+| Backfill scans retained histories once, including accounts without goal history | `counter backfill scans retained outbox once for many profiles` runs production backfill SQL through PostgreSQL EXPLAIN ANALYZE for64profiles/512events; upgrade fixture also preserves outbox10 above profile3 and next hydration1/event11 | Pass: outbox scan loops1; pre-fix correlated SQL fails with64loops | Execution plan tested on this fixture; no production-sized timing claim |
+| JWKS refresh contenders do not wait on network; expired tokens fail closed | IdentityTokensTest slow discovery/expiry regressions and platform verifier tests | Pass; both service regressions fail on base (monitor timeout / accepted expired JWT) | Real Identity key rotation and outage load not exercised |
+| Message/quarantine/ACK/NAK failures do not abort healthy batch items | Platform JetStreamPullConsumerTest, NotificationConsumerTest quarantine outage; User runtime replaced-connection and broker outage tests | Pass; base consumer lets the quarantine exception escape | Provider delivery and broker production ACL not newly deployed |
+| Shared connection validation preserves TLS/replay policy | Platform NatsConnectionSupportTest plus Notification TLS peer and replay suites | Pass | Production credentials/truststores not accessed |
+| Runtime and contract agree; planned components are reachable | UserContractTest, all active/bundled OpenAPI validation, descriptor validation and transitive planned-schema check; generated KMP JVM tests | Pass | Planned Health onboarding remains unimplemented |
+| Shared changes select every real CI consumer | Full test-detect-ci-scope.sh and 11 descriptor selector tests including omitted Gradle dependency failure | Pass | Effective GitHub ruleset not changed/rechecked |
+| Atlas facts reflect the changed code | architecture-build/check, User HTTP filter → PATCH → flow/map and source inspection in local browser | 14 generator tests and 70 JS/UI tests pass | Atlas represents source, not deployed production |
+
+Verification: User, Notification, Identity, Nutrition and platform checks;
+all four service integration suites on local Podman; generated public client
+and mobile JVM tests. Counted main-service/platform/mobile XML reports contain
+403 tests, zero failures/errors/skips. Domain/application checks also passed or
+were up to date. Integration startup first failed because Testcontainers looked
+for /var/run/docker.sock; the successful runs explicitly used Podman's local API
+socket with its rootless-compatible Ryuk setting. No test gates were disabled.
+
+Six new behavioral regressions were independently run against an isolated source
+copy of the base with only test deltas: all six failed for their intended reason,
+then passed in the fixed tree. The independent review-agent pass reported no
+actionable findings after inspecting the full diff and untracked additions.
+The four-role review-swarm covered regression, security/privacy,
+performance/reliability and contracts/coverage. It identified one P2 in the new
+V003 backfill: an unindexed correlated outbox maximum was scanned once per
+profile while the migration held its lock. The correction groups each retained
+history once and joins maxima by user_id. A seventh fail-before/pass-after
+regression verifies the production SQL execution plan (64 scans before, one
+after). The complete User integration suite passed again after this fix.
+The performance reviewer and review-agent both re-reviewed the migration and
+its additional tests with no remaining findings. The other three swarm roles
+reported no additional actionable defects. Reviewers inspected source/tests;
+the main agent ran the successful suites. No production rollout, remote commit,
+push or GitHub ruleset change was performed.
+
 ## 2026-10-24: P3 contract correction and current main integration
 
 This follow-up starts from PR head `e4f3578bc92fc63823a878f3c79377524e882344`

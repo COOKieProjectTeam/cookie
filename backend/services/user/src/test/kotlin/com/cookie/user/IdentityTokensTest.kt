@@ -12,6 +12,9 @@ import org.junit.jupiter.api.Test
 import java.time.*
 import java.util.Date
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class IdentityTokensTest {
     private val key=ECKeyGenerator(Curve.P_256).algorithm(JWSAlgorithm.ES256).keyUse(KeyUse.SIGNATURE).keyID("key").generate()
@@ -55,5 +58,28 @@ class IdentityTokensTest {
             val verifier=IdentityTokens({ json },"https://identity.example","cookie-api",Clock.fixed(now,ZoneOffset.UTC))
             assertThatThrownBy { verifier.verify(token()) }.hasMessage("AUTHENTICATION_UNAVAILABLE")
         }
+    }
+    @Test fun `a slow discovery does not block other request threads`() {
+        val entered=CountDownLatch(1);val release=CountDownLatch(1)
+        val verifier=IdentityTokens({
+            entered.countDown();check(release.await(5,TimeUnit.SECONDS))
+            JWKSet(key.toPublicJWK()).toString()
+        },"https://identity.example","cookie-api",Clock.fixed(now,ZoneOffset.UTC))
+        val signed=token();val pool=Executors.newFixedThreadPool(2)
+        try {
+            val first=pool.submit<UUID> { verifier.verify(signed) }
+            assertThat(entered.await(2,TimeUnit.SECONDS)).isTrue()
+            val second=pool.submit<Throwable?> { runCatching { verifier.verify(signed) }.exceptionOrNull() }
+            assertThat(second.get(500,TimeUnit.MILLISECONDS)).hasMessage("AUTHENTICATION_UNAVAILABLE")
+            release.countDown()
+            assertThat(first.get(2,TimeUnit.SECONDS)).isEqualTo(account)
+        } finally { release.countDown();pool.shutdownNow() }
+    }
+    @Test fun `a token expiring during discovery is rejected`() {
+        val clock=MutableClock(now)
+        val verifier=IdentityTokens({
+            clock.value=now.plusSeconds(2);JWKSet(key.toPublicJWK()).toString()
+        },"https://identity.example","cookie-api",clock)
+        assertThatThrownBy { verifier.verify(token(expires=now.plusSeconds(1))) }.hasMessage("INVALID_ACCESS_TOKEN")
     }
 }

@@ -2302,34 +2302,6 @@ components:
         version:
           type: integer
 
-    ProfilePatch:
-      type: object
-      required: [version]
-      minProperties: 2
-      properties:
-        version:
-          type: integer
-          minimum: 1
-        heightCm:
-          type: number
-          format: double
-        activityLevel:
-          $ref: "#/components/schemas/ActivityLevel"
-        timezone:
-          type: string
-        locale:
-          type: string
-        dietPreferences:
-          type: array
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/DietType"
-        allergies:
-          type: array
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/Allergen"
-
     NutritionGoalInput:
       type: object
       required: [calories, proteinG, fatG, carbsG, fiberG]
@@ -2371,71 +2343,6 @@ components:
             source:
               type: string
               enum: [CALCULATED, MANUAL]
-
-    GoalHistoryPage:
-      type: object
-      required: [items, nextCursor]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/NutritionGoal"
-        nextCursor:
-          type: string
-          nullable: true
-
-    DailyGoalOverrideInput:
-      oneOf:
-        - type: object
-          required: [type, calories]
-          properties:
-            type:
-              type: string
-              enum: [CUSTOM]
-            calories:
-              type: number
-              minimum: 0
-            proteinG:
-              type: number
-              nullable: true
-              minimum: 0
-            fatG:
-              type: number
-              nullable: true
-              minimum: 0
-            carbsG:
-              type: number
-              nullable: true
-              minimum: 0
-            fiberG:
-              type: number
-              nullable: true
-              minimum: 0
-            unlimitedCalories:
-              type: boolean
-              default: false
-        - type: object
-          required: [type, unlimitedCalories]
-          properties:
-            type:
-              type: string
-              enum: [CHEAT_DAY]
-            unlimitedCalories:
-              type: boolean
-              enum: [true]
-
-    DailyGoalOverride:
-      allOf:
-        - $ref: "#/components/schemas/DailyGoalOverrideInput"
-        - type: object
-          required: [id, localDate]
-          properties:
-            id:
-              type: string
-              format: uuid
-            localDate:
-              type: string
-              format: date
 
     # ------------------------------------------------------------ food
     Serving:

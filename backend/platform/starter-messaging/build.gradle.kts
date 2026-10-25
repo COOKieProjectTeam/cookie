@@ -8,4 +8,5 @@ dependencies {
     api(libs.bouncycastle.provider)
     api("tools.jackson.core:jackson-databind")
     testImplementation(project(":backend:platform:starter-testing"))
+    testImplementation("org.mockito:mockito-core")
 }

@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 detector="${script_dir}/detect-ci-scope.sh"
+python3 "${script_dir}/test-service-ci-scope.py"
 
 case_output=""
 

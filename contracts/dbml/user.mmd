@@ -12,7 +12,10 @@ erDiagram
     boolean onboarding_completed
     timestamptz created_at
     timestamptz updated_at
-    bigint version
+    bigint profile_version
+    bigint aggregate_version
+    bigint goal_revision
+    bigint hydration_revision
   }
 
   NutritionGoalVersions {

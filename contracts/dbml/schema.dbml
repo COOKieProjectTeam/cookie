@@ -177,7 +177,10 @@ Table user_profiles as Profiles {
   onboarding_completed boolean [not null, default: false]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
-  version bigint [not null, default: 1]
+  profile_version bigint [not null, default: 1, note: 'Exposed as Profile.version; profile PATCH only']
+  aggregate_version bigint [not null, default: 1, note: 'Account-wide User event sequence']
+  goal_revision bigint [not null, default: 0]
+  hydration_revision bigint [not null, default: 0]
 
   Note: 'Service: User'
 }
@@ -185,7 +188,7 @@ Table user_profiles as Profiles {
 Table user_nutrition_goal_versions as NutritionGoalVersions {
   id uuid [pk]
   user_id uuid [not null, ref: > Profiles.user_id]
-  revision bigint [not null, note: 'Monotonic account version; immutable revision']
+  revision bigint [not null, note: 'Per-user nutrition goal revision; immutable']
   effective_from date [not null]
   target_weight_kg decimal(6,2)
   target_weight_change_per_week decimal(4,2)
@@ -207,7 +210,7 @@ Table user_nutrition_goal_versions as NutritionGoalVersions {
 Table user_hydration_goal_versions as HydrationGoalVersions {
   id uuid [pk]
   user_id uuid [not null, ref: > Profiles.user_id]
-  revision bigint [not null, note: 'Monotonic account version; immutable revision']
+  revision bigint [not null, note: 'Per-user hydration goal revision; immutable']
   effective_from date [not null]
   target_ml integer [not null]
   source varchar [not null, note: 'CALCULATED | MANUAL']

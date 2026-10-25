@@ -34,3 +34,26 @@ infrastructure_dependencies: [postgresql, nats_jetstream, redis, notification_de
 probes:
   liveness: /healthz
   readiness: /readyz
+ci: {
+  "check": "notification",
+  "image": "notification_image",
+  "runtime_inputs": [
+    "backend/platform/starter-web/**",
+    "backend/platform/starter-postgres/**",
+    "backend/platform/starter-messaging/**",
+    "backend/clients/identity/**",
+    "contracts/openapi/public/notification.yaml",
+    "contracts/openapi/runtime.yaml",
+    "contracts/openapi/generation.yaml"
+  ],
+  "test_inputs": [
+    "backend/platform/starter-testing/**",
+    "backend/services/identity/**/src/main/**",
+    "backend/services/identity/src/main/**",
+    "backend/services/identity/**/build.gradle.kts",
+    "backend/services/identity/build.gradle.kts",
+    "contracts/openapi/public/identity.yaml",
+    "docs/architecture/model/events.yaml"
+  ],
+  "descriptor_outputs": ["service_contracts", "compose"]
+}

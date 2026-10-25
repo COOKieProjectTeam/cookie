@@ -11,12 +11,16 @@ Identity owns accounts and credentials; Health owns weight measurements.
 2. Activation or the first verified Identity request creates at most one incomplete profile. Deletion and every mutation
    serialize on the same account lock. An append-only deletion tombstone rejects
    valid but stale tokens and prevents late activation/events from restoring data.
+   Existing-account reads share the lock and can run concurrently. Missing-profile
+   reads release it before exclusive bootstrap, which rechecks deletion.
 3. Profile updates compare the supplied version under lock. Concurrent updates
-   cannot silently overwrite each other. Each successful mutation and its outbox
+   cannot silently overwrite each other. `Profile.version` reflects only profile
+   changes; goal, hydration and override writes do not invalidate it. Each successful mutation and its outbox
    events commit together; rollback produces neither state nor events.
 4. Nutrition and hydration goals are immutable revisions. Current means the newest
    revision effective on or before today's date in the profile's IANA timezone.
-   Equal-date revisions use a monotonic sequence, never timestamp ties.
+   Nutrition and hydration each use their own monotonic revision counter for
+   equal-date ordering, independent of profile and event versions.
 5. A daily override belongs only to its account/date; at most one CHEAT_DAY exists
    per account/calendar month, enforced by PostgreSQL under competing requests.
 6. Retried commands with the same account, operation and idempotency key return
@@ -70,12 +74,26 @@ validation 1s, statement timeout 5s, lock timeout 2s, socket timeout 10s. HTTP
 request bodies are bounded to 16KiB. JWKS complete request 3s, connection 2s,
 response 64KiB, cache 5min, refresh minimum interval 30s. API auth failures are 401;
 unavailable/expired key source is 503. Responses use Cache-Control: no-store.
+User and Notification share the platform verifier and bounded JWKS source. A
+single refresh owns the network fetch; other requests can use still-valid keys
+or return 503 promptly if the required key is unavailable. JWT and cache expiry
+are checked against the time after discovery completes.
 
-Every read checks deletion and can initialize an incomplete profile under the
-account lock from the authenticated JWT, so activation stream retention cannot
-strand old active accounts. An activation event then becomes a no-op. Default
+Every read checks deletion under a shared account lock. Existing profiles need
+no bootstrap insert. Missing profiles are initialized under the exclusive lock
+from the authenticated JWT, so activation stream retention cannot strand old
+active accounts. An activation event then becomes a no-op. Default
 UTC/ru are explicit; Notification still owns its scheduling timezone. User writes
 manual goals without pretending that onboarding or Health calculation completed.
+Goal/hydration date lookup selects only the timezone, without loading diet or
+allergy rows. Bootstrap is immediate; `PROFILE_NOT_READY` is not an API state.
+
+User and Notification share NATS connection validation/lifecycle and the pull
+consumer runner. TLS credentials and truststores must be readable regular files.
+Transient inbox failures retry with equal jitter between half and all of
+`min(2^min(deliveredCount,9),300)` seconds. Quarantine, ACK or NAK failure cannot
+abort an independent item in the fetched batch; a replaced connection rebinds
+the subscription. Event handlers and quarantine storage remain service-owned.
 
 `cookie.user.outbox.pending`, `cookie.user.outbox.oldest.age.seconds`, inbox/outbox
 failure counters and quarantine count expose degraded delivery. Metrics health=0
@@ -92,6 +110,10 @@ Goal changes carry a complete immutable nutritionGoalVersion (id, effectiveFrom,
 revision, source, value with nutrients/optional weight targets). Override changes
 carry localDate and full override or explicit null on deletion. Hydration changes
 carry targetMl and effectiveFrom. Consumers compare versions; delivery may reorder.
+The account-wide `aggregate_version` orders all User events independently of
+`profile_version`, `goal_revision` and `hydration_revision`. Migration V003
+preserves existing profile versions and seeds counters from retained revisions
+and events; existing revision numbers are never rewritten.
 
 ## Evidence
 
@@ -102,8 +124,9 @@ late replay, rollback and reviewer regression for immutable evidence.
 two signed fixture users, strict binding, broker pause/recovery, durable events and
 quarantine, inbox-confirmed lifecycle processing, deletion/stale JWT rejection,
 numeric contract replay and real User → Notification locale propagation.
-`UserMigrationIntegrationTest` executes the migration JAR on a V1 database with
-representative data and converges existing broad runtime grants.
+`UserMigrationIntegrationTest` executes the migration JAR on a V2 database with
+representative revisions, preserves version continuity and converges existing
+broad runtime grants.
 JWKS and Identity lifecycle producer are fixtures: this is **not** full
 Identity E2E. `IdentityTokensTest` verifies token profile/cache failures;
 `UserDomainTest` verifies quantity/patch/override boundaries.
