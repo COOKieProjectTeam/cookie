@@ -169,6 +169,28 @@ class KeyMaterialConfigurationTest {
         assertThat(Files.readString(privateKeyPath)).isEqualTo(invalid)
     }
 
+    @Test
+    fun `rejects signing kid longer than consumer bound for active and retiring keys`() {
+        assertThatThrownBy { KeyMaterial(signingKey("k".repeat(129)), emptyList(), notificationPublicKey()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy { KeyMaterial(signingKey("active"), listOf(signingKey("k".repeat(129)).toPublicJWK()), notificationPublicKey()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
+
+    @Test
+    fun `rejects more signing keys than consumers can load`() {
+        val retiring=(1..16).map { signingKey("retiring-$it").toPublicJWK() }
+        assertThatThrownBy { KeyMaterial(signingKey("active"), retiring, notificationPublicKey()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
+
+    @Test
+    fun `accepts maximum kid and rotation set at consumer boundary`() {
+        val material=KeyMaterial(signingKey("k".repeat(128)),
+            (1..15).map { signingKey("retiring-$it").toPublicJWK() }, notificationPublicKey())
+        assertThat(material.retiringSigningKeys).hasSize(15)
+    }
+
     private fun signingKey(kid: String): ECKey = ECKeyGenerator(Curve.P_256)
         .keyUse(KeyUse.SIGNATURE)
         .algorithm(JWSAlgorithm.ES256)

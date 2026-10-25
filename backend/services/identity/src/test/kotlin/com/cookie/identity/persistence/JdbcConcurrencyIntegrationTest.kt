@@ -92,6 +92,40 @@ class JdbcConcurrencyIntegrationTest {
     }
 
     @Test
+    fun `SQL completion and release faults do not delay healthy publication and failed lease recovers`() {
+        val bad=insertOutbox(Instant.now().minusSeconds(2),null)
+        val good=insertOutbox(Instant.now().minusSeconds(1),null)
+        jdbc.execute("""CREATE FUNCTION test_outbox_recovery_fault() RETURNS trigger LANGUAGE plpgsql AS ${'$'}${'$'}
+            BEGIN IF OLD.event_id='$bad'::uuid AND NEW.claim_id IS NULL THEN RAISE EXCEPTION 'synthetic recovery fault'; END IF;
+            RETURN NEW; END ${'$'}${'$'}""")
+        jdbc.execute("CREATE TRIGGER test_outbox_recovery_fault BEFORE UPDATE ON outbox_events FOR EACH ROW EXECUTE FUNCTION test_outbox_recovery_fault()")
+        val nats=com.cookie.identity.messaging.NatsJetStreamConnection(
+            com.cookie.identity.config.IdentityProperties(natsUrl="nats://${broker.host}:${broker.getMappedPort(4222)}"),
+            org.springframework.mock.env.MockEnvironment().apply { setActiveProfiles("test") })
+        val repository=JdbcOutboxRepository(jdbc)
+        val registry=io.micrometer.core.instrument.simple.SimpleMeterRegistry()
+        val publisher=com.cookie.identity.messaging.OutboxPublisher(repository,nats,
+            tools.jackson.databind.json.JsonMapper.builder().findAndAddModules().build(),java.security.SecureRandom(),
+            com.cookie.identity.messaging.OutboxMetrics(repository,registry))
+        try {
+            try {
+                publisher.publishAvailable()
+                assertThat(jdbc.queryForObject("SELECT published_at IS NOT NULL FROM outbox_events WHERE event_id=?",Boolean::class.java,good)).isTrue()
+                assertThat(jdbc.queryForObject("SELECT published_at IS NULL AND claim_id IS NOT NULL FROM outbox_events WHERE event_id=?",Boolean::class.java,bad)).isTrue()
+                assertThat(registry.get("cookie.identity.outbox.publish").tags("event.type","test.event","outcome","recovery_failure").counter().count()).isEqualTo(1.0)
+            } finally {
+                jdbc.execute("DROP TRIGGER test_outbox_recovery_fault ON outbox_events")
+                jdbc.execute("DROP FUNCTION test_outbox_recovery_fault()")
+            }
+            jdbc.update("UPDATE outbox_events SET claimed_until=statement_timestamp()-interval '1 second' WHERE event_id=?",bad)
+            publisher.publishAvailable()
+            assertThat(jdbc.queryForObject("SELECT published_at IS NOT NULL FROM outbox_events WHERE event_id=?",Boolean::class.java,bad)).isTrue()
+            val duplicate=nats.jetStream().publish("cookie.events.test.event.v1",io.nats.client.impl.Headers().add("Nats-Msg-Id",bad.toString()),"{}".toByteArray())
+            assertThat(duplicate.isDuplicate).isTrue()
+        } finally { nats.close() }
+    }
+
+    @Test
     fun `concurrent rate limit consumption assigns every attempt exactly once`() {
         val repository = JdbcRateLimitRepository(jdbc)
         val start = CyclicBarrier(CONCURRENT_ATTEMPTS)
@@ -1485,6 +1519,9 @@ class JdbcConcurrencyIntegrationTest {
     }
 
     companion object {
+        class Broker: org.testcontainers.containers.GenericContainer<Broker>("nats:2.14.6-alpine")
+        @Container @JvmStatic val broker=Broker().withCommand("-js").withExposedPorts(4222)
+
         private const val CONCURRENT_ATTEMPTS = 8
         private const val PUBLISHED_EVENTS = 20
         private const val RACE_TIMEOUT_SECONDS = 15L

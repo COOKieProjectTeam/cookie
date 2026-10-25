@@ -622,6 +622,8 @@ components:
       properties:
         keys:
           type: array
+          minItems: 1
+          maxItems: 16
           items:
             $ref: "#/components/schemas/JsonWebKey"
 
@@ -640,6 +642,9 @@ components:
           enum: [ES256]
         kid:
           type: string
+          minLength: 1
+          maxLength: 128
+          description: Nonblank signing key identifier shared by issuer and consumers.
         crv:
           type: string
           enum: [P-256]

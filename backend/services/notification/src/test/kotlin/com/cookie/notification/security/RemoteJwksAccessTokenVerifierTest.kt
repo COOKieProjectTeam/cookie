@@ -117,6 +117,22 @@ class RemoteJwksAccessTokenVerifierTest {
         assertThatThrownBy { verifier.verify(invalid) }.isInstanceOf(InvalidAccessTokenException::class.java)
     }
 
+    @Test fun `maximum issuer key id and full rotation set remain verifiable`() {
+        val keys=listOf(signingKey("k".repeat(128)))+(1..15).map { signingKey("retiring-$it") }
+        val verifier=verifier { publicSet(*keys.toTypedArray()) }
+        for(key in keys) assertThat(verifier.verify(token(key))).isEqualTo(account)
+    }
+
+    @Test fun `oversized key id and set fail closed`() {
+        val oversized=signingKey("k".repeat(129))
+        var requests=0
+        val invalidHeader=verifier { requests++;publicSet(oversized) }
+        assertThatThrownBy { invalidHeader.verify(token(oversized)) }.isInstanceOf(InvalidAccessTokenException::class.java)
+        assertThat(requests).isZero()
+        val tooMany=verifier { publicSet(key, *(1..16).map { signingKey("retiring-$it") }.toTypedArray()) }
+        assertThatThrownBy { tooMany.verify(token(key)) }.isInstanceOf(AuthenticationUnavailableException::class.java)
+    }
+
     private fun verifier(source: JwksSource) = RemoteJwksAccessTokenVerifier(source, "https://api.cookie.app", "cookie-api", clock)
     private fun publicSet(vararg keys: ECKey): String = JWKSet(keys.map { it.toPublicJWK() }).toString()
     private fun signingKey(id: String) = ECKeyGenerator(Curve.P_256).keyID(id).keyUse(KeyUse.SIGNATURE)

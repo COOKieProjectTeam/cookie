@@ -1,5 +1,6 @@
 package com.cookie.identity.security
 
+import com.cookie.platform.web.IdentityAccessKeyPolicy
 import com.nimbusds.jose.EncryptionMethod
 import com.nimbusds.jose.JWEAlgorithm
 import com.nimbusds.jose.JWEHeader
@@ -22,6 +23,7 @@ class KeyMaterial(
     val notificationEncryptionKey: RSAKey,
 ) {
     init {
+        IdentityAccessKeyPolicy.requireKeyCount(1 + retiringSigningKeys.size)
         validateSigningKey(signingKey, "Active Identity signing JWK", privateRequired = true)
         retiringSigningKeys.forEachIndexed { index, key ->
             validateSigningKey(key, "Retiring Identity signing JWK[$index]", privateRequired = false)
@@ -41,7 +43,7 @@ class KeyMaterial(
         require(key.curve == Curve.P_256) { "$label must use P-256" }
         require(key.keyUse == KeyUse.SIGNATURE) { "$label must declare use=sig" }
         require(key.algorithm == JWSAlgorithm.ES256) { "$label must declare alg=ES256" }
-        require(!key.keyID.isNullOrBlank()) { "$label must have kid" }
+        IdentityAccessKeyPolicy.requireKeyId(key.keyID)
         if (privateRequired) {
             require(key.isPrivate) { "$label must contain private key material" }
         } else {
