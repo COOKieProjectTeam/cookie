@@ -11,7 +11,7 @@ kotlinx-serialization = "1.11.0"
 ktor = "3.6.0"
 nimbus-jose-jwt = "10.10"
 openapi-generator = "7.24.0"
-spring-boot = "4.1.1"
+spring-boot = "4.1.2"
 swagger-annotations = "2.2.55"
 testcontainers = "2.0.5"
 
