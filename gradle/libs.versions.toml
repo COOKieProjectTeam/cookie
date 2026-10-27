@@ -1,7 +1,7 @@
 [versions]
 angus-mail = "2.0.5"
 bouncycastle-lts = "2.73.13"
-icu4j = "78.3"
+icu4j = "79.1"
 google-auth = "1.43.0"
 jnats = "2.26.4"
 kotlin = "2.4.21"
