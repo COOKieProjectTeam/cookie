@@ -172,6 +172,10 @@ function catalogMarkup(ui) {
   return ui.markup().split('<div class="catalog-list">')[1]?.split('<article class="detail-panel">')[0] || "";
 }
 
+function eventId(ui, event) {
+  return ui.data.events.filter(candidate => candidate.type === event.type).length > 1 ? event.subject : event.type;
+}
+
 function catalogIds(ui) {
   return [...catalogMarkup(ui).matchAll(/<a href="([^"]+)" class="catalog-item/g)]
     .map(([, href]) => new URLSearchParams(decode(href).split("?")[1]).get("item"));
@@ -213,7 +217,7 @@ test("deep links honor service filters across API, events and infrastructure fac
     ui.navigate(`#events?service=${service.id}&plan=1`);
     assert.deepEqual(catalogIds(ui).sort(), ui.data.events
       .filter(value => value.producer === service.id || value.consumers.includes(service.id))
-      .map(value => value.type).sort());
+      .map(value => eventId(ui, value)).sort());
   }
   ui.navigate("#facts?service=infrastructure");
   const shownFacts = [...ui.markup().matchAll(/class="fact" id="fact-([^"]+)"/g)].map(([, id]) => id);
@@ -227,7 +231,7 @@ test("catalogs group every item once by its owner and distinguish API visibility
   const ui = harness();
   const catalogs = [
     ["api", ui.data.operations.map(operation => ({ id: operation.id, owner: operation.service }))],
-    ["events", ui.data.events.map(event => ({ id: event.type, owner: event.producer }))],
+    ["events", ui.data.events.map(event => ({ id: eventId(ui, event), owner: event.producer }))],
     ["flows", scenarioSnapshot(ui.data).map(flow => ({ id: flow.id, owner: flow.service }))],
   ];
   for (const [view, expected] of catalogs) {
@@ -261,7 +265,7 @@ test("visible service filters select, survive reload and reset each catalog", ()
       ? ui.data.operations.filter(item => !service || item.service === service).map(item => item.id)
       : view === "events"
         ? ui.data.events.filter(item => item.status === "implemented"
-          && (!service || item.producer === service || item.consumers.includes(service))).map(item => item.type)
+          && (!service || item.producer === service || item.consumers.includes(service))).map(item => eventId(ui, item))
         : scenarios.filter(item => !service || item.service === service).map(item => item.id);
     ui.navigate(`#${view}`);
     for (const service of view === "flows" ? ["identity", "notification", "infrastructure"] : ["identity", "notification"]) {
@@ -290,7 +294,7 @@ test("event filters distinguish publishing and consuming, including empty result
       const expected = ui.data.events.filter(event =>
         (direction !== "consumed" && event.producer === service)
         || (direction !== "published" && event.consumers.includes(service)));
-      assert.deepEqual(catalogIds(ui).sort(), expected.map(event => event.type).sort(), `${service}: ${direction}`);
+      assert.deepEqual(catalogIds(ui).sort(), expected.map(event => eventId(ui, event)).sort(), `${service}: ${direction}`);
       const params = new URLSearchParams(ui.hash().split("?")[1]);
       assert.equal(params.get("direction"), direction === "all" ? null : direction);
       assert.deepEqual(catalogIds(harness(ui.data, ui.hash())), catalogIds(ui));
@@ -302,9 +306,9 @@ test("event filters distinguish publishing and consuming, including empty result
   ui.click('[data-action="catalog-filter"][data-service=""]');
   assert.equal(new URLSearchParams(ui.hash().split("?")[1]).get("direction"), null);
   assert.doesNotMatch(ui.markup(), /data-action="event-direction"/, "Direction requires a selected service");
-  assert.deepEqual(catalogIds(ui).sort(), ui.data.events.map(event => event.type).sort());
+  assert.deepEqual(catalogIds(ui).sort(), ui.data.events.map(event => eventId(ui, event)).sort());
   const noService = harness(ui.data, "#events?direction=consumed&plan=1");
-  assert.deepEqual(catalogIds(noService).sort(), ui.data.events.map(event => event.type).sort());
+  assert.deepEqual(catalogIds(noService).sort(), ui.data.events.map(event => eventId(ui, event)).sort());
 });
 
 test("an item outside the chosen service never replaces the filtered detail", () => {
@@ -348,7 +352,7 @@ test("service filters discover new owners from data and do not duplicate a self-
     producer: id, consumers: [id, "notification"], implementedConsumers: [id, "notification"] };
   data.events.push(event);
   const ui = harness(data);
-  for (const [view, expected] of [["api", operation.id], ["events", event.type], ["flows", flow.id]]) {
+  for (const [view, expected] of [["api", operation.id], ["events", eventId(ui, event)], ["flows", flow.id]]) {
     ui.navigate(`#${view}`);
     ui.click(`[data-action="catalog-filter"][data-service="${id}"]`);
     assert.deepEqual(catalogIds(ui), [expected]);
@@ -357,7 +361,7 @@ test("service filters discover new owners from data and do not duplicate a self-
   ui.navigate(`#events?service=${id}`);
   for (const direction of ["published", "consumed"]) {
     ui.click(`[data-action="event-direction"][data-direction="${direction}"]`);
-    assert.deepEqual(catalogIds(ui), [event.type]);
+    assert.deepEqual(catalogIds(ui), [eventId(ui, event)]);
   }
 });
 
@@ -403,18 +407,18 @@ test("turning off the plan removes the selected planned event from the catalog",
   const ui = harness();
   const event = ui.data.events.find(value => value.status === "planned");
   assert.ok(event, "Fixture includes a planned producer");
-  ui.navigate(`#events?item=${encodeURIComponent(event.type)}&plan=1`);
-  assert.ok(catalogIds(ui).includes(event.type));
+  ui.navigate(`#events?item=${encodeURIComponent(eventId(ui, event))}&plan=1`);
+  assert.ok(catalogIds(ui).includes(eventId(ui, event)));
   ui.togglePlan(false);
   const displayed = catalogIds(ui);
-  assert.ok(!displayed.includes(event.type), "Selected planned event must be hidden too");
-  assert.ok(displayed.every(id => ui.data.events.find(value => value.type === id).status === "implemented"));
+  assert.ok(!displayed.includes(eventId(ui, event)), "Selected planned event must be hidden too");
+  assert.ok(displayed.every(id => ui.data.events.find(value => eventId(ui, value) === id).status === "implemented"));
 });
 
 test("plan toggle preserves an implemented consumer filter and hides its selected planned event detail", () => {
   const ui = harness();
   const event = ui.data.events.find(value => value.status === "planned" && value.consumers.includes("notification"));
-  ui.navigate(`#events?service=notification&direction=consumed&item=${encodeURIComponent(event.type)}&plan=1`);
+  ui.navigate(`#events?service=notification&direction=consumed&item=${encodeURIComponent(eventId(ui, event))}&plan=1`);
   assert.ok(visibleText(detailMarkup(ui)).includes(event.type));
   ui.togglePlan(false);
   const params = new URLSearchParams(ui.hash().split("?")[1]);
@@ -423,10 +427,10 @@ test("plan toggle preserves an implemented consumer filter and hides its selecte
   assert.equal(params.get("item"), null);
   assert.ok(!visibleText(detailMarkup(ui)).includes(event.type));
   assert.deepEqual(catalogIds(ui).sort(), ui.data.events.filter(value =>
-    value.status === "implemented" && value.consumers.includes("notification")).map(value => value.type).sort());
+    value.status === "implemented" && value.consumers.includes("notification")).map(value => eventId(ui, value)).sort());
   ui.togglePlan(true);
   assert.deepEqual(catalogIds(ui).sort(), ui.data.events.filter(value => value.consumers.includes("notification"))
-    .map(value => value.type).sort());
+    .map(value => eventId(ui, value)).sort());
 
   ui.click('[data-action="catalog-filter"][data-service="progress"]');
   ui.togglePlan(false);
@@ -434,7 +438,7 @@ test("plan toggle preserves an implemented consumer filter and hides its selecte
   assert.equal(reset.get("service"), null, "Hiding the plan removes a planned service filter");
   assert.equal(reset.get("direction"), null, "Direction is removed together with its service");
   assert.deepEqual(catalogIds(ui).sort(), ui.data.events.filter(value => value.status === "implemented")
-    .map(value => value.type).sort());
+    .map(value => eventId(ui, value)).sort());
 });
 
 test("toggling planned components preserves the scenario being traced", () => {
@@ -574,5 +578,31 @@ test("Nutrition operation limits come from its own runtime, never Notification o
     const panel = ui.markup().split('<h3>Таймауты и ограничения</h3>')[1].split('<section class="detail-section">')[0];
     assert.match(panel, /fact-nutrition-/);
     assert.doesNotMatch(panel, /fact-notification-|fact-infra-gateway-/);
+  }
+});
+
+test("event versions have distinct links and preserve historical subjects", () => {
+  const ui = harness(undefined, "#events?plan=1&service=user");
+  const v1 = "cookie.events.user.goal.changed.v1";
+  const v2 = "cookie.events.user.goal.changed.v2";
+  assert.ok(catalogIds(ui).includes(v1));
+  assert.ok(catalogIds(ui).includes(v2));
+  ui.navigate(`#events?plan=1&service=user&item=${encodeURIComponent(v1)}`);
+  assert.match(visibleText(detailMarkup(ui)), /Event version 1/);
+  ui.togglePlan(false);
+  assert.ok(!catalogIds(ui).includes(v1));
+  assert.ok(catalogIds(ui).includes(v2));
+  ui.navigate("#events?service=user&item=user.goal.changed");
+  assert.match(visibleText(detailMarkup(ui)), /Event version 2/);
+});
+
+test("Health preview and account-scoped import link to owned flows", () => {
+  const ui = harness();
+  const health = ui.data.details.find(entry => entry.serviceId === "health");
+  for (const id of ["calculateNutritionAssessment","importHealthBatch","health:getLiveness","health:getReadiness"]) {
+    const flow = health.flows.find(item => item.id === health.operationNotes[id].flowId);
+    assert.ok(flow.operationIds.includes(id));
+    ui.navigate(`#map?flow=${flow.id}`);
+    assert.match(ui.markup(), /data-node="health"/);
   }
 });

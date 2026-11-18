@@ -38,7 +38,7 @@ class NotificationNatsConnection(private val properties: NotificationMessagingPr
         options = { options(if (replay) properties.operatorNatsCredentialsPath else null) },
         initialize = { connection ->
             if (development) DevelopmentJetStreamTopology.ensure(connection, STREAM, NotificationEventHandler.CONSUMER,
-                NotificationEventHandler.PRODUCERS.keys.map { "cookie.events.$it.v1" })
+                NotificationEventHandler.SUBJECTS)
         },
     )
 

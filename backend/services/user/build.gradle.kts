@@ -9,6 +9,7 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":backend:contracts:health-assessment"))
     implementation(project(":backend:services:user:domain"))
     implementation(project(":backend:services:user:application"))
     implementation(project(":backend:platform:starter-web"))

@@ -94,7 +94,7 @@ Provision stream `COOKIE_EVENTS` with `cookie.events.>` and durable consumer
 and max 20 unacknowledged messages. Production runtime must only publish
 the five exact subjects `cookie.events.nutrition.meal.created.v1`,
 `cookie.events.nutrition.meal.updated.v1`, `cookie.events.nutrition.meal.deleted.v1`,
-`cookie.events.nutrition.day.changed.v1`, and `cookie.events.nutrition.water.changed.v1`;
+`cookie.events.nutrition.day.changed.v2`, and `cookie.events.nutrition.water.changed.v1`;
 use its `_INBOX.cookie.nutrition.>` replies,
 pull/ACK its own consumer, and bind/read consumer information. It does not need
 stream administration or arbitrary stream-message retrieval. Operator replay

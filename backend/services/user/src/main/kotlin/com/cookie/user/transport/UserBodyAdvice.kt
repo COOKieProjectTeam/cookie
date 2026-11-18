@@ -1,6 +1,7 @@
 package com.cookie.user.transport
 
 import com.cookie.user.domain.invalid
+import com.cookie.contracts.assessment.AssessmentWire
 import org.springframework.core.MethodParameter
 import org.springframework.http.HttpInputMessage
 import org.springframework.http.converter.HttpMessageConverter
@@ -23,14 +24,16 @@ class UserBodyAdvice(private val mapper:ObjectMapper):RequestBodyAdviceAdapter()
         if(tree==null || !tree.isObject) invalid()
         val permitted=when(parameter.method?.name) {
             "updateProfile" -> setOf("version","heightCm","activityLevel","timezone","locale","dietPreferences","allergies")
-            "setCurrentGoal" -> setOf("calories","proteinG","fatG","carbsG","fiberG","targetWeightKg","targetWeightChangeKgPerWeek")
-            "setDailyGoalOverride" -> setOf("type","calories","proteinG","fatG","carbsG","fiberG","unlimitedCalories")
+            "completeOnboarding", "acceptNutritionAssessment" -> setOf("receipt","input")
+            "setDailyGoalOverride" -> setOf("type","unlimitedCalories")
             "setHydrationGoal" -> setOf("targetMl")
             else -> emptySet()
         }
         tree.properties().forEach { (name,v) ->
             if(name !in permitted || v.isNull) invalid()
             val valid=when(name) {
+                "receipt" -> v.isString && v.stringValue().length in 1..8192
+                "input" -> AssessmentWire.validInput(v)
                 "version","targetMl" -> v.isIntegralNumber && v.canConvertToLong()
                 "heightCm","calories","proteinG","fatG","carbsG","fiberG","targetWeightKg","targetWeightChangeKgPerWeek" -> v.isNumber
                 "unlimitedCalories" -> v.isBoolean

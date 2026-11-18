@@ -123,15 +123,16 @@ class NotificationCoreIntegrationTest {
     @Test fun `goal warning needs matching timezone and new snapshot cancels a queued warning`() {
         val user=readyUser()
         val day=repository.now().atZone(java.time.ZoneId.of("UTC")).toLocalDate().toString()
-        fun progress(zone:String,consumed:Int)=mapOf("userId" to user,"localDate" to day,"timezone" to zone,"calories" to mapOf("consumed" to consumed,"target" to 2000,"unlimitedCalories" to false),"water" to mapOf("consumedMl" to null,"targetMl" to null))
-        send("progress.day.updated",progress("Europe/London",2100),version=1)
+        val goal = UUID.randomUUID()
+        fun progress(zone:String,consumed:Int)=mapOf("userId" to user,"localDate" to day,"timezone" to zone,"calories" to mapOf("consumed" to consumed,"low" to 2200,"high" to 2400,"goalId" to goal,"goalRevision" to 1,"goalState" to "RANGE","cheatDay" to false),"water" to mapOf("consumedMl" to null,"targetMl" to null))
+        send("progress.day.updated",progress("Europe/London",2401),version=1,wireVersion=2)
         scheduler.process(user)
         assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_jobs WHERE kind='CALORIES_EXCEEDED'",Long::class.java)).isZero()
-        send("progress.day.updated",progress("UTC",2100),version=1)
+        send("progress.day.updated",progress("UTC",2401),version=1,wireVersion=2)
         scheduler.process(user)
         val occurrence=jdbc.queryForObject("SELECT id FROM reminder_occurrences WHERE kind='CALORIES_EXCEEDED'",UUID::class.java)!!
         assertThat(eligibility.isEligible(user,"CALORIES_EXCEEDED",occurrence,repository.now())).isTrue()
-        send("progress.day.updated",progress("UTC",1900),version=2)
+        send("progress.day.updated",progress("UTC",2400),version=2,wireVersion=2)
         assertThat(eligibility.isEligible(user,"CALORIES_EXCEEDED",occurrence,repository.now())).isFalse()
     }
     @Test fun `quarantine contains only metadata not event contents`() {
@@ -394,10 +395,10 @@ class NotificationCoreIntegrationTest {
         return user
     }
     private fun count(table:String)=jdbc.queryForObject("SELECT count(*) FROM $table",Long::class.java)!!
-    private fun send(type:String,payload:Map<String,Any?>,version:Long?=null) = events.handle(subject(type),event(type,payload,version=version))
+    private fun send(type:String,payload:Map<String,Any?>,version:Long?=null,wireVersion:Int=1) = events.handle("cookie.events.$type.v$wireVersion",event(type,payload,version=version,wireVersion=wireVersion))
     private fun subject(type:String)="cookie.events.$type.v1"
-    private fun event(type:String,payload:Map<String,Any?>,id:UUID=UUID.randomUUID(),version:Long?=null,aggregateId:String=UUID.randomUUID().toString()):ByteArray = mapper.writeValueAsBytes(mapOf(
-        "event_id" to id,"event_type" to type,"event_version" to 1,"occurred_at" to Instant.now().toString(),"producer" to NotificationEventHandler.PRODUCERS.getValue(type),
+    private fun event(type:String,payload:Map<String,Any?>,id:UUID=UUID.randomUUID(),version:Long?=null,aggregateId:String=UUID.randomUUID().toString(),wireVersion:Int=1):ByteArray = mapper.writeValueAsBytes(mapOf(
+        "event_id" to id,"event_type" to type,"event_version" to wireVersion,"occurred_at" to Instant.now().toString(),"producer" to NotificationEventHandler.PRODUCERS.getValue(type),
         "aggregate_type" to "fixture","aggregate_id" to aggregateId,"aggregate_version" to version,"payload" to payload))
     class RedisContainer(image:String):GenericContainer<RedisContainer>(image)
     companion object {

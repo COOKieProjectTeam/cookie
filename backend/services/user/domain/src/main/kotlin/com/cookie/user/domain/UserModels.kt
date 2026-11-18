@@ -10,7 +10,7 @@ fun invalid(): Nothing = throw UserFailure("INVALID_REQUEST", 400)
 fun ensure(value: Boolean) { if (!value) invalid() }
 
 enum class Sex { MALE, FEMALE }
-enum class ActivityLevel { LOW, MODERATE, HIGH }
+enum class ActivityLevel { INACTIVE, LOW_ACTIVE, ACTIVE, VERY_ACTIVE }
 enum class DietType { BALANCED, HIGH_PROTEIN, VEGETARIAN, VEGAN, PESCATARIAN, LOW_CARB, KETO, MEDITERRANEAN, GLUTEN_FREE, LACTOSE_FREE }
 enum class Allergen { GLUTEN, CRUSTACEANS, EGGS, FISH, PEANUTS, SOY, MILK, TREE_NUTS, CELERY, MUSTARD, SESAME, SULPHITES, LUPIN, MOLLUSCS }
 
@@ -27,6 +27,11 @@ data class ProfileChange(
 ) {
     fun validate() {
         ensure(version > 0)
+        dietPreferences?.let {
+            if (it.count { tag -> tag in setOf(DietType.BALANCED, DietType.HIGH_PROTEIN, DietType.LOW_CARB, DietType.KETO) } > 1) {
+                throw UserFailure("CONFLICTING_MACRO_PROFILES",400)
+            }
+        }
         heightCm?.let { ensure(it >= BigDecimal("30") && it <= BigDecimal("300") && it.stripTrailingZeros().scale() <= 2) }
         timezone?.let { ensure(it in ZoneId.getAvailableZoneIds()) }
         locale?.let { ensure(it in setOf("ru", "en")) }

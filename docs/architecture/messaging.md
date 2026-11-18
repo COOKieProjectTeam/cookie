@@ -118,8 +118,8 @@ deliver that event more than once and is handled by future consumer inboxes.
 
 User, Food Catalog, Nutrition, Recipe, Shopping, Health, Progress, Notification,
 Media and Meal Planner are target consumers because they own user-linked data.
-Notification implements local deletion and a minimal tombstone; the other target
-consumers and all acknowledgement events remain unimplemented. Identity remains producer-only, does not add a placeholder inbox and does
+Notification, Nutrition, User and Health implement local deletion with a minimal
+tombstone. The remaining target consumers and acknowledgement events are planned. Identity remains producer-only, does not add a placeholder inbox and does
 not publish `account.deleted`; the account honestly remains
 `DELETION_PENDING`. Before completion is introduced, the system also needs a
 reconciliation/replay path for pending requests whose original event is older

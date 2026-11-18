@@ -87,3 +87,6 @@ Production ingress, credentials and deployment are not activated in this PR.
 Readiness covers PostgreSQL and usable JWKS; NATS outages leave HTTP available
 and expose durable outbox backlog/failure metrics. Health integration and full
 Identity→User→Health E2E remain dependencies, not fixture-based success claims.
+
+ADR 0016 supersedes the planned synchronous onboarding call and specifies the
+transition from manual nutrition targets to asynchronously accepted assessments.

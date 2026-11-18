@@ -1,0 +1,17 @@
+:8085 {
+    @health path /v1/health /v1/health/*
+    handle @health {
+        reverse_proxy host.docker.internal:8084
+    }
+    @user path /v1/me/*
+    handle @user {
+        reverse_proxy host.docker.internal:8083
+    }
+    @identity path /v1/auth/*
+    handle @identity {
+        reverse_proxy host.docker.internal:8080
+    }
+    handle {
+        respond 404
+    }
+}

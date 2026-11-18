@@ -1,48 +1,169 @@
-// COOKie — health service database schema
-//
-// This file contains only tables owned by the health service.
-// Cross-service references are logical IDs only; never add cross-service foreign keys.
+// Health-owned schema. Foreign service identifiers are logical only.
 
-Table sources as Sources {
-  id uuid [pk]
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  type varchar [not null, note: 'APPLE_HEALTH | HEALTH_CONNECT']
-  device_id varchar [null]
-  created_at timestamptz [not null]
-  last_sync_at timestamptz [null]
-
-  Note: 'Service: Health'
+Table account_tombstones as HealthTombstones {
+  user_id uuid [pk]
+  deletion_request_id uuid [not null]
+  deleted_at timestamptz [not null]
 }
 
-Table daily_activity_sources as DailyActivitySources {
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+Table inbox_events as HealthInbox {
+  consumer_name text [not null]
+  event_id uuid [not null]
+  event_type text [not null]
+  processed_at timestamptz [not null]
+  indexes {
+    (consumer_name, event_id) [pk]
+  }
+}
+
+Table message_quarantine as HealthQuarantine {
+  message_hash text [pk]
+  subject text [not null]
+  reason text [not null]
+  stream_sequence bigint [not null]
+  created_at timestamptz [not null]
+}
+
+Table connections as HealthConnections {
+  user_id uuid [not null]
+  id uuid [not null]
+  platform text [not null]
+  timezone text [not null]
+  status text [not null]
+  generation bigint [not null]
+  version bigint [not null]
+  next_seq bigint [not null]
+  initial_from date [not null]
+  initial_to date [not null]
+  indexes {
+    (user_id,id) [pk]
+  }
+}
+
+Table primary_connection_periods as HealthPrimaryPeriods {
+  user_id uuid [not null]
+  effective_from date [not null]
+  timezone text [not null]
+  effective_at timestamptz [not null]
+  connection_id uuid [not null]
+  revision bigint [not null]
+  indexes {
+    (user_id,revision) [pk]
+  }
+}
+
+Table activity_source_days as HealthSourceDays {
+  user_id uuid [not null]
+  connection_id uuid [not null]
   local_date date [not null]
-  source varchar [not null]
+  timezone text [not null]
   steps integer
-  active_calories decimal(10,3)
-  source_updated_at timestamptz [not null]
-  received_at timestamptz [not null]
-
+  active_kcal numeric(12,3)
+  deleted boolean [not null]
   indexes {
-    (user_id, local_date, source) [pk]
+    (user_id,connection_id,local_date) [pk]
   }
-
-  Note: 'Service: Health'
 }
 
-Table weight_measurements as WeightMeasurements {
-  id uuid [pk]
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  value_kg decimal(6,2) [not null]
-  measured_at timestamptz [not null]
-  source varchar [not null, note: 'MANUAL | APPLE_HEALTH']
-  external_id varchar [null]
+Table activity_day_versions as HealthDayVersions {
+  user_id uuid [not null]
+  local_date date [not null]
+  connection_id uuid
+  timezone text [not null]
+  version bigint [not null]
+  indexes {
+    (user_id,local_date) [pk]
+  }
+}
+
+Table weight_measurements as HealthWeights {
+  user_id uuid [not null]
+  id uuid [not null]
+  source text [not null]
+  connection_id uuid
+  external_id text
+  first_weight boolean [not null]
+  version bigint [not null]
+  value_kg numeric(5,2)
+  measured_at timestamptz
+  deleted boolean [not null]
+  indexes {
+    (user_id,id) [pk]
+    (user_id,connection_id,external_id) [unique]
+  }
+}
+
+Table import_batches as HealthBatches {
+  user_id uuid [not null]
+  connection_id uuid [not null]
+  generation bigint [not null]
+  seq bigint [not null]
+  idempotency_key uuid [not null]
+  fingerprint text [not null]
+  response jsonb
   created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-
   indexes {
-    (user_id, source, external_id) [unique]
+    (user_id,connection_id,generation,seq) [pk]
+    (user_id,connection_id,idempotency_key) [unique]
   }
-
-  Note: 'Service: Health'
 }
+
+Table command_receipts as HealthReceipts {
+  user_id uuid [not null]
+  operation text [not null]
+  key uuid [not null]
+  fingerprint text [not null]
+  response jsonb [not null]
+  indexes {
+    (user_id,operation,key) [pk]
+  }
+}
+
+Table purge_jobs as HealthPurges {
+  user_id uuid [not null]
+  connection_id uuid [not null]
+  id uuid [not null]
+  completed boolean [not null]
+  retry_at timestamptz [not null]
+  indexes {
+    (user_id,id) [pk]
+    (user_id,connection_id) [unique]
+  }
+}
+
+Table outbox_events as HealthOutbox {
+  event_id uuid [pk]
+  user_id uuid [not null]
+  event_type text [not null]
+  connection_id uuid
+  event_version integer [not null]
+  aggregate_type text [not null]
+  aggregate_id text [not null]
+  aggregate_version bigint [not null]
+  payload jsonb [not null]
+  occurred_at timestamptz [not null]
+  available_at timestamptz [not null]
+  claim_id uuid
+  claimed_until timestamptz
+  attempt_count integer [not null]
+  published_at timestamptz
+  last_error text
+}
+
+Table assessment_executions as HealthAssessmentExecutions {
+  user_id uuid [not null]
+  attempt_id uuid [not null]
+  receipt_id uuid [not null]
+  encrypted_result text [not null]
+  indexes {
+    (user_id,attempt_id) [pk]
+    (user_id,receipt_id) [unique]
+  }
+}
+
+Ref: HealthPrimaryPeriods.(user_id, connection_id) > HealthConnections.(user_id, id)
+Ref: HealthSourceDays.(user_id, connection_id) > HealthConnections.(user_id, id)
+Ref: HealthDayVersions.(user_id, connection_id) > HealthConnections.(user_id, id)
+Ref: HealthWeights.(user_id, connection_id) > HealthConnections.(user_id, id)
+Ref: HealthBatches.(user_id, connection_id) > HealthConnections.(user_id, id)
+Ref: HealthPurges.(user_id, connection_id) > HealthConnections.(user_id, id)

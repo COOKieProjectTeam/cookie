@@ -33,4 +33,8 @@ include(
     "backend:services:user",
     "backend:services:user:domain",
     "backend:services:user:application",
+    "backend:contracts:health-assessment",
+    "backend:services:health",
+    "backend:services:health:domain",
+    "backend:services:health:application",
 )

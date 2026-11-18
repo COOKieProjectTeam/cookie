@@ -197,78 +197,6 @@ paths:
               schema:
                 type: integer
                 minimum: 1
-    put:
-      security:
-      - accessToken: []
-      tags:
-      - profile
-      operationId: setCurrentGoal
-      summary: Задать новую цель (создаёт новую версию, не перезаписывает старую)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/NutritionGoalInput'
-      responses:
-        '200':
-          description: Новая версия цели создана
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NutritionGoal'
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserError'
-        '401':
-          description: Invalid Identity access token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserError'
-        '403':
-          description: Account deletion received
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserError'
-        '404':
-          description: Goal or override not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserError'
-        '409':
-          description: Version/idempotency/cheat-day conflict
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserError'
-        '503':
-          description: Dependency unavailable; retry with the same key
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserError'
-          headers:
-            Retry-After:
-              description: Delay in seconds before retrying a temporarily unavailable dependency
-              schema:
-                type: integer
-                minimum: 1
-      parameters:
-      - name: Idempotency-Key
-        in: header
-        required: true
-        description: UUIDv4 for one logical command; keep the key across retries.
-          Changed payload with the same operation/key conflicts. Evidence retained
-          until account deletion.
-        schema:
-          type: string
-          format: uuid
   /me/goals/history:
     get:
       security:
@@ -648,6 +576,80 @@ paths:
         schema:
           type: string
           format: uuid
+  /me/onboarding:
+    post:
+      tags: [profile]
+      security: [{accessToken: []}]
+      operationId: completeOnboarding
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GoalAcceptance'}
+      responses:
+        '202':
+          description: Accepted for asynchronous execution
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GoalAttempt'}
+        '400': {description: Invalid input or receipt}
+        '401': {description: Invalid access token}
+        '409': {description: Attempt conflicts with current state}
+        '503': {description: Service unavailable}
+  /me/goals/acceptances:
+    post:
+      tags: [profile]
+      security: [{accessToken: []}]
+      operationId: acceptNutritionAssessment
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GoalAcceptance'}
+      responses:
+        '202':
+          description: Accepted for asynchronous execution
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GoalAttempt'}
+        '400': {description: Invalid input or receipt}
+        '401': {description: Invalid access token}
+        '409': {description: Attempt conflicts with current state}
+        '503': {description: Service unavailable}
+  /me/goal-attempts/{onboardingId}:
+    get:
+      tags: [profile]
+      security: [{accessToken: []}]
+      operationId: getGoalAttempt
+      parameters:
+        - name: onboardingId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Current attempt state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GoalAttempt'}
+        '401': {description: Invalid access token}
+        '404': {description: Attempt not found}
 components:
   securitySchemes:
     accessToken:
@@ -687,9 +689,10 @@ components:
     ActivityLevel:
       type: string
       enum:
-      - LOW
-      - MODERATE
-      - HIGH
+      - INACTIVE
+      - LOW_ACTIVE
+      - ACTIVE
+      - VERY_ACTIVE
     DietType:
       type: string
       enum:
@@ -822,174 +825,35 @@ components:
           items:
             $ref: '#/components/schemas/Allergen'
       additionalProperties: false
-    NutritionGoalInput:
-      type: object
-      required:
-      - calories
-      - proteinG
-      - fatG
-      - carbsG
-      - fiberG
-      properties:
-        calories:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        proteinG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        fatG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        carbsG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        fiberG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        targetWeightKg:
-          type: number
-          format: double
-          minimum: 1
-          maximum: 999.99
-          multipleOf: 0.01
-        targetWeightChangeKgPerWeek:
-          type: number
-          format: double
-          minimum: -99.99
-          maximum: 99.99
-          multipleOf: 0.01
-      additionalProperties: false
-    GoalHistoryPage:
-      type: object
-      required:
-      - items
-      - nextCursor
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/NutritionGoal'
-        nextCursor:
-          type: string
-          nullable: true
-      additionalProperties: false
     NutritionGoal:
       type: object
-      required:
-      - calories
-      - proteinG
-      - fatG
-      - carbsG
-      - fiberG
-      - id
-      - effectiveFrom
-      - source
-      - revision
+      required: [outcome, revision]
       properties:
-        calories:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        proteinG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        fatG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        carbsG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        fiberG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        targetWeightKg:
-          type: number
-          format: double
-          minimum: 1
-          maximum: 999.99
-          multipleOf: 0.01
-        targetWeightChangeKgPerWeek:
-          type: number
-          format: double
-          minimum: -99.99
-          maximum: 99.99
-          multipleOf: 0.01
-        id:
-          type: string
-          format: uuid
-        effectiveFrom:
-          type: string
-          format: date
-        source:
-          type: string
-          enum:
-          - MANUAL
-          - CALCULATED
-        revision:
-          type: integer
-          format: int64
-          minimum: 1
-      additionalProperties: false
+        id: {type: string, format: uuid}
+        revision: {type: integer, format: int64}
+        effectiveFrom: {type: string, format: date}
+        latestRevision: {type: integer, format: int64, description: Use this revision in a new preview.}
+        outcome: {type: string, enum: [CALCULATED, NO_CALORIE_GOAL, LEGACY_POINT]}
+        source: {type: string, enum: [CALCULATED, MANUAL]}
+        reason: {type: string}
+        policyVersion: {type: string}
+        macroProfile: {type: string}
+        foodRestrictions:
+          type: array
+          items: {type: string}
+        calories: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        proteinG: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        fatG: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        carbsG: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        fiberG: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        targetWeightKg: {type: number}
+        weeklyChangeKg: {type: number}
     DailyGoalOverrideInput:
       type: object
-      required:
-      - type
-      - unlimitedCalories
+      required: [type, unlimitedCalories]
       properties:
-        type:
-          type: string
-          enum:
-          - CUSTOM
-          - CHEAT_DAY
-        unlimitedCalories:
-          type: boolean
-        calories:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        proteinG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        fatG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        carbsG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-        fiberG:
-          type: number
-          minimum: 0
-          maximum: 999999.99
-          multipleOf: 0.01
-      description: CUSTOM requires calories and unlimitedCalories=false. CHEAT_DAY
-        requires unlimitedCalories=true and no nutrient values. One cheat day per
-        account/calendar month.
+        type: {type: string, enum: [CHEAT_DAY]}
+        unlimitedCalories: {type: boolean}
       additionalProperties: false
     DailyGoalOverride:
       type: object
@@ -1008,7 +872,6 @@ components:
         type:
           type: string
           enum:
-          - CUSTOM
           - CHEAT_DAY
         unlimitedCalories:
           type: boolean
@@ -1079,3 +942,74 @@ components:
         message:
           type: string
       additionalProperties: false
+
+    HealthAssessmentInput:
+      type: object
+      additionalProperties: false
+      required: [purpose, profileVersion, goalRevision, timezone, sex, birthDate, heightCm, currentWeightKg, weeklyChangeKg, activity, macroProfile, standardAdultPolicyApplies, measuredAt, foodRestrictions, dietStyles, allergies]
+      properties:
+        purpose: {type: string, enum: [INITIAL, RECALC]}
+        profileVersion: {type: integer, format: int64, minimum: 1}
+        goalRevision: {type: integer, format: int64, minimum: 0}
+        timezone: {type: string, maxLength: 100}
+        sex: {type: string, enum: [MALE, FEMALE]}
+        birthDate: {type: string, format: date}
+        heightCm: {type: number, minimum: 30, maximum: 300, multipleOf: 0.01}
+        currentWeightKg: {type: number, minimum: 0.01, maximum: 999.99, multipleOf: 0.01}
+        targetWeightKg: {type: number, minimum: 0.01, maximum: 999.99, multipleOf: 0.01}
+        weeklyChangeKg: {type: number, description: "One of -0.25, 0 or 0.25 kg per week."}
+        activity: {type: string, enum: [INACTIVE, LOW_ACTIVE, ACTIVE, VERY_ACTIVE]}
+        macroProfile: {type: string, enum: [BALANCED, HIGH_PROTEIN, LOW_CARB, KETO]}
+        standardAdultPolicyApplies: {type: boolean}
+        measuredAt: {type: string, format: date-time}
+        foodRestrictions:
+          type: array
+          uniqueItems: true
+          maxItems: 5
+          items: {type: string, enum: [VEGAN, VEGETARIAN, PESCATARIAN, GLUTEN_FREE, LACTOSE_FREE]}
+        dietStyles:
+          type: array
+          uniqueItems: true
+          maxItems: 1
+          items: {type: string, enum: [MEDITERRANEAN]}
+        allergies:
+          type: array
+          uniqueItems: true
+          maxItems: 14
+          items: {type: string, enum: [GLUTEN, CRUSTACEANS, EGGS, FISH, PEANUTS, SOY, MILK, TREE_NUTS, CELERY, MUSTARD, SESAME, SULPHITES, LUPIN, MOLLUSCS]}
+    HealthNutritionTarget:
+      type: object
+      required: [kind]
+      properties:
+        kind: {type: string, enum: [RANGE, UPPER_LIMIT, AT_LEAST, LEGACY_POINT]}
+        low: {type: number}
+        center: {type: number}
+        high: {type: number}
+
+    GoalHistoryPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/NutritionGoal'}
+        nextCursor: {type: string, nullable: true}
+    GoalAcceptance:
+      type: object
+      required: [receipt, input]
+      additionalProperties: false
+      properties:
+        receipt: {type: string, maxLength: 8192}
+        input: {$ref: '#/components/schemas/HealthAssessmentInput'}
+    GoalAttempt:
+      type: object
+      required: [onboardingId, status, statusUrl]
+      properties:
+        onboardingId: {type: string, format: uuid}
+        status: {type: string, enum: [PENDING, COMPLETED, NEEDS_NEW_PREVIEW]}
+        statusUrl: {type: string}
+        outcome: {type: string}
+        reason: {type: string}
+        goalRevision: {type: integer, format: int64}
+        hydrationRevision: {type: integer, format: int64}
+        initialWeightId: {type: string, format: uuid}

@@ -194,6 +194,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
                 "updateFoodEntry" -> {
                     val oldItem=items.first { it.path("id").stringValue()==childId }
                     val merged=snapshots.merge(oldItem,p,setOf("name","brand","baseUnit","serving","amount","nutritionPer100"))
+                    if (p.has("nutritionPer100")) merged.put("canonicalCarbs",true)
                     result=snapshots.entry(snapshots.entryInput(merged),childId!!,snapshots.version(merged));items[items.indexOf(oldItem)]=result
                 }
                 "deleteFoodEntry" -> {
@@ -230,7 +231,7 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
     private fun dayEvent(user: UUID,date: LocalDate,correlationId: UUID?): JsonNode {
         val totals=day(user,date).path("total")
         event(user,"nutrition.day.changed","nutrition_day","$user:$date",nextDayVersion(user,date,"day"),
-            snapshots.obj("userId" to user,"localDate" to date,"nutritionTotals" to totals),correlationId)
+            snapshots.obj("userId" to user,"localDate" to date,"nutritionTotals" to totals),correlationId, wireVersion = 2)
         return totals
     }
     private fun waterEvent(user: UUID,date: LocalDate,correlationId: UUID?) {
@@ -243,8 +244,8 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
         event(user,"nutrition.water.changed","water_day","$user:$date",nextDayVersion(user,date,"water"),snapshots.obj("userId" to user,"localDate" to date,
             "totalMl" to total,"lastConsumedAt" to entries.maxOfOrNull { snapshots.timestamp(it,"consumedAt").toInstant() }),correlationId)
     }
-    private fun event(user: UUID,type: String,aggregate: String,id: String,version: Long,payload: JsonNode,correlationId: UUID?) {
-        val envelope=EventEnvelope(UUID.randomUUID(),type,1,Instant.now(),"nutrition",aggregate,id,payload,version,correlationId=correlationId)
+    private fun event(user: UUID,type: String,aggregate: String,id: String,version: Long,payload: JsonNode,correlationId: UUID?, wireVersion: Int = 1) {
+        val envelope=EventEnvelope(UUID.randomUUID(),type,wireVersion,Instant.now(),"nutrition",aggregate,id,payload,version,correlationId=correlationId)
         jdbc.update("INSERT INTO outbox_events(event_id,user_id,envelope,subject) VALUES (?,?,?::jsonb,?)",envelope.eventId,user,mapper.writeValueAsString(envelope),envelope.subject())
     }
 }

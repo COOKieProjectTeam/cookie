@@ -28,8 +28,10 @@ class NotificationEventHandler(
         val id = uuid(event,"event_id")
         val type = text(event,"event_type")
         val version = event.path("event_version")
-        if (!version.isIntegralNumber || !version.canConvertToInt() || version.intValue() != 1) invalid("unsupported_event_version")
-        if (subject != "cookie.events.$type.v1") invalid("subject_mismatch")
+        if (!version.isIntegralNumber || !version.canConvertToInt()) invalid("unsupported_event_version")
+        val wireVersion = version.intValue()
+        if (wireVersion != 1 && (wireVersion != 2 || type != "progress.day.updated")) invalid("unsupported_event_version")
+        if (subject != "cookie.events.$type.v$wireVersion") invalid("subject_mismatch")
         val expectedProducer = PRODUCERS[type] ?: invalid("unsupported_event_type")
         if (text(event,"producer") != expectedProducer) invalid("producer_mismatch")
         text(event,"aggregate_type")
@@ -40,7 +42,7 @@ class NotificationEventHandler(
         val userId = if (type == "notification.email.requested") null else uuid(payload,if (type == "account.deletion.requested") "accountId" else "userId")
         val projection = when(type) {
             "account.activated", "account.deletion.requested", "notification.email.requested" -> null
-            else -> validateProjection(type,event,payload)
+            else -> validateProjection(type,event,payload,wireVersion)
         }
         if(type == "notification.email.requested") {
             if (text(payload,"template") != "EMAIL_VERIFICATION") invalid("unsupported_template")
@@ -66,8 +68,12 @@ class NotificationEventHandler(
                     repository.ensureSettings(requireNotNull(userId))
                     val updated = jdbc.update("""INSERT INTO event_projections(kind,user_id,entity_id,version,payload,deleted) VALUES (?,?,?,?,?::jsonb,?)
                         ON CONFLICT(kind,user_id,entity_id) DO UPDATE SET version=EXCLUDED.version,payload=EXCLUDED.payload,deleted=EXCLUDED.deleted,updated_at=clock_timestamp()
-                        WHERE event_projections.version < EXCLUDED.version""",
-                        projectionValue.kind,userId,projectionValue.key,projectionValue.version,mapper.writeValueAsString(minimalPayload(type,payload)),projectionValue.deleted)
+                        WHERE (event_projections.version < EXCLUDED.version
+                           OR (event_projections.kind='PROGRESS' AND EXCLUDED.payload->>'wireVersion'='2'
+                               AND COALESCE(event_projections.payload->>'wireVersion','1')='1'))
+                        AND NOT (event_projections.kind='PROGRESS' AND EXCLUDED.payload->>'wireVersion'='1'
+                            AND COALESCE(event_projections.payload->>'wireVersion','1')='2')""",
+                        projectionValue.kind,userId,projectionValue.key,projectionValue.version,mapper.writeValueAsString(minimalPayload(type,payload,wireVersion)),projectionValue.deleted)
                     if(updated > 0) {
                         if(type=="user.profile.updated") {
                             val locale=payload.path("locale").takeIf { it.isString }?.stringValue()?.substringBefore('-')?.lowercase()
@@ -86,7 +92,7 @@ class NotificationEventHandler(
         listOf("push_devices","settings","event_projections","reminder_deadlines","reminder_occurrences").forEach { table -> jdbc.update("DELETE FROM $table WHERE user_id=?",userId) }
     }
 
-    private fun validateProjection(type: String,event: JsonNode,payload: JsonNode): Projection {
+    private fun validateProjection(type: String,event: JsonNode,payload: JsonNode,wireVersion: Int): Projection {
         val versionNode = event.path("aggregate_version")
         if(!versionNode.isIntegralNumber || !versionNode.canConvertToLong() || versionNode.longValue() <= 0) invalid("missing_aggregate_version")
         val version = versionNode.longValue()
@@ -121,15 +127,36 @@ class NotificationEventHandler(
                 val calories = payload.path("calories")
                 val water = payload.path("water")
                 if(!calories.isObject || !water.isObject) invalid("incomplete_progress_snapshot")
-                number(calories,"consumed",true,false); number(calories,"target",true,false)
-                if(!calories.has("unlimitedCalories") || (!calories.path("unlimitedCalories").isNull && !calories.path("unlimitedCalories").isBoolean)) invalid("invalid_unlimited_calories")
+                number(calories,"consumed",true,false)
+                if (wireVersion == 1) {
+                    number(calories,"target",true,false)
+                    if (!calories.has("unlimitedCalories") || (!calories.path("unlimitedCalories").isNull &&
+                            !calories.path("unlimitedCalories").isBoolean)) invalid("invalid_unlimited_calories")
+                } else {
+                    val goalState = text(calories,"goalState")
+                    if (goalState !in setOf("RANGE","NO_CALORIE_GOAL")) invalid("invalid_goal_state")
+                    boolean(calories,"cheatDay")
+                    number(calories,"low",true,false)
+                    number(calories,"high",true,false)
+                    if (goalState == "RANGE") {
+                        uuid(calories,"goalId")
+                        val revision = calories.path("goalRevision")
+                        if (!revision.isIntegralNumber || !revision.canConvertToLong() || revision.longValue() <= 0) invalid("invalid_goal_revision")
+                        val low = calories.path("low")
+                        val high = calories.path("high")
+                        if (!low.isNumber || !high.isNumber || low.decimalValue().signum() <= 0 ||
+                            low.decimalValue() > high.decimalValue()) invalid("invalid_goal_range")
+                    } else if (!calories.path("low").isNull || !calories.path("high").isNull) {
+                        invalid("unexpected_goal_range")
+                    }
+                }
                 number(water,"consumedMl",true,true); number(water,"targetMl",true,true)
                 Projection("PROGRESS","$zone:$day",version,false)
             }
             else -> invalid("unsupported_event_type")
         }
     }
-    private fun minimalPayload(type:String,payload:JsonNode):JsonNode {
+    private fun minimalPayload(type:String,payload:JsonNode,wireVersion:Int):JsonNode {
         val fields=when(type) {
             "user.profile.updated" -> listOf("userId","locale")
             "nutrition.meal.created","nutrition.meal.updated" -> listOf("mealId","userId","eatenAt")
@@ -143,7 +170,15 @@ class NotificationEventHandler(
         fields.forEach { field -> if(payload.has(field)) result.set(field,payload.path(field)) }
         if(type=="progress.day.updated") {
             val calories=mapper.createObjectNode()
-            listOf("consumed","target","unlimitedCalories").forEach { calories.set(it,payload.path("calories").path(it)) }
+            val input = payload.path("calories")
+            calories.set("consumed", input.path("consumed"))
+            if (wireVersion == 2) {
+                listOf("low","high","goalId","goalRevision","goalState").forEach { field ->
+                    if (input.has(field)) calories.set(field, input.path(field))
+                }
+                calories.set("unlimitedCalories", input.path("cheatDay"))
+            }
+            result.put("wireVersion", wireVersion)
             val water=mapper.createObjectNode()
             listOf("consumedMl","targetMl").forEach { water.set(it,payload.path("water").path(it)) }
             result.set("calories",calories); result.set("water",water)
@@ -169,5 +204,6 @@ class NotificationEventHandler(
             "account.activated" to "identity","account.deletion.requested" to "identity","notification.email.requested" to "identity",
             "nutrition.meal.created" to "nutrition","nutrition.meal.updated" to "nutrition","nutrition.meal.deleted" to "nutrition","nutrition.water.changed" to "nutrition",
             "health.weight.changed" to "health","user.profile.updated" to "user","progress.day.updated" to "progress")
+        val SUBJECTS = PRODUCERS.keys.map { "cookie.events.$it.v1" } + "cookie.events.progress.day.updated.v2"
     }
 }

@@ -1,0 +1,238 @@
+{
+  "serviceId": "health",
+  "facts": [
+    {
+      "id": "health-policy",
+      "label": "Nutrition policy",
+      "value": "eer2023-v1 · BigDecimal",
+      "description": "Inclusive target range. Preview receipts expire at local midnight or in 30 minutes.",
+      "source": {
+        "path": "backend/services/health/domain/src/main/kotlin/com/cookie/health/domain/AssessmentPolicy.kt",
+        "line": 43
+      }
+    },
+    {
+      "id": "health-import-limit",
+      "label": "Import limit",
+      "value": "100 operations · 256 KiB",
+      "description": "The import transaction checks source generation and a contiguous sequence.",
+      "source": {
+        "path": "backend/services/health/src/main/kotlin/com/cookie/health/persistence/HealthImports.kt",
+        "line": 119
+      }
+    }
+  ],
+  "flows": [
+    {
+      "id": "health-preview",
+      "title": "Предпросмотр КБЖУ",
+      "description": "Health подписывает привязанный к аккаунту результат. User принимает его отдельным запросом.",
+      "operationIds": [
+        "calculateNutritionAssessment"
+      ],
+      "nextFlows": [
+        "user-assessment-accept"
+      ],
+      "steps": [
+        {
+          "node": "health_gateway",
+          "label": "Локальный Caddy",
+          "detail": "Маршрутизирует публичные запросы Health. Probes доступны напрямую оператору.",
+          "source": {
+            "path": "deploy/docker/health.Caddyfile",
+            "line": 4
+          }
+        },
+        {
+          "node": "health",
+          "label": "Identity JWT",
+          "detail": "Account ownership and a signed receipt.",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/transport/AssessmentController.kt",
+            "line": 36
+          }
+        },
+        {
+          "node": "health_db",
+          "label": "Check deletion",
+          "detail": "Shared account transaction without a business write.",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/persistence/HealthDatabase.kt",
+            "line": 20
+          }
+        }
+      ]
+    },
+    {
+      "id": "health-import",
+      "title": "Вес и импорт",
+      "description": "Вес и активность записываются под блокировкой аккаунта.",
+      "operationIds": [
+        "addWeightMeasurement",
+        "listWeightMeasurements",
+        "updateWeightMeasurement",
+        "deleteWeightMeasurement",
+        "importHealthBatch",
+        "registerHealthConnection",
+        "listHealthConnections",
+        "resumeHealthConnection",
+        "disconnectHealthConnection",
+        "schedulePrimaryHealthConnection",
+        "purgeHealthConnection",
+        "getHealthPurge"
+      ],
+      "steps": [
+        {
+          "node": "health_gateway",
+          "label": "Локальный Caddy",
+          "detail": "Маршрутизирует публичные запросы Health. Probes доступны напрямую оператору.",
+          "source": {
+            "path": "deploy/docker/health.Caddyfile",
+            "line": 4
+          }
+        },
+        {
+          "node": "health",
+          "label": "Generated API",
+          "detail": "JWT and account scoped import.",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/transport/AssessmentController.kt",
+            "line": 84
+          }
+        },
+        {
+          "node": "health_db",
+          "label": "Atomic batch",
+          "detail": "Generation, sequence, data and events commit together.",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/persistence/HealthImports.kt",
+            "line": 114
+          }
+        }
+      ]
+    },
+    {
+      "id": "health-execute",
+      "title": "Исполнить принятую оценку",
+      "description": "Health воспроизводит расчёт и доставляет защищённый результат.",
+      "operationIds": [],
+      "nextFlows": [
+        "user-assessment-result"
+      ],
+      "steps": [
+        {
+          "node": "nats",
+          "label": "Delivery",
+          "detail": "User command reaches the Health durable.",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/messaging/HealthDeletion.kt",
+            "line": 77
+          }
+        },
+        {
+          "node": "health_db",
+          "label": "Commit",
+          "detail": "Inbox, first weight, execution and result share the transaction.",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/messaging/HealthAssessmentExecution.kt",
+            "line": 38
+          }
+        }
+      ]
+    },
+    {
+      "id": "health-getliveness",
+      "title": "Liveness",
+      "description": "Зонд доступен оператору напрямую.",
+      "operationIds": [
+        "health:getLiveness"
+      ],
+      "steps": [
+        {
+          "node": "health",
+          "label": "Зонд процесса",
+          "detail": "Зонд процесса",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/transport/SystemController.kt",
+            "line": 12
+          }
+        }
+      ]
+    },
+    {
+      "id": "health-getreadiness",
+      "title": "Readiness",
+      "description": "Зонд доступен оператору напрямую.",
+      "operationIds": [
+        "health:getReadiness"
+      ],
+      "steps": [
+        {
+          "node": "health",
+          "label": "Проверить ключи Identity",
+          "detail": "Проверить ключи Identity",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/transport/SystemController.kt",
+            "line": 14
+          }
+        },
+        {
+          "node": "health_db",
+          "label": "Проверить схему и доступ БД",
+          "detail": "Проверить схему и доступ БД",
+          "source": {
+            "path": "backend/services/health/src/main/kotlin/com/cookie/health/transport/SystemController.kt",
+            "line": 14
+          }
+        }
+      ]
+    }
+  ],
+  "operationNotes": {
+    "calculateNutritionAssessment": {
+      "flowId": "health-preview"
+    },
+    "addWeightMeasurement": {
+      "flowId": "health-import"
+    },
+    "listWeightMeasurements": {
+      "flowId": "health-import"
+    },
+    "updateWeightMeasurement": {
+      "flowId": "health-import"
+    },
+    "deleteWeightMeasurement": {
+      "flowId": "health-import"
+    },
+    "importHealthBatch": {
+      "flowId": "health-import"
+    },
+    "registerHealthConnection": {
+      "flowId": "health-import"
+    },
+    "listHealthConnections": {
+      "flowId": "health-import"
+    },
+    "resumeHealthConnection": {
+      "flowId": "health-import"
+    },
+    "disconnectHealthConnection": {
+      "flowId": "health-import"
+    },
+    "schedulePrimaryHealthConnection": {
+      "flowId": "health-import"
+    },
+    "purgeHealthConnection": {
+      "flowId": "health-import"
+    },
+    "getHealthPurge": {
+      "flowId": "health-import"
+    },
+    "health:getLiveness": {
+      "flowId": "health-getliveness"
+    },
+    "health:getReadiness": {
+      "flowId": "health-getreadiness"
+    }
+  }
+}

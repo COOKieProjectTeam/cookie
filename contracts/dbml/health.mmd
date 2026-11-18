@@ -1,32 +1,128 @@
-%% health service schema — derived from health.dbml
-%% Cross-service references are intentionally omitted.
+%% Health tables. Composite keys and constraints are defined in Health migrations.
 erDiagram
-  Sources {
-    uuid id PK
-    uuid user_id
-    varchar type
-    varchar device_id
-    timestamptz created_at
-    timestamptz last_sync_at
+  HealthTombstones {
+    uuid user_id PK
+    uuid deletion_request_id
+    timestamptz deleted_at
   }
 
-  DailyActivitySources {
+  HealthInbox {
+    text consumer_name
+    uuid event_id
+    text event_type
+    timestamptz processed_at
+  }
+
+  HealthQuarantine {
+    text message_hash PK
+    text subject
+    text reason
+    bigint stream_sequence
+    timestamptz created_at
+  }
+
+  HealthConnections {
+    uuid user_id
+    uuid id
+    text platform
+    text timezone
+    text status
+    bigint generation
+    bigint version
+    bigint next_seq
+    date initial_from
+    date initial_to
+  }
+
+  HealthPrimaryPeriods {
+    uuid user_id
+    date effective_from
+    text timezone
+    timestamptz effective_at
+    uuid connection_id
+    bigint revision
+  }
+
+  HealthSourceDays {
+    uuid user_id
+    uuid connection_id
+    date local_date
+    text timezone
+    integer steps
+    numeric active_kcal
+    boolean deleted
+  }
+
+  HealthDayVersions {
     uuid user_id
     date local_date
-    varchar source
-    integer steps
-    decimal active_calories
-    timestamptz source_updated_at
-    timestamptz received_at
+    uuid connection_id
+    text timezone
+    bigint version
   }
 
-  WeightMeasurements {
-    uuid id PK
+  HealthWeights {
     uuid user_id
-    decimal value_kg
+    uuid id
+    text source
+    uuid connection_id
+    text external_id
+    boolean first_weight
+    bigint version
+    numeric value_kg
     timestamptz measured_at
-    varchar source
-    varchar external_id
+    boolean deleted
+  }
+
+  HealthBatches {
+    uuid user_id
+    uuid connection_id
+    bigint generation
+    bigint seq
+    uuid idempotency_key
+    text fingerprint
+    jsonb response
     timestamptz created_at
-    timestamptz updated_at
+  }
+
+  HealthReceipts {
+    uuid user_id
+    text operation
+    uuid key
+    text fingerprint
+    jsonb response
+  }
+
+  HealthPurges {
+    uuid user_id
+    uuid connection_id
+    uuid id
+    boolean completed
+    timestamptz retry_at
+  }
+
+  HealthOutbox {
+    uuid event_id PK
+    uuid user_id
+    text event_type
+    uuid connection_id
+    integer event_version
+    text aggregate_type
+    text aggregate_id
+    bigint aggregate_version
+    jsonb payload
+    timestamptz occurred_at
+    timestamptz available_at
+    uuid claim_id
+    timestamptz claimed_until
+    integer attempt_count
+    timestamptz published_at
+    text last_error
+  }
+
+  HealthAssessmentExecutions {
+    uuid user_id
+    uuid attempt_id
+    uuid receipt_id
+    text encrypted_result
   }

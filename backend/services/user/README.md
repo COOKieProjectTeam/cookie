@@ -36,8 +36,10 @@ Identity owns accounts and credentials; Health owns weight measurements.
 10. Runtime grants cannot rewrite/delete lifecycle tombstones or change schema,
     migrations or immutable event payloads. No cross-service database access.
 
-Automatic nutrition calculation belongs to Health. The planned assessment and
-idempotent weight APIs must exist before automatic onboarding can be activated.
+Health issues a signed preview. User accepts it asynchronously at
+`POST /v1/me/onboarding` or `POST /v1/me/goals/acceptances`. See ADR 0016
+and the Health README for local key setup. Current and historical responses
+differentiate accepted ranges, no-goal outcomes and archived point goals.
 
 ## Run and migrate
 
@@ -84,7 +86,7 @@ no bootstrap insert. Missing profiles are initialized under the exclusive lock
 from the authenticated JWT, so activation stream retention cannot strand old
 active accounts. An activation event then becomes a no-op. Default
 UTC/ru are explicit; Notification still owns its scheduling timezone. User writes
-manual goals without pretending that onboarding or Health calculation completed.
+goals without pretending that onboarding or Health calculation completed.
 Goal/hydration date lookup selects only the timezone, without loading diet or
 allergy rows. Bootstrap is immediate; `PROFILE_NOT_READY` is not an API state.
 
@@ -103,12 +105,13 @@ and must never remove tombstones. No retention claim implies unlimited broker re
 
 ## Events
 
-All User events use aggregate_type=user, aggregate_id=userId, positive monotonic
-aggregate_version and v1 subjects. `user.profile.updated` contains only userId,
+User events use aggregate_type=user, aggregate_id=userId and positive monotonic
+aggregate_version. Accepted goals and cheat-day changes publish v2 subjects. The
+assessment command, profile and water use v1. `user.profile.updated` contains only userId,
 changedFields, timezone, locale, onboardingCompleted; no birth date/diet/allergies.
-Goal changes carry a complete immutable nutritionGoalVersion (id, effectiveFrom,
-revision, source, value with nutrients/optional weight targets). Override changes
-carry localDate and full override or explicit null on deletion. Hydration changes
+Goal changes carry the immutable outcome, inclusive ranges, effective date,
+revision and policy version. Override changes carry the date and CHEAT_DAY or
+explicit null on deletion. Hydration changes
 carry targetMl and effectiveFrom. Consumers compare versions; delivery may reorder.
 The account-wide `aggregate_version` orders all User events independently of
 `profile_version`, `goal_revision` and `hydration_revision`. Migration V003
@@ -134,4 +137,4 @@ Identity E2E. `IdentityTokensTest` verifies token profile/cache failures;
 request/response schemas with the domain, including redundant trailing zeros.
 
 See ADR 0015 and the revision-specific review report for remaining dependencies,
-checks and independent review. Automatic onboarding remains planned pending Health.
+checks and independent review. Health orchestrates accepted computations through addresses on JetStream.

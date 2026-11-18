@@ -93,7 +93,13 @@ positive monotonic `aggregate_version` and the following full snapshots:
 | `health.weight.changed` | `measurementId,userId,deleted`; live measurements also contain `measuredAt,valueKg` |
 | `progress.day.updated` | `userId,localDate,timezone,calories,water`; version belongs to the daily snapshot |
 
-Progress `calories` contains `consumed,target,unlimitedCalories`; `water` contains
+Progress v2 `calories` contains `consumed,goalState,goalId,goalRevision,low,high,cheatDay`.
+Calorie warnings use the inclusive range. Over-limit is strictly greater than
+the upper bound; under-limit is strictly less than the lower bound at or after
+20:00 local time. An absent goal, cheat day or unknown total suppresses calorie
+warnings. Older v1 progress snapshots contribute water without calorie warnings;
+a v1 message cannot replace a v2 daily projection.
+Progress `water` contains
 `consumedMl,targetMl`. Each field is present, with explicit null for unknown values.
 Negative quantities are invalid. Only a snapshot matching Notification's timezone
 and current local date can drive goal warnings or water-goal suppression. There is

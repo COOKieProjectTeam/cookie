@@ -23,3 +23,5 @@ ADR фиксируют долгоживущие технические реше�
   diary/water service, snapshots, transactional events and deferred integrations.
 
 - `0015-user-service.md` — User profile/goals, lifecycle and Health-owned calculation dependency.
+
+- [0016 — Health data, nutrition assessment and goal acceptance](0016-health-data-service.md)

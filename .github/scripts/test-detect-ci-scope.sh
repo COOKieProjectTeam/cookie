@@ -356,4 +356,17 @@ for dependency in contracts/openapi/public/notification.yaml contracts/openapi/p
   expect_flag nutrition true
 done
 
+classify backend/services/health/src/main/kotlin/example.kt
+expect_flag health true
+expect_flag user false
+classify contracts/openapi/public/health.yaml
+expect_flag health true
+expect_flag service_contracts true
+expect_flag public_client true
+
+classify backend/contracts/health-assessment/src/main/kotlin/example.kt
+expect_flag health true
+expect_flag user true
+expect_flag identity false
+
 echo "CI scope mapping tests passed."
