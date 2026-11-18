@@ -1,0 +1,42 @@
+services:
+  progress-postgres:
+    image: postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    environment: {POSTGRES_DB: progress, POSTGRES_USER: progress_owner, POSTGRES_PASSWORD: local-progress-owner}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U progress_owner -d progress"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - progress-postgres:/var/lib/postgresql
+      - ./progress.init.sql:/docker-entrypoint-initdb.d/010-runtime.sql:ro
+  progress-migrate:
+    build: {context: ../.., dockerfile: deploy/docker/progress.Dockerfile}
+    command: ["--cookie.progress.mode=migrate"]
+    environment:
+      SPRING_FLYWAY_URL: jdbc:postgresql://progress-postgres:5432/progress
+      SPRING_FLYWAY_USER: progress_owner
+      SPRING_FLYWAY_PASSWORD: local-progress-owner
+    depends_on:
+      progress-postgres: {condition: service_healthy}
+  progress:
+    build: {context: ../.., dockerfile: deploy/docker/progress.Dockerfile}
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      COOKIE_PROGRESS_DATABASE_URL: jdbc:postgresql://progress-postgres:5432/progress
+      COOKIE_PROGRESS_DATABASE_USER: progress_app
+      COOKIE_PROGRESS_DATABASE_PASSWORD: local-progress-runtime
+      COOKIE_IDENTITY_JWKS_URL: http://identity:8080/v1/auth/jwks
+      COOKIE_NATS_URL: nats://nats:4222
+    depends_on:
+      progress-migrate: {condition: service_completed_successfully}
+      identity: {condition: service_started}
+      nats: {condition: service_started}
+  progress-gateway:
+    image: caddy:2-alpine
+    ports: ["127.0.0.1:8086:8086"]
+    volumes: ["./progress.Caddyfile:/etc/caddy/Caddyfile:ro"]
+    depends_on:
+      progress: {condition: service_started}
+volumes:
+  progress-postgres:

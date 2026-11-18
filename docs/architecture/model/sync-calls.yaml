@@ -85,3 +85,9 @@ calls:
     authentication: public_jwks_over_tls
     user_context: none
     implementation: fixed-origin bounded JWKS cache
+  - caller: progress
+    callee: identity
+    purpose: public signing-key discovery at /v1/auth/jwks
+    authentication: public_jwks_over_tls
+    user_context: none
+    implementation: fixed-origin bounded JWKS cache

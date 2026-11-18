@@ -15,3 +15,19 @@ for commit evidence, ownership and calendar semantics.
 
 Domain tests run with `./gradlew :backend:services:progress:domain:test`.
 Run the PostgreSQL tests with `./gradlew :backend:services:progress:integrationTest`.
+
+## Local runtime
+
+Build the service with `./gradlew :backend:services:progress:bootJar`.
+The local Compose overlay provisions an owned database, runs migrations,
+and gives public Progress routes a loopback ingress on port 8086.
+
+```bash
+docker compose -f deploy/docker/compose.yaml -f deploy/docker/progress.compose.yaml up --build progress-gateway
+```
+
+Run User and Nutrition with their separate capture workers, and join them
+and Health to the same JetStream stream to populate the projection. See the
+owner READMEs for slot initialization and credentials. Public reads use
+Identity access JWTs. The gateway allows only the three public Progress
+routes. Probes belong to the service network.

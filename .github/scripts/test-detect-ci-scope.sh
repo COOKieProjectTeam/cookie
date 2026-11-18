@@ -358,6 +358,14 @@ done
 
 classify backend/services/health/src/main/kotlin/example.kt
 expect_flag health true
+
+classify backend/services/progress/src/main/kotlin/Example.kt
+expect_flag progress true
+classify contracts/openapi/public/progress.yaml
+expect_flag progress true
+expect_flag public_client true
+classify backend/services/user/src/main/kotlin/Example.kt
+expect_flag progress true
 expect_flag user false
 classify contracts/openapi/public/health.yaml
 expect_flag health true

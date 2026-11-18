@@ -1,0 +1,289 @@
+openapi: 3.0.3
+info:
+  title: COOKie Progress API
+  version: 1.0.0
+  description: |
+    Dates use the account calendar. Nutrition decimals are exact decimal strings in kcal or grams.
+    Weight uses kg, water uses ml and activity uses steps and kcal. Measures can be unknown.
+    A closing day remains provisional until both source cuts are verified.
+servers:
+  - url: /v1
+tags:
+  - name: progress
+    description: Account-owned diary, weight and achievement projections
+paths:
+  /progress/days/{date}:
+    get:
+      tags: [progress]
+      security: [{accessToken: []}]
+      operationId: getDailyProgress
+      summary: Read one calendar date
+      parameters:
+        - $ref: '#/components/parameters/ProgressDate'
+      responses:
+        '200':
+          description: Progress projection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProgressDay'}
+        '400': {$ref: '#/components/responses/Progress400'}
+        '401': {$ref: '#/components/responses/Progress401'}
+        '403': {$ref: '#/components/responses/Progress403'}
+        '503': {$ref: '#/components/responses/Progress503'}
+  /progress:
+    get:
+      tags: [progress]
+      security: [{accessToken: []}]
+      operationId: getProgressRange
+      summary: Read an inclusive period of up to 366 dates
+      parameters:
+        - $ref: '#/components/parameters/ProgressFrom'
+        - $ref: '#/components/parameters/ProgressTo'
+      responses:
+        '200':
+          description: Progress projection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProgressRangeResponse'}
+        '400': {$ref: '#/components/responses/Progress400'}
+        '401': {$ref: '#/components/responses/Progress401'}
+        '403': {$ref: '#/components/responses/Progress403'}
+        '503': {$ref: '#/components/responses/Progress503'}
+  /progress/weight:
+    get:
+      tags: [progress]
+      security: [{accessToken: []}]
+      operationId: getWeightProgress
+      summary: Read sparse weight points for an inclusive period of up to 366 dates
+      parameters:
+        - $ref: '#/components/parameters/ProgressFrom'
+        - $ref: '#/components/parameters/ProgressTo'
+      responses:
+        '200':
+          description: Progress projection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProgressWeightResponse'}
+        '400': {$ref: '#/components/responses/Progress400'}
+        '401': {$ref: '#/components/responses/Progress401'}
+        '403': {$ref: '#/components/responses/Progress403'}
+        '503': {$ref: '#/components/responses/Progress503'}
+components:
+  securitySchemes:
+    accessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Identity access JWT: ES256, typ=at+jwt, expected issuer and audience,
+        and mandatory valid sub, sid, jti, iat and exp claims.
+  parameters:
+    ProgressDate: {name: date, in: path, required: true, schema: {type: string, format: date}}
+    ProgressFrom: {name: from, in: query, required: true, schema: {type: string, format: date}}
+    ProgressTo: {name: to, in: query, required: true, schema: {type: string, format: date}}
+  responses:
+    Progress400:
+      description: Invalid date or range
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ProgressError'}
+    Progress401:
+      description: Invalid access token
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ProgressError'}
+    Progress403:
+      description: Account is unavailable
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ProgressError'}
+    Progress503:
+      description: Service temporarily unavailable
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ProgressError'}
+  schemas:
+    ProgressDay:
+      type: object
+      additionalProperties: false
+      required: [date, calendar, projectionState, cheatDay, facts, goal, streak]
+      properties:
+        date: {type: string, format: date}
+        calendar: {$ref: '#/components/schemas/ProgressCalendar'}
+        projectionState: {type: string, enum: [READY, AWAITING_SOURCE]}
+        cheatDay: {type: boolean}
+        facts: {$ref: '#/components/schemas/ProgressFacts'}
+        goal: {$ref: '#/components/schemas/ProgressGoal'}
+        achievement: {type: object, nullable: true, allOf: [{$ref: '#/components/schemas/ProgressAchievement'}]}
+        streak: {$ref: '#/components/schemas/ProgressStreak'}
+    ProgressCalendar:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: {type: string, enum: [OPEN, CLOSING, CLOSED, TRAVEL_SKIPPED, BEFORE_TRACKING, UPCOMING, AWAITING_SOURCE]}
+        timezone: {type: string, nullable: true}
+        openedAt: {type: string, format: date-time, nullable: true}
+        closesAt: {type: string, format: date-time, nullable: true}
+    ProgressFacts:
+      type: object
+      additionalProperties: false
+      required: [mealCount, waterMl, hasWaterEntries]
+      properties:
+        mealCount: {type: integer, format: int64, minimum: 0}
+        caloriesKcal: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        proteinG: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        fatG: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        carbsG: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        fiberG: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        waterMl: {type: integer, format: int32, minimum: 0}
+        hasWaterEntries: {type: boolean}
+        steps: {type: integer, format: int32, minimum: 0, nullable: true}
+        activeKcal: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        weight: {type: object, nullable: true, allOf: [{$ref: '#/components/schemas/ProgressWeightPoint'}]}
+    ProgressGoal:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: {type: string, enum: [UNKNOWN, CALCULATED, NO_CALORIE_GOAL]}
+        id: {type: string, format: uuid, nullable: true}
+        revision: {type: integer, format: int64, minimum: 0, nullable: true}
+        effectiveFrom: {type: string, format: date, nullable: true}
+        appliedFrom: {type: string, format: date, nullable: true}
+        caloriesKcal: {type: object, nullable: true, allOf: [{$ref: '#/components/schemas/ProgressGoalBand'}]}
+        proteinG: {type: object, nullable: true, allOf: [{$ref: '#/components/schemas/ProgressGoalBand'}]}
+        fatG: {type: object, nullable: true, allOf: [{$ref: '#/components/schemas/ProgressGoalBand'}]}
+        carbsG: {type: object, nullable: true, allOf: [{$ref: '#/components/schemas/ProgressGoalBand'}]}
+        fiberG: {type: object, nullable: true, allOf: [{$ref: '#/components/schemas/ProgressGoalBand'}]}
+        waterTargetMl: {type: integer, format: int32, minimum: 0, nullable: true}
+    ProgressGoalBand:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: {type: string, enum: [RANGE, UPPER_LIMIT, AT_LEAST]}
+        low: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        center: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        high: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+    ProgressAchievement:
+      type: object
+      additionalProperties: false
+      required: [stage, outcome, credit]
+      properties:
+        stage: {type: string, enum: [PROVISIONAL, FINAL]}
+        outcome: {type: string, enum: [MACROS_MET, CHEAT_DAY_CREDIT, OUT_OF_TARGET, INSUFFICIENT_DATA, NOT_APPLICABLE]}
+        credit: {type: integer, format: int32, minimum: 0}
+        macrosMet: {type: boolean, nullable: true}
+        streakBefore: {type: integer, format: int64, minimum: 0, nullable: true}
+        streakAfter: {type: integer, format: int64, minimum: 0, nullable: true}
+        goalRevisionAtClose: {type: integer, format: int64, minimum: 0, nullable: true}
+        cheatDayAtClose: {type: boolean, nullable: true}
+        caloriesKcalAtClose: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+    ProgressStreak:
+      type: object
+      additionalProperties: false
+      required: [state, provisionalCredit, confirmedBest]
+      properties:
+        state: {type: string, enum: [APPLICABLE, NOT_APPLICABLE, AWAITING_SOURCE]}
+        current: {type: integer, format: int64, minimum: 0, nullable: true}
+        provisionalCredit: {type: integer, format: int32, minimum: 0}
+        confirmedBest: {type: integer, format: int64, minimum: 0}
+        lastConfirmed: {type: string, format: date, nullable: true}
+    ProgressRangeResponse:
+      type: object
+      additionalProperties: false
+      required: [days, summary]
+      properties:
+        days: {type: array, items: {$ref: '#/components/schemas/ProgressDay'}}
+        summary: {$ref: '#/components/schemas/ProgressSummary'}
+    ProgressSummary:
+      type: object
+      additionalProperties: false
+      required: [closedDays, closedFoodDays, travelSkippedDays, outcomes, markedCheatDays, creditedDays, nutrients, macroComposition, water, steps, activeKcal]
+      properties:
+        closedDays: {type: integer, format: int32, minimum: 0}
+        closedFoodDays: {type: integer, format: int32, minimum: 0}
+        travelSkippedDays: {type: integer, format: int32, minimum: 0}
+        outcomes: {$ref: '#/components/schemas/ProgressOutcomes'}
+        markedCheatDays: {type: integer, format: int32, minimum: 0}
+        creditedDays: {type: integer, format: int32, minimum: 0}
+        nutrients: {$ref: '#/components/schemas/ProgressNutrients'}
+        macroComposition: {$ref: '#/components/schemas/ProgressMacroComposition'}
+        water: {$ref: '#/components/schemas/ProgressWaterSummary'}
+        steps: {$ref: '#/components/schemas/ProgressMetric'}
+        activeKcal: {$ref: '#/components/schemas/ProgressMetric'}
+    ProgressOutcomes:
+      type: object
+      additionalProperties: false
+      required: [MACROS_MET, CHEAT_DAY_CREDIT, OUT_OF_TARGET, INSUFFICIENT_DATA, NOT_APPLICABLE]
+      properties:
+        MACROS_MET: {type: integer, format: int32, minimum: 0}
+        CHEAT_DAY_CREDIT: {type: integer, format: int32, minimum: 0}
+        OUT_OF_TARGET: {type: integer, format: int32, minimum: 0}
+        INSUFFICIENT_DATA: {type: integer, format: int32, minimum: 0}
+        NOT_APPLICABLE: {type: integer, format: int32, minimum: 0}
+    ProgressNutrients:
+      type: object
+      additionalProperties: false
+      required: [caloriesKcal, proteinG, fatG, carbsG, fiberG]
+      properties:
+        caloriesKcal: {$ref: '#/components/schemas/ProgressMetric'}
+        proteinG: {$ref: '#/components/schemas/ProgressMetric'}
+        fatG: {$ref: '#/components/schemas/ProgressMetric'}
+        carbsG: {$ref: '#/components/schemas/ProgressMetric'}
+        fiberG: {$ref: '#/components/schemas/ProgressMetric'}
+    ProgressMetric:
+      type: object
+      additionalProperties: false
+      required: [sum, coveredDays]
+      properties:
+        sum: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$'}
+        coveredDays: {type: integer, format: int32, minimum: 0}
+        average: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+    ProgressMacroComposition:
+      type: object
+      additionalProperties: false
+      required: [proteinG, fatG, carbsG, commonDays]
+      properties:
+        proteinG: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$'}
+        fatG: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$'}
+        carbsG: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$'}
+        commonDays: {type: integer, format: int32, minimum: 0}
+    ProgressWaterSummary:
+      type: object
+      additionalProperties: false
+      required: [loggedTotalMl, closedSumMl, coveredClosedDays]
+      properties:
+        loggedTotalMl: {type: integer, format: int64, minimum: 0}
+        closedSumMl: {type: integer, format: int64, minimum: 0}
+        coveredClosedDays: {type: integer, format: int32, minimum: 0}
+        closedAverageMl: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+    ProgressWeightResponse:
+      type: object
+      additionalProperties: false
+      required: [points, connectionState]
+      properties:
+        points: {type: array, items: {$ref: '#/components/schemas/ProgressWeightPoint'}}
+        connectionState: {type: string, enum: [UNKNOWN, NOT_CONNECTED, CONNECTED]}
+        activeConnectionCount: {type: integer, format: int64, minimum: 0, nullable: true}
+        latestKnown: {type: object, nullable: true, allOf: [{$ref: '#/components/schemas/ProgressWeightPoint'}]}
+        targetWeightKg: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+        periodChangeKg: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$', nullable: true}
+    ProgressWeightPoint:
+      type: object
+      additionalProperties: false
+      required: [measurementId, date, measuredAt, valueKg, source]
+      properties:
+        measurementId: {type: string, format: uuid}
+        date: {type: string, format: date}
+        measuredAt: {type: string, format: date-time}
+        valueKg: {type: string, pattern: '^-?[0-9]+(\.[0-9]+)?$'}
+        source: {type: string, enum: [MANUAL, APPLE_HEALTH, HEALTH_CONNECT]}
+    ProgressError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}

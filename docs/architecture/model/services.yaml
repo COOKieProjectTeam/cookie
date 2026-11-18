@@ -207,6 +207,7 @@ services:
     purpose: event-driven daily nutrition and health progress read models
     openapi_tags: [progress]
     dbml: contracts/dbml/progress.dbml
+    synchronous_dependencies: [identity]
     publishes:
       - progress.day.updated
       - progress.nutrition_cut.requested
