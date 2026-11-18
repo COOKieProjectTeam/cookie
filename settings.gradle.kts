@@ -40,4 +40,5 @@ include(
     "backend:services:progress",
     "backend:services:progress:domain",
     "backend:services:progress:application",
+    "backend:clients:progress",
 )

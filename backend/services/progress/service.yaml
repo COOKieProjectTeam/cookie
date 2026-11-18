@@ -6,6 +6,20 @@ database: progress
 public_openapi:
   source: contracts/openapi/public/progress.yaml
 runtime_openapi: contracts/openapi/runtime.yaml
+internal_openapi:
+  source: contracts/openapi/internal/progress.yaml
+access:
+  http:
+    - id: progress-today-read
+      contract: internal
+      operations: [getProgressTodayInternal]
+      permission: progress.today.read
+      exposure: internal
+      authentication:
+        workload_identity: required
+        user_context: required
+      callers:
+        - service: mobile_bff
 messaging:
   publishes:
     - {type: progress.day.updated, version: 2}

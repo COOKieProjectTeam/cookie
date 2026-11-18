@@ -22,15 +22,17 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation(project(":backend:platform:starter-testing"))
-    testImplementation(libs.nimbus.jose.jwt)
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
+    testImplementation(libs.nimbus.jose.jwt)
+    testImplementation(project(":backend:clients:progress"))
 }
 
 val generatedPublic = layout.buildDirectory.dir("generated/openapi/public")
 val generatedRuntime = layout.buildDirectory.dir("generated/openapi/runtime")
+val generatedInternal = layout.buildDirectory.dir("generated/openapi/internal")
 
 openApiGenerate {
     generatorName.set("kotlin-spring")
@@ -96,11 +98,29 @@ sourceSets {
     main {
         kotlin.srcDir(generatedPublic.map { it.dir("src/main/kotlin") })
         kotlin.srcDir(generatedRuntime.map { it.dir("src/main/kotlin") })
+        kotlin.srcDir(generatedInternal.map { it.dir("src/main/kotlin") })
     }
 }
 
 tasks.named("compileKotlin") {
-    dependsOn(tasks.named("openApiGenerate"), tasks.named("generateRuntimeOpenApi"))
+    dependsOn(tasks.named("openApiGenerate"), tasks.named("generateRuntimeOpenApi"), "generateInternalOpenApi")
+}
+
+tasks.register<GenerateTask>("generateInternalOpenApi") {
+    generatorName.set("kotlin-spring")
+    cleanupOutput.set(true)
+    inputSpec.set(rootProject.layout.projectDirectory.file("contracts/openapi/internal/progress.yaml").asFile.absolutePath)
+    inputs.file(rootProject.layout.projectDirectory.file("contracts/openapi/public/progress.yaml"))
+    outputDir.set(generatedInternal.get().asFile.absolutePath)
+    packageName.set("com.cookie.progress.generated.internalapi")
+    apiPackage.set("com.cookie.progress.generated.internalapi.api")
+    modelPackage.set("com.cookie.progress.generated.internalapi.model")
+    globalProperties.set(mapOf("apis" to "", "models" to "", "supportingFiles" to "ApiUtil.kt"))
+    configOptions.set(mapOf(
+        "interfaceOnly" to "true", "skipDefaultInterface" to "true", "useTags" to "true",
+        "useSpringBoot4" to "true", "useJackson3" to "true", "useBeanValidation" to "false",
+        "requestMappingMode" to "api_interface", "dateLibrary" to "java8", "enumPropertyNaming" to "UPPERCASE",
+    ))
 }
 
 tasks.named("check") {
@@ -114,7 +134,7 @@ tasks.named("check") {
 
 tasks.named<Test>("test") {
     useJUnitPlatform {
-        excludeTags("integration")
+        excludeTags("integration", "process-e2e")
     }
 }
 

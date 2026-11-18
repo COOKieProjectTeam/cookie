@@ -39,3 +39,5 @@ cookie:
     nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
     nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
     provision-local-broker: ${COOKIE_NATS_PROVISION_LOCAL:true}
+    workload-issuer: ${COOKIE_PROGRESS_WORKLOAD_ISSUER:}
+    workload-jwks-path: ${COOKIE_PROGRESS_WORKLOAD_JWKS_PATH:}

@@ -245,13 +245,15 @@ test("catalogs group every item once by its owner and distinguish API visibility
         `${view}: items belong to their group`);
       if (view === "api") {
         const subgroups = [...group.markup.matchAll(/<h3 class="catalog-subheading">[\s\S]*?<\/h3>([\s\S]*?)(?=<h3 class="catalog-subheading">|$)/g)];
-        const publicIds = ui.data.operations.filter(operation => operation.service === group.owner && operation.visibility !== "internal").map(operation => operation.id);
-        const probeIds = ui.data.operations.filter(operation => operation.service === group.owner && operation.visibility === "internal").map(operation => operation.id);
-        assert.equal(subgroups.length, Number(publicIds.length > 0) + Number(probeIds.length > 0));
+        const orderedVisibility = ["public", "workload", "internal"];
+        const expectedSubgroups = orderedVisibility.map(visibility =>
+          ui.data.operations.filter(operation => operation.service === group.owner && operation.visibility === visibility)
+            .map(operation => operation.id)).filter(ids => ids.length);
+        assert.equal(subgroups.length, expectedSubgroups.length);
         const actual = subgroups.map(([, markup]) => [...markup.matchAll(/<a href="([^"]+)"/g)]
           .map(([, href]) => new URLSearchParams(decode(href).split("?")[1]).get("item")));
-        assert.deepEqual(actual, [publicIds, probeIds].filter(ids => ids.length),
-          "Public operations and operational probes have separate lists within each service");
+        assert.deepEqual(actual, expectedSubgroups,
+          "Public operations, workload operations and operational probes have separate lists");
       }
     }
   }
@@ -432,7 +434,7 @@ test("plan toggle preserves an implemented consumer filter and hides its selecte
   assert.deepEqual(catalogIds(ui).sort(), ui.data.events.filter(value => value.consumers.includes("notification"))
     .map(value => eventId(ui, value)).sort());
 
-  ui.click('[data-action="catalog-filter"][data-service="progress"]');
+  ui.click('[data-action="catalog-filter"][data-service="recipe"]');
   ui.togglePlan(false);
   const reset = new URLSearchParams(ui.hash().split("?")[1]);
   assert.equal(reset.get("service"), null, "Hiding the plan removes a planned service filter");
@@ -554,9 +556,22 @@ test("every Nutrition operation has a navigable flow and async continuations rea
   assert.ok(outbox.nextFlows.includes("notification-snapshot-ingestion"));
   assert.ok(allFlows.some(f => f.id.startsWith("identity-") && f.nextFlows?.includes("nutrition-deletion")));
   ui.navigate("#events?service=nutrition&direction=published");
-  assert.equal(catalogIds(ui).length, 5);
+  assert.deepEqual(catalogIds(ui).sort(), ui.data.events.filter(e => e.producer === "nutrition" && e.status === "implemented")
+    .map(e => eventId(ui, e)).sort());
   ui.navigate("#events?service=nutrition&direction=consumed");
-  assert.deepEqual(catalogIds(ui), ["account.deletion.requested"]);
+  assert.ok(catalogIds(ui).includes("account.deletion.requested"));
+  assert.ok(catalogIds(ui).includes("progress.nutrition_cut.requested"));
+  assert.ok(catalogIds(ui).includes("progress.nutrition_replay.requested"));
+});
+
+test("Progress distinguishes private workload reads from public routes and probes", () => {
+  const ui = harness();
+  const internal = ui.data.operations.find(op => op.originalOperationId === "getProgressTodayInternal");
+  assert.equal(internal.visibility, "workload");
+  assert.equal(internal.path, "/internal/v1/progress/today");
+  ui.navigate(`#api?service=progress&item=${encodeURIComponent(internal.id)}`);
+  assert.match(visibleText(ui.markup()), /Mobile BFF/);
+  assert.match(visibleText(ui.markup()), /Закрыт на ingress/);
 });
 
 test("Nutrition probes distinguish dependency-free liveness from readiness", () => {

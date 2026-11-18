@@ -62,7 +62,7 @@ targets:
     library: multiplatform
 
   - id: kotlin_internal_clients
-    status: blocked
+    status: active
     source: internal_service_contracts
     language: kotlin
     runtime: jvm
@@ -70,6 +70,11 @@ targets:
     module_granularity: one_per_callee
     allowed_dependencies: docs/architecture/model/sync-calls.yaml
     access_policy: backend/services/{service-id}/service.yaml
+    generator_name: kotlin
+    library: jvm-spring-restclient
+    options:
+      useSpringBoot3: true
+      serializationLibrary: jackson
 
 ci:
   validate_active_service_openapi: required

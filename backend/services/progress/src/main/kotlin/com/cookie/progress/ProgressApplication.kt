@@ -69,6 +69,8 @@ internal class ProgressProperties {
     var natsTruststorePath = ""
     var natsTruststorePassword = ""
     var provisionLocalBroker = true
+    var workloadIssuer = ""
+    var workloadJwksPath = ""
 }
 
 internal class ProgressTokens(private val verifier: IdentityAccessTokenVerifier) {

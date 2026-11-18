@@ -468,6 +468,7 @@ abstract class ValidateServiceDescriptorsTask : DefaultTask() {
             "database",
             "public_openapi",
             "runtime_openapi",
+            "internal_openapi",
             "messaging",
             "synchronous_dependencies",
             "infrastructure_dependencies",
@@ -560,13 +561,16 @@ abstract class ValidateOpenApiGenerationConfigTask : DefaultTask() {
             "status" to "configured", "source" to "public_bundle", "language" to "kotlin",
             "runtime" to "kotlin_multiplatform",
         ), "kmp_public_client")
-        expect(targetsById.getValue("kotlin_internal_clients"), mapOf(
-            "id" to "kotlin_internal_clients", "status" to "blocked", "source" to "internal_service_contracts",
+        val internalClient = targetsById.getValue("kotlin_internal_clients")
+        expect(internalClient - setOf("options"), mapOf(
+            "id" to "kotlin_internal_clients", "status" to "active", "source" to "internal_service_contracts",
             "language" to "kotlin", "runtime" to "jvm",
             "output" to "backend/clients/{service-id}/build/generated/openapi",
             "module_granularity" to "one_per_callee",
             "allowed_dependencies" to "docs/architecture/model/sync-calls.yaml",
             "access_policy" to "backend/services/{service-id}/service.yaml",
+            "generator_name" to "kotlin",
+            "library" to "jvm-spring-restclient",
         ), "kotlin_internal_clients")
         val serverOptions = mapping(server["options"], "kotlin_server_transport.options")
         require(serverOptions.keys.containsAll(setOf(
@@ -605,7 +609,7 @@ abstract class ValidateOpenApiGenerationConfigTask : DefaultTask() {
             }
             val options = target["options"]?.let { mapping(it, "${target["id"]}.options") }.orEmpty()
             val actualOptions = mapping(task["options"], "$path options")
-            if (target["runtime"] == "jvm") {
+            if (target["generator_name"] == "kotlin-spring") {
                 expect(actualOptions["interfaceOnly"], "true", "$path must generate server interfaces")
                 expect(actualOptions["skipDefaultInterface"], "true", "$path must not generate business handlers")
             }
@@ -627,7 +631,16 @@ abstract class ValidateOpenApiGenerationConfigTask : DefaultTask() {
         }
         validateTask(":generateKmpPublicClient", client,
             source("public_bundle"), client["output"]?.toString() ?: error("KMP output is required"))
-        expect(configuredTasks.keys, expectedTasks, "configured generation tasks; roadmap/internal generation is forbidden")
+        (implemented.getValue("internalContracts") as List<*>).forEach { contractValue ->
+            val contract = requireNotNull(contractValue as? String)
+            val serviceId = java.io.File(contract).nameWithoutExtension
+            expect(contract, source("internal_service_contracts").replace("{service-id}", serviceId), "internal contract $serviceId")
+            val output = requireNotNull(serviceOutputs[serviceId]) { "No callee module for $serviceId" }
+            validateTask(":backend:services:$serviceId:generateInternalOpenApi", server, contract, "$output/internal")
+            validateTask(":backend:clients:$serviceId:openApiGenerate", internalClient, contract,
+                internalClient.getValue("output").toString().replace("{service-id}", serviceId))
+        }
+        expect(configuredTasks.keys, expectedTasks, "configured generation tasks; roadmap generation is forbidden")
         expect(implemented["roadmapValidation"], source("public_roadmap"), "roadmap validation source")
         expect(implemented["bundleValidation"], source("public_bundle"), "bundle validation source")
     }
@@ -695,6 +708,91 @@ val validateServiceDescriptors = tasks.register<ValidateServiceDescriptorsTask>(
     runtimeContract.set(layout.projectDirectory.file("contracts/openapi/runtime.yaml"))
 }
 
+abstract class ValidateInternalAccessPolicies : DefaultTask() {
+    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val contracts: ConfigurableFileCollection
+
+    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val publicContracts: ConfigurableFileCollection
+
+    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val descriptors: ConfigurableFileCollection
+
+    @get:InputFile @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val graph: RegularFileProperty
+
+    @get:Input
+    abstract val clientDependencies: MapProperty<String, List<String>>
+
+    @TaskAction
+    fun validate() {
+        val yaml = Yaml(SafeConstructor(LoaderOptions().apply { isAllowDuplicateKeys = false }))
+        fun read(file: java.io.File) = yaml.load<Map<String, Any?>>(file.readText())
+        fun map(value: Any?): Map<*, *> = value as? Map<*, *> ?: error("Expected an OpenAPI or policy object")
+        fun list(value: Any?): List<*> = value as? List<*> ?: error("Expected an OpenAPI or policy list")
+        fun operations(document: Map<String, Any?>): List<Pair<String, Map<*, *>>> =
+            map(document["paths"]).flatMap { (route, item) ->
+                map(item).filterKeys { it in setOf("get", "post", "put", "patch", "delete", "head", "options", "trace") }
+                    .values.map { route.toString() to map(it) }
+            }
+
+        val edges = list(read(graph.get().asFile)["calls"]).map { edge -> map(edge).let { it["caller"] to it["callee"] } }.toSet()
+        val services = descriptors.files.associate { file -> read(file).let { it["id"] to it } }
+        val ids = publicContracts.files.flatMap { file -> operations(read(file)).map { it.second["operationId"] } }.toMutableSet()
+        val callees = contracts.files.map { it.nameWithoutExtension }.toSet()
+        require(callees == services.filterValues { it.containsKey("internal_openapi") }.keys) {
+            "Every internal API must have a single callee descriptor"
+        }
+        val grants = mutableSetOf<Pair<String, String>>()
+        for (file in contracts.files) {
+            val callee = file.nameWithoutExtension
+            val descriptor = services.getValue(callee)
+            require(map(descriptor["internal_openapi"])["source"] == "contracts/openapi/internal/$callee.yaml")
+            val policies = list(map(descriptor["access"])["http"]).map(::map).filter { it["contract"] == "internal" }
+            val declared = policies.flatMap { policy -> list(policy["operations"]).map { it to policy } }
+            require(declared.map { it.first }.toSet().size == declared.size) { "$callee has duplicate operation policies" }
+            val byOperation = declared.toMap()
+            val doc = read(file)
+            val security = map(map(doc["components"])["securitySchemes"])
+            require(map(security["workloadIdentity"])["scheme"] == "bearer")
+            val internal = operations(doc)
+            require(internal.isNotEmpty() && internal.map { it.second["operationId"] }.toSet() == byOperation.keys)
+            for ((route, operation) in internal) {
+                val id = operation["operationId"] as? String ?: error("Missing internal operationId")
+                require(route.startsWith("/internal/v1/") && ids.add(id)) { "Duplicate or exposed internal route $id" }
+                require(operation["security"] == listOf(mapOf("workloadIdentity" to emptyList<Any>()))) { "Missing workload identity on $id" }
+                val policy = byOperation.getValue(id)
+                val permission = operation["x-cookie-permission"] as? String ?: error("Missing permission for $id")
+                require(policy["permission"] == permission && policy["exposure"] == "internal" && permission.startsWith("$callee."))
+                val authentication = map(policy["authentication"])
+                val userContext = operation["x-cookie-user-context"]
+                require(authentication["workload_identity"] == "required" && userContext in setOf("required", "optional", "forbidden") &&
+                    authentication["user_context"] == userContext) { "Inconsistent user context for $id" }
+                val callers = list(policy["callers"]).map { map(it)["service"] as? String ?: error("Invalid caller for $id") }
+                require(callers.isNotEmpty() && callers.distinct() == callers && callers.all { (it to callee) in edges }) {
+                    "Internal callers for $id must be explicitly listed in sync-calls.yaml"
+                }
+                callers.forEach { grants += it to callee }
+            }
+        }
+        for ((caller, dependencies) in clientDependencies.get()) {
+            for (callee in dependencies) {
+                require(callee in callees && (caller to callee) in grants) { "Internal client $caller -> $callee violates access policy" }
+            }
+        }
+    }
+}
+
+val validateInternalAccessPolicies = tasks.register<ValidateInternalAccessPolicies>("validateInternalAccessPolicies") {
+    group = "verification"
+    description = "Validate internal API workload permissions and callers against the service graph."
+    contracts.from(fileTree("contracts/openapi/internal") { include("*.yaml") })
+    publicContracts.from(fileTree("contracts/openapi/public") { include("*.yaml") })
+    descriptors.from(fileTree("backend/services") { include("*/service.yaml") })
+    graph.set(layout.projectDirectory.file("docs/architecture/model/sync-calls.yaml"))
+}
+validateServiceDescriptors.configure { dependsOn(validateInternalAccessPolicies) }
+
 val bundlePublicOpenApi = tasks.register<BundlePublicOpenApiTask>("bundlePublicOpenApi") {
     group = "openapi tools"
     description = "Bundle active per-service public OpenAPI contracts."
@@ -754,11 +852,20 @@ gradle.projectsEvaluated {
             it.inputSpec.isPresent || !it.remoteInputSpec.orNull.isNullOrBlank() ||
                 it.inputSpecRootDirectory.isPresent || it.inputSpecFiles.files.isNotEmpty()
         }
+    validateInternalAccessPolicies.configure {
+        clientDependencies.set(allprojects.associate { module ->
+            val dependencies = module.configurations.filter { it.name in setOf("api", "implementation", "runtimeOnly") }
+                .flatMap { it.dependencies.withType(org.gradle.api.artifacts.ProjectDependency::class.java) }
+                .map { it.path }.filter { it.startsWith(":backend:clients:") }.map { it.substringAfterLast(':') }.distinct()
+            module.name.replace('-', '_') to dependencies
+        })
+    }
     validateOpenApiGenerationConfig.configure {
         implementedGeneration.set(mapOf(
             "bundleOutput" to contractPath(bundle.outputSpec.get().asFile),
             "tagOwnerSource" to contractPath(bundle.architectureModel.get().asFile),
             "publicContracts" to bundle.sourceSpecs.files.map { contractPath(it) }.sorted(),
+            "internalContracts" to fileTree("contracts/openapi/internal") { include("*.yaml") }.files.map { contractPath(it) }.sorted(),
             "roadmapValidation" to contractPath(validatePlannedOpenApi.get().inputSpec.get().asFile),
             "bundleValidation" to contractPath(validateBundledPublicOpenApi.get().inputSpec.get().asFile),
             "serviceOutputs" to allprojects.filter { it.path.matches(Regex(":backend:services:[^:]+")) }

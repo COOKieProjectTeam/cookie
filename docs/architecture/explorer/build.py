@@ -27,6 +27,7 @@ METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 SOURCE_ROOTS = ("backend/", "contracts/", "docs/architecture/", "docs/adr/", "deploy/", "infra/terraform/")
 SOURCE_SUFFIXES = {".kt", ".kts", ".yaml", ".yml", ".json", ".md", ".sql", ".dbml", ".mmd", ".sh", ".tf", ".tftpl", ".conf", ".py"}
 NODE_ALIASES = {"mobile_client", "gateway", "identity_db", "notification_db", "user_db", "nutrition_db", "health_db", "health_gateway", "nutrition_client", "nutrition_jwks", "nats", "redis", "smtp", "apns", "fcm", "object_storage"}
+NODE_ALIASES.update({"progress_db", "progress_gateway"})
 
 
 class BuildError(ValueError):
@@ -98,7 +99,8 @@ class Repository:
     def read_source(self, relative: str | Path) -> str:
         path = self.path(relative)
         name = self.relative(path)
-        supported_type = path.suffix in SOURCE_SUFFIXES or name == "deploy/docker/health.Caddyfile"
+        local_gateways = {"deploy/docker/health.Caddyfile", "deploy/docker/progress.Caddyfile"}
+        supported_type = path.suffix in SOURCE_SUFFIXES or name in local_gateways
         if not name.startswith(SOURCE_ROOTS) or not supported_type:
             raise BuildError(f"Unsupported source file: {name}")
         if any(part.startswith(".") or part in {"build", "secrets", "node_modules", "__pycache__"} for part in Path(name).parts):
@@ -228,7 +230,7 @@ def operations_for(repository: Repository, service: str, path: str, visibility: 
             operation_source = repository.source(source_path, *source_pointer)
             result.append({
                 **operation,
-                "id": f"{service}:{operation_id}" if visibility == "internal" else operation_id,
+                "id": f"{service}:{operation_id}" if visibility != "public" else operation_id,
                 "originalOperationId": operation_id,
                 "service": service,
                 "method": method.upper(),
@@ -338,6 +340,8 @@ def build_data(root: Path) -> dict:
             operations.extend(operations_for(repository, service_id, public["source"], "public"))
         if descriptor.get("runtime_openapi"):
             operations.extend(operations_for(repository, service_id, descriptor["runtime_openapi"], "internal"))
+        if descriptor.get("internal_openapi"):
+            operations.extend(operations_for(repository, service_id, descriptor["internal_openapi"]["source"], "workload"))
     operation_ids = {operation["id"] for operation in operations}
     if len(operation_ids) != len(operations):
         raise BuildError("Duplicate active operation ID")
