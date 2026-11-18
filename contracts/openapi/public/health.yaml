@@ -1,0 +1,326 @@
+openapi: 3.0.3
+info:
+  title: COOKie Health API
+  version: 1.0.0
+servers:
+  - url: /v1
+tags:
+  - name: health
+    description: Weight, activity and nutrition assessment
+paths:
+  /health/nutrition-assessments:
+    post:
+      tags: [health]
+      security:
+        - accessToken: []
+      operationId: calculateNutritionAssessment
+      summary: Preview recommendations without recording measurements or goals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HealthAssessmentInput'
+      responses:
+        '200':
+          description: Assessment with a receipt when eligible for acceptance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthAssessmentPreview'
+        '400':
+          description: Invalid assessment input
+        '401':
+          description: Invalid access token
+        '404':
+          description: Account unavailable
+        '503':
+          description: Authentication or service temporarily unavailable
+  /health/weight:
+    post:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "addWeightMeasurement"
+      summary: "Record a manual weight"
+      parameters: [{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"201":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthWeight"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthWeightInput"}}}}
+    get:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "listWeightMeasurements"
+      summary: "Read account weight history"
+      parameters: [{"name":"from","in":"query","required":false,"schema":{"type":"string","format":"date"}},{"name":"to","in":"query","required":false,"schema":{"type":"string","format":"date"}},{"name":"timezone","in":"query","required":false,"schema":{"type":"string"}},{"name":"cursor","in":"query","required":false,"schema":{"type":"string"}},{"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":100,"default":20}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthWeightPage"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+  /health/weight/{weightId}:
+    patch:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "updateWeightMeasurement"
+      summary: "Edit a manual weight"
+      parameters: [{"name":"weightId","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"If-Match","in":"header","required":true,"schema":{"type":"integer","format":"int64","minimum":1}},{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthWeight"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthWeightPatch"}}}}
+    delete:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "deleteWeightMeasurement"
+      summary: "Delete a manual weight"
+      parameters: [{"name":"weightId","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"If-Match","in":"header","required":true,"schema":{"type":"integer","format":"int64","minimum":1}},{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"204":{"description":"Success"},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+  /health/connections:
+    post:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "registerHealthConnection"
+      summary: "Register a platform store"
+      parameters: [{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"201":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthConnection"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthConnectionInput"}}}}
+    get:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "listHealthConnections"
+      summary: "List owned platform stores"
+      parameters: []
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthConnections"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+  /health/connections/{connectionId}/resume:
+    post:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "resumeHealthConnection"
+      summary: "resume an owned platform connection"
+      parameters: [{"name":"connectionId","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"If-Match","in":"header","required":true,"schema":{"type":"integer","format":"int64","minimum":1}},{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthConnection"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+  /health/connections/{connectionId}/disconnect:
+    post:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "disconnectHealthConnection"
+      summary: "disconnect an owned platform connection"
+      parameters: [{"name":"connectionId","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"If-Match","in":"header","required":true,"schema":{"type":"integer","format":"int64","minimum":1}},{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthConnection"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+  /health/connections/{connectionId}/batches:
+    post:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "importHealthBatch"
+      summary: "Apply an ordered atomic import batch"
+      parameters: [{"name":"connectionId","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthBatchResult"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthBatch"}}}}
+  /health/activity/primary-connection:
+    put:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "schedulePrimaryHealthConnection"
+      summary: "Schedule the primary connection for tomorrow"
+      parameters: [{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthPrimary"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthPrimaryInput"}}}}
+  /health/connections/{connectionId}/data:
+    delete:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "purgeHealthConnection"
+      summary: "Remove imported health data"
+      parameters: [{"name":"connectionId","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"If-Match","in":"header","required":true,"schema":{"type":"integer","format":"int64","minimum":1}},{"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"202":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthPurge"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+  /health/connections/{connectionId}/purges/{purgeId}:
+    get:
+      tags: ["health"]
+      security: [{"accessToken":[]}]
+      operationId: "getHealthPurge"
+      summary: "Read connection purge status"
+      parameters: [{"name":"connectionId","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"purgeId","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HealthPurge"}}}},"400":{"description":"Invalid request"},"401":{"description":"Invalid access token"},"404":{"description":"Resource unavailable"},"409":{"description":"Conflict"},"413":{"description":"Request too large"},"503":{"description":"Temporarily unavailable"}}
+components:
+  securitySchemes:
+    accessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Identity access JWT: ES256, typ=at+jwt, expected issuer and audience,
+        and mandatory valid sub, sid, jti, iat and exp claims.
+  schemas:
+    HealthAssessmentInput:
+      type: object
+      additionalProperties: false
+      required: [purpose, profileVersion, goalRevision, timezone, sex, birthDate, heightCm, currentWeightKg, weeklyChangeKg, activity, macroProfile, standardAdultPolicyApplies, measuredAt, foodRestrictions, dietStyles, allergies]
+      properties:
+        purpose: {type: string, enum: [INITIAL, RECALC]}
+        profileVersion: {type: integer, format: int64, minimum: 1}
+        goalRevision: {type: integer, format: int64, minimum: 0}
+        timezone: {type: string, maxLength: 100}
+        sex: {type: string, enum: [MALE, FEMALE]}
+        birthDate: {type: string, format: date}
+        heightCm: {type: number, minimum: 30, maximum: 300, multipleOf: 0.01}
+        currentWeightKg: {type: number, minimum: 0.01, maximum: 999.99, multipleOf: 0.01}
+        targetWeightKg: {type: number, minimum: 0.01, maximum: 999.99, multipleOf: 0.01}
+        weeklyChangeKg: {type: number, description: "One of -0.25, 0 or 0.25 kg per week."}
+        activity: {type: string, enum: [INACTIVE, LOW_ACTIVE, ACTIVE, VERY_ACTIVE]}
+        macroProfile: {type: string, enum: [BALANCED, HIGH_PROTEIN, LOW_CARB, KETO]}
+        standardAdultPolicyApplies: {type: boolean}
+        measuredAt: {type: string, format: date-time}
+        foodRestrictions:
+          type: array
+          uniqueItems: true
+          maxItems: 5
+          items: {type: string, enum: [VEGAN, VEGETARIAN, PESCATARIAN, GLUTEN_FREE, LACTOSE_FREE]}
+        dietStyles:
+          type: array
+          uniqueItems: true
+          maxItems: 1
+          items: {type: string, enum: [MEDITERRANEAN]}
+        allergies:
+          type: array
+          uniqueItems: true
+          maxItems: 14
+          items: {type: string, enum: [GLUTEN, CRUSTACEANS, EGGS, FISH, PEANUTS, SOY, MILK, TREE_NUTS, CELERY, MUSTARD, SESAME, SULPHITES, LUPIN, MOLLUSCS]}
+    HealthAssessmentPreview:
+      type: object
+      required: [outcome, policyVersion, assessmentDate, waterMl]
+      properties:
+        outcome: {type: string, enum: [CALCULATED, NO_CALORIE_GOAL, MAINTENANCE_PREVIEW_AVAILABLE]}
+        reason: {type: string, enum: [OUTSIDE_POLICY_SCOPE, BELOW_CALORIE_FLOOR]}
+        policyVersion: {type: string}
+        assessmentDate: {type: string, format: date}
+        waterMl: {type: integer}
+        calories: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        proteinG: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        fatG: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        carbsG: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        fiberG: {$ref: '#/components/schemas/HealthNutritionTarget'}
+        receipt: {type: string}
+        expiresAt: {type: string, format: date-time}
+    HealthNutritionTarget:
+      type: object
+      required: [kind]
+      properties:
+        kind: {type: string, enum: [RANGE, UPPER_LIMIT, AT_LEAST, LEGACY_POINT]}
+        low: {type: number}
+        center: {type: number}
+        high: {type: number}
+
+    HealthWeightInput:
+      type: "object"
+      additionalProperties: false
+      required: ["measuredAt","valueKg"]
+      properties:
+        measuredAt: {"type":"string","format":"date-time"}
+        valueKg: {"type":"number","minimum":0.01,"maximum":999.99,"multipleOf":0.01}
+    HealthWeightPatch:
+      type: "object"
+      additionalProperties: false
+      properties:
+        measuredAt: {"type":"string","format":"date-time"}
+        valueKg: {"type":"number"}
+    HealthWeight:
+      type: "object"
+      additionalProperties: false
+      required: ["measurementId","measuredAt","valueKg","version","source"]
+      properties:
+        measurementId: {"type":"string","format":"uuid"}
+        measuredAt: {"type":"string","format":"date-time"}
+        valueKg: {"type":"number"}
+        version: {"type":"integer","format":"int64","minimum":1}
+        source: {"type":"string","enum":["MANUAL","APPLE_HEALTH","HEALTH_CONNECT"]}
+        connectionId: {"type":"string","format":"uuid"}
+    HealthWeightPage:
+      type: "object"
+      additionalProperties: false
+      required: ["items"]
+      properties:
+        items: {"type":"array","items":{"$ref":"#/components/schemas/HealthWeight"}}
+        nextCursor: {"type":"string"}
+    HealthConnectionInput:
+      type: "object"
+      additionalProperties: false
+      required: ["platform","timezone"]
+      properties:
+        platform: {"type":"string","enum":["APPLE_HEALTH","HEALTH_CONNECT"]}
+        timezone: {"type":"string"}
+    HealthConnection:
+      type: "object"
+      additionalProperties: false
+      required: ["connectionId","platform","timezone","status","generation","version","nextSeq","initialFrom","initialTo"]
+      properties:
+        connectionId: {"type":"string","format":"uuid"}
+        platform: {"type":"string","enum":["APPLE_HEALTH","HEALTH_CONNECT"]}
+        timezone: {"type":"string"}
+        status: {"type":"string","enum":["ACTIVE","DISCONNECTED","PURGING","PURGED"]}
+        generation: {"type":"integer","format":"int64","minimum":1}
+        version: {"type":"integer","format":"int64","minimum":1}
+        nextSeq: {"type":"integer","format":"int64","minimum":1}
+        initialFrom: {"type":"string","format":"date"}
+        initialTo: {"type":"string","format":"date"}
+    HealthConnections:
+      type: "object"
+      additionalProperties: false
+      required: ["items"]
+      properties:
+        items: {"type":"array","items":{"$ref":"#/components/schemas/HealthConnection"}}
+        primary: {"$ref":"#/components/schemas/HealthPrimary"}
+    HealthPrimaryInput:
+      type: "object"
+      additionalProperties: false
+      required: ["connectionId","revision"]
+      properties:
+        connectionId: {"type":"string","format":"uuid"}
+        revision: {"type":"integer","format":"int64","minimum":1}
+        timezone: {"type":"string"}
+    HealthPrimary:
+      type: "object"
+      additionalProperties: false
+      required: ["connectionId","effectiveFrom","timezone","revision"]
+      properties:
+        connectionId: {"type":"string","format":"uuid"}
+        effectiveFrom: {"type":"string","format":"date"}
+        timezone: {"type":"string"}
+        revision: {"type":"integer","format":"int64","minimum":1}
+    HealthImportItem:
+      type: "object"
+      additionalProperties: false
+      required: ["op"]
+      properties:
+        op: {"type":"string","enum":["WEIGHT_UPSERT","WEIGHT_DELETE","ACTIVITY_SNAPSHOT","ACTIVITY_DELETE"]}
+        externalId: {"type":"string","maxLength":200}
+        valueKg: {"type":"number"}
+        measuredAt: {"type":"string","format":"date-time"}
+        localDate: {"type":"string","format":"date"}
+        timezone: {"type":"string"}
+        steps: {"type":"integer","minimum":0,"nullable":true}
+        activeKcal: {"type":"number","minimum":0,"nullable":true}
+    HealthBatch:
+      type: "object"
+      additionalProperties: false
+      required: ["generation","seq","items"]
+      properties:
+        generation: {"type":"integer","format":"int64","minimum":1}
+        seq: {"type":"integer","format":"int64","minimum":1}
+        items: {"type":"array","items":{"$ref":"#/components/schemas/HealthImportItem"},"minItems":1,"maxItems":100}
+    HealthImportResult:
+      type: "object"
+      additionalProperties: false
+      required: ["status"]
+      properties:
+        status: {"type":"string","enum":["APPLIED","UNCHANGED","ALREADY_DELETED"]}
+        measurementId: {"type":"string","format":"uuid"}
+        version: {"type":"integer","format":"int64","minimum":1}
+    HealthBatchResult:
+      type: "object"
+      additionalProperties: false
+      required: ["seq","nextSeq","status"]
+      properties:
+        seq: {"type":"integer","format":"int64","minimum":1}
+        nextSeq: {"type":"integer","format":"int64","minimum":1}
+        status: {"type":"string","enum":["COMMITTED","ALREADY_APPLIED"]}
+        items: {"type":"array","items":{"$ref":"#/components/schemas/HealthImportResult"}}
+    HealthPurge:
+      type: "object"
+      additionalProperties: false
+      required: ["purgeId","status"]
+      properties:
+        purgeId: {"type":"string","format":"uuid"}
+        status: {"type":"string","enum":["PENDING","COMPLETED"]}

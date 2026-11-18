@@ -26,7 +26,7 @@ MODEL = Path("docs/architecture/model")
 METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 SOURCE_ROOTS = ("backend/", "contracts/", "docs/architecture/", "docs/adr/", "deploy/", "infra/terraform/")
 SOURCE_SUFFIXES = {".kt", ".kts", ".yaml", ".yml", ".json", ".md", ".sql", ".dbml", ".mmd", ".sh", ".tf", ".tftpl", ".conf", ".py"}
-NODE_ALIASES = {"mobile_client", "gateway", "identity_db", "notification_db", "user_db", "nutrition_db", "nutrition_client", "nutrition_jwks", "nats", "redis", "smtp", "apns", "fcm", "object_storage"}
+NODE_ALIASES = {"mobile_client", "gateway", "identity_db", "notification_db", "user_db", "nutrition_db", "health_db", "health_gateway", "nutrition_client", "nutrition_jwks", "nats", "redis", "smtp", "apns", "fcm", "object_storage"}
 
 
 class BuildError(ValueError):
@@ -98,7 +98,8 @@ class Repository:
     def read_source(self, relative: str | Path) -> str:
         path = self.path(relative)
         name = self.relative(path)
-        if not name.startswith(SOURCE_ROOTS) or path.suffix not in SOURCE_SUFFIXES:
+        supported_type = path.suffix in SOURCE_SUFFIXES or name == "deploy/docker/health.Caddyfile"
+        if not name.startswith(SOURCE_ROOTS) or not supported_type:
             raise BuildError(f"Unsupported source file: {name}")
         if any(part.startswith(".") or part in {"build", "secrets", "node_modules", "__pycache__"} for part in Path(name).parts):
             raise BuildError(f"Private/generated source cannot be embedded: {name}")

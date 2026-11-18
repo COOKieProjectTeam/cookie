@@ -14,7 +14,6 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import tools.jackson.databind.json.JsonMapper
-import java.math.BigDecimal
 import java.time.*
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
@@ -50,7 +49,6 @@ class UserPersistenceIntegrationTest {
         "event_id" to id,"event_type" to type,"event_version" to version,"producer" to "identity","aggregate_type" to "account",
         "aggregate_id" to user,"occurred_at" to clock.instant(),"payload" to if(type=="account.activated") mapOf("userId" to user,"accountMetadata" to mapOf("registeredWith" to "email"))
         else mapOf("accountId" to user,"deletionRequestId" to id(),"requestedAt" to clock.instant())))
-    private fun goal(calories:String="2000")=NutritionGoalCommand(Nutrients(BigDecimal(calories),BigDecimal("100"),BigDecimal("70"),BigDecimal("240"),BigDecimal("25")))
     @Test fun `activation retry and concurrent duplicate create one profile and event`() {
         val user=id();val bytes=event(user)
         val calls=(1..8).map { CompletableFuture.runAsync { events.handle("cookie.events.account.activated.v1",bytes) } }
@@ -76,20 +74,18 @@ class UserPersistenceIntegrationTest {
         assertThat(calls.count { it.join().isSuccess }).isEqualTo(1)
         assertThat(calls.mapNotNull { it.join().exceptionOrNull()?.message }).containsExactly("VERSION_CONFLICT")
     }
-    @Test fun `subresource writes preserve profile version and independent goal revisions`() {
+    @Test fun `hydration and cheat day writes preserve profile version`() {
         val user=activate(); val profile=service.profile(user)
-        val first=service.setGoal(user,UUID.randomUUID(),goal())
-        val water=service.setHydration(user,UUID.randomUUID(),2000)
+        val first=service.setHydration(user,UUID.randomUUID(),2000)
         val date=LocalDate.parse("2026-10-23")
-        service.setOverride(user,UUID.randomUUID(),date,OverrideCommand(OverrideType.CUSTOM,calories=BigDecimal("2500")))
+        service.setOverride(user,UUID.randomUUID(),date,OverrideCommand(OverrideType.CHEAT_DAY,unlimitedCalories=true))
         service.deleteOverride(user,UUID.randomUUID(),date)
-        val second=service.setGoal(user,UUID.randomUUID(),goal("2100"))
+        val second=service.setHydration(user,UUID.randomUUID(),2100)
         val updated=service.update(user,UUID.randomUUID(),ProfileChange(profile.version,locale="en"))
         assertThat(updated.version).isEqualTo(profile.version+1)
         assertThat(listOf(first.revision,second.revision)).containsExactly(1L,2L)
-        assertThat(water.revision).isEqualTo(1)
         assertThat(owner.queryForList("SELECT aggregate_version FROM outbox_events WHERE user_id=? ORDER BY aggregate_version",Long::class.java,user))
-            .containsExactly(1L,2L,3L,4L,5L,6L,7L)
+            .containsExactly(1L,2L,3L,4L,5L,6L)
     }
     @Test fun `existing account reads share locks while deletion waits for readers`() {
         val user=activate()
@@ -120,31 +116,31 @@ class UserPersistenceIntegrationTest {
         assertThat(owner.queryForObject("SELECT count(*) FROM outbox_events WHERE user_id=?",Int::class.java,user)).isEqualTo(1)
     }
     @Test fun `goal and hydration reads need timezone but not diet or allergies`() {
-        val user=activate();service.setGoal(user,UUID.randomUUID(),goal());service.setHydration(user,UUID.randomUUID(),2000)
+        val user=activate();service.setHydration(user,UUID.randomUUID(),2000)
         owner.execute("REVOKE SELECT ON diet_preferences,allergies FROM user_app")
         try {
-            assertThat(service.currentGoal(user).value.nutrients.calories).isEqualByComparingTo("2000")
+            assertThat(AcceptedGoalHistory(store).current(user).path("outcome").asString()).isEqualTo("NO_CALORIE_GOAL")
             assertThat(service.hydration(user).targetMl).isEqualTo(2000)
         } finally { owner.execute("SELECT user_apply_runtime_grants()") }
     }
-    @Test fun `goals keep history and same-day latest revision with account isolation`() {
+    @Test fun `legacy history is readable but never an active calorie target`() {
         val a=activate();val b=activate()
-        service.update(a,UUID.randomUUID(),ProfileChange(1,timezone="America/Los_Angeles"))
-        val first=service.setGoal(a,UUID.randomUUID(),goal());val second=service.setGoal(a,UUID.randomUUID(),goal("2200"))
-        assertThat(first.effectiveFrom).isEqualTo(LocalDate.parse("2026-10-22"))
-        assertThat(service.currentGoal(a).id).isEqualTo(second.id)
-        assertThat(service.currentGoal(a).value.nutrients.calories).isEqualByComparingTo(second.value.nutrients.calories)
-        assertThat(service.goalHistory(a,null,1).items.map { it.id }).containsExactly(second.id)
-        assertThat(service.goalHistory(a,second.revision.toString(),1).items.map { it.id }).containsExactly(first.id)
-        assertThat(service.goalHistory(b,null,100).items).isEmpty()
-        assertThatThrownBy { service.currentGoal(b) }.hasMessage("GOAL_NOT_FOUND")
+        val day=LocalDate.parse("2026-10-22")
+        owner.update("""INSERT INTO nutrition_goal_versions(id,user_id,revision,effective_from,calorie_target,protein_g,fat_g,carbs_g,fiber_g,source)
+            VALUES (?,?,1,?,2000,100,70,230,25,'MANUAL'),(?,?,2,?,2200,100,70,230,25,'MANUAL')""",
+            id(),a,day,id(),a,day)
+        val history=AcceptedGoalHistory(store)
+        assertThat(history.current(a).path("reason").asString()).isEqualTo("LEGACY_REQUIRES_ASSESSMENT")
+        assertThat(history.page(a,null,1).path("items")[0].path("revision").asLong()).isEqualTo(2)
+        assertThat(history.page(a,"2",1).path("items")[0].path("revision").asLong()).isEqualTo(1)
+        assertThat(history.page(b,null,100).path("items").size()).isZero()
     }
     @Test fun `competing same-key commands converge without duplicate events`() {
         val a=activate();val key=UUID.randomUUID()
-        val results=(1..8).map { CompletableFuture.supplyAsync { service.setGoal(a,key,goal()) } }.map { it.join() }
+        val results=(1..8).map { CompletableFuture.supplyAsync { service.setHydration(a,key,2000) } }.map { it.join() }
         assertThat(results.distinct()).hasSize(1)
-        assertThat(service.goalHistory(a,null,100).items).hasSize(1)
-        assertThat(owner.queryForObject("SELECT count(*) FROM outbox_events WHERE event_type='user.goal.changed'",Int::class.java)).isEqualTo(1)
+        assertThat(service.hydration(a).revision).isEqualTo(1)
+        assertThat(owner.queryForObject("SELECT count(*) FROM outbox_events WHERE event_type='user.hydration_goal.changed'",Int::class.java)).isEqualTo(1)
     }
     @Test fun `one cheat day per calendar month under contention and deletion permits replacement`() {
         val a=activate();val barrier=CyclicBarrier(2);val value=OverrideCommand(OverrideType.CHEAT_DAY,unlimitedCalories=true)
@@ -158,7 +154,7 @@ class UserPersistenceIntegrationTest {
         assertThat(service.setOverride(a,UUID.randomUUID(),LocalDate.parse("2026-10-12"),value).value.type).isEqualTo(OverrideType.CHEAT_DAY)
     }
     @Test fun `deletion erases owned data and late activation cannot resurrect`() {
-        val a=activate();service.setGoal(a,UUID.randomUUID(),goal());service.setHydration(a,UUID.randomUUID(),2000)
+        val a=activate();service.setHydration(a,UUID.randomUUID(),2000)
         events.handle("cookie.events.account.deletion.requested.v1",event(a,"account.deletion.requested"))
         events.handle("cookie.events.account.activated.v1",event(a))
         assertThatThrownBy { service.profile(a) }.hasMessage("ACCOUNT_DELETED")
@@ -172,9 +168,9 @@ class UserPersistenceIntegrationTest {
         assertThatThrownBy { service.profile(a) }.hasMessage("ACCOUNT_DELETED")
         val b=activate();val barrier=CyclicBarrier(2)
         val deletion=CompletableFuture.runAsync { barrier.await();events.handle("cookie.events.account.deletion.requested.v1",event(b,"account.deletion.requested")) }
-        val update=CompletableFuture.runAsync { barrier.await();runCatching { service.setGoal(b,UUID.randomUUID(),goal()) } }
+        val update=CompletableFuture.runAsync { barrier.await();runCatching { service.setHydration(b,UUID.randomUUID(),2000) } }
         deletion.join();update.join()
-        assertThatThrownBy { service.currentGoal(b) }.hasMessage("ACCOUNT_DELETED")
+        assertThatThrownBy { service.hydration(b) }.hasMessage("ACCOUNT_DELETED")
         assertThat(owner.queryForObject("SELECT count(*) FROM nutrition_goal_versions",Int::class.java)).isZero()
     }
     @Test fun `rollback before inbox commit leaves event replayable`() {
@@ -194,7 +190,7 @@ class UserPersistenceIntegrationTest {
         assertThat(owner.queryForObject("SELECT count(*) FROM profiles",Int::class.java)).isZero()
     }
     @Test fun `review regression runtime cannot erase immutable evidence or revisions`() {
-        val a=activate();service.setGoal(a,UUID.randomUUID(),goal());service.setHydration(a,UUID.randomUUID(),2000)
+        val a=activate();service.setHydration(a,UUID.randomUUID(),2000)
         listOf("nutrition_goal_versions","hydration_goal_versions","idempotency_commands","inbox_events","outbox_events").forEach { table ->
             val before=owner.queryForObject("SELECT count(*) FROM $table",Int::class.java)
             runCatching { store.jdbc.update("DELETE FROM $table") }
@@ -210,11 +206,11 @@ class UserPersistenceIntegrationTest {
         assertThatThrownBy { store.jdbc.execute("DELETE FROM flyway_schema_history") }.isInstanceOf(org.springframework.dao.DataAccessException::class.java)
     }
     @Test fun `review regression runtime cannot erase immutable revisions through profile cascade`() {
-        val user=activate();service.setGoal(user,UUID.randomUUID(),goal())
+        val user=activate();service.setHydration(user,UUID.randomUUID(),2000)
         val version=service.profile(user).version
         runCatching { store.jdbc.update("DELETE FROM profiles WHERE user_id=?",user) }
         assertThat(service.profile(user).version).isEqualTo(version)
-        assertThat(service.goalHistory(user,null,100).items).hasSize(1)
+        assertThat(service.hydration(user).revision).isEqualTo(1)
         assertThat(owner.queryForObject("SELECT count(*) FROM idempotency_commands WHERE user_id=?",Int::class.java,user)).isEqualTo(1)
     }
     @Test fun `review regression runtime cannot reassign profile identity`() {

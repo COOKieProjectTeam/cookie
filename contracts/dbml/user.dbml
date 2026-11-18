@@ -8,7 +8,7 @@ Table profiles as Profiles {
   sex varchar
   birth_date date
   height_cm decimal(5,2)
-  activity_level varchar [note: 'LOW | MODERATE | HIGH']
+  activity_level varchar [note: 'INACTIVE | LOW_ACTIVE | ACTIVE | VERY_ACTIVE']
   timezone varchar [not null, default: 'UTC']
   locale varchar [not null, default: 'ru']
   onboarding_completed boolean [not null, default: false]
@@ -88,7 +88,7 @@ Table daily_goal_overrides as DailyGoalOverrides {
   carbs_g decimal(8,2) [null]
   fiber_g decimal(8,2) [null]
   unlimited_calories boolean [not null, default: false]
-  type varchar [not null, note: 'CUSTOM | CHEAT_DAY']
+  type varchar [not null, note: 'CHEAT_DAY']
   cheat_month date [null, note: 'Generated from local_date for CHEAT_DAY; NULL otherwise']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
@@ -129,6 +129,7 @@ Table outbox_events as UserOutbox {
   event_id uuid [pk]
   user_id uuid [not null]
   event_type text [not null]
+  event_version int [not null, default: 1]
   aggregate_version bigint [not null]
   payload jsonb [not null]
   occurred_at timestamptz [not null]
@@ -148,3 +149,51 @@ Table message_quarantine as UserQuarantine {
   created_at timestamptz [not null]
   Note: 'User: metadata only; original broker replay limited by stream retention'
 }
+
+Table legacy_profile_activity as UserLegacyActivity {
+  user_id uuid [pk]
+  activity_level text [not null]
+}
+
+Table goal_attempts as UserGoalAttempts {
+  id uuid [pk]
+  user_id uuid [not null]
+  purpose text [not null]
+  receipt_id uuid [not null]
+  intent_hash text [not null]
+  result_hash text [not null]
+  accepted_at timestamptz [not null]
+  effective_from date [not null]
+  status text [not null]
+  encrypted_command text
+  encrypted_input text
+  response jsonb
+  next_retry_at timestamptz [not null]
+  indexes {
+    (user_id,receipt_id) [unique]
+    (user_id,id) [unique]
+  }
+}
+
+Table accepted_goal_versions as UserAcceptedGoals {
+  id uuid [pk]
+  user_id uuid [not null]
+  attempt_id uuid [not null]
+  revision bigint [not null]
+  effective_from date [not null]
+  accepted_at timestamptz [not null]
+  policy_version text [not null]
+  outcome text [not null]
+  reason text
+  calorie_low integer
+  calorie_center integer
+  calorie_high integer
+  goal jsonb [not null]
+  indexes {
+    (user_id,revision) [unique]
+    (user_id,attempt_id) [unique]
+  }
+}
+
+Ref: UserAcceptedGoals.(user_id, attempt_id) > UserGoalAttempts.(user_id, id)
+Ref: UserGoalAttempts.user_id > Profiles.user_id

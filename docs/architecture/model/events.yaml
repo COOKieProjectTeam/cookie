@@ -77,9 +77,23 @@ events:
     consumers: [progress]
     payload: [userId, nutritionGoalVersion]
 
+  - type: user.goal.changed
+    aggregate_version_required: true
+    version: 2
+    producer: user
+    consumers: [progress]
+    payload: [userId, nutritionGoalVersion]
+
   - type: user.goal_override.changed
     aggregate_version_required: true
     version: 1
+    producer: user
+    consumers: [progress]
+    payload: [userId, localDate, override]
+
+  - type: user.goal_override.changed
+    aggregate_version_required: true
+    version: 2
     producer: user
     consumers: [progress]
     payload: [userId, localDate, override]
@@ -164,10 +178,11 @@ events:
     aggregate_version_required: true
 
   - type: health.activity.changed
-    version: 1
+    version: 2
     producer: health
     consumers: [progress]
-    payload: [userId, localDate, steps, activeCalories]
+    payload: [userId, localDate, timezone, connectionId, steps, activeKcal, deleted]
+    aggregate_version_required: true
 
   - type: progress.day.updated
     version: 1
@@ -183,4 +198,18 @@ events:
     consumers: [notification]
     payload: [userId, localDate, timezone, calories, water]
     implementation_note: "Calories include consumed, goalState, goalId, goalRevision, low, high and cheatDay. Unknown facts use null. Water is unchanged from v1."
+    aggregate_version_required: true
+
+  - type: user.goal_assessment.requested
+    version: 1
+    producer: user
+    consumers: [health]
+    payload: [accountId, attemptId, encryptedPayload]
+    aggregate_version_required: true
+
+  - type: health.goal_assessment.resolved
+    version: 1
+    producer: health
+    consumers: [user]
+    payload: [accountId, attemptId, encryptedPayload]
     aggregate_version_required: true

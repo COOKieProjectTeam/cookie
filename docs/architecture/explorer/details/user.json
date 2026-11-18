@@ -139,7 +139,6 @@
       "title": "Изменить профиль или цель",
       "operationIds": [
         "updateProfile",
-        "setCurrentGoal",
         "setHydrationGoal",
         "setDailyGoalOverride",
         "deleteDailyGoalOverride"
@@ -250,6 +249,47 @@
           }
         }
       ]
+    },
+    {
+      "id": "user-assessment-accept",
+      "title": "Принять оценку",
+      "description": "Запрос возвращает статус попытки после коммита.",
+      "operationIds": [
+        "completeOnboarding",
+        "acceptNutritionAssessment",
+        "getGoalAttempt"
+      ],
+      "nextFlows": [
+        "health-execute"
+      ],
+      "steps": [
+        {
+          "node": "user_db",
+          "label": "Attempt and command",
+          "detail": "User verifies the receipt and commits an encrypted command.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/GoalAttempts.kt",
+            "line": 35
+          }
+        }
+      ]
+    },
+    {
+      "id": "user-assessment-result",
+      "title": "Зафиксировать цель",
+      "description": "User применяет результат и сохраняет неизменяемую версию.",
+      "operationIds": [],
+      "steps": [
+        {
+          "node": "user_db",
+          "label": "Atomic result",
+          "detail": "Result, profile, goals and inbox commit in one transaction.",
+          "source": {
+            "path": "backend/services/user/src/main/kotlin/com/cookie/user/persistence/GoalAttempts.kt",
+            "line": 126
+          }
+        }
+      ]
     }
   ],
   "operationNotes": {
@@ -325,19 +365,6 @@
       ],
       "factIds": [
         "user-versions",
-        "user-jwks",
-        "user-database",
-        "user-idempotency",
-        "user-ingress"
-      ],
-      "route": "Local client → User; production ingress не активирован"
-    },
-    "setCurrentGoal": {
-      "flowId": "user-write",
-      "notes": [
-        "Owner is verified JWT sub. Automatic onboarding remains a Health dependency."
-      ],
-      "factIds": [
         "user-jwks",
         "user-database",
         "user-idempotency",

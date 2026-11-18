@@ -117,10 +117,10 @@ class UserRuntimeIntegrationTest {
         assertThat(mapper.readTree(send("GET","/v1/me/profile",token(b)).body()).path("locale").stringValue()).isEqualTo("ru")
         assertThat(send("PATCH","/v1/me/profile",jwt,change,UUID.randomUUID()).statusCode()).isEqualTo(409)
         val goal="""{"calories":2100,"proteinG":100,"fatG":70,"carbsG":230,"fiberG":25}"""
-        val result=send("PUT","/v1/me/goals/current",jwt,goal,UUID.randomUUID())
-        assertThat(result.statusCode()).withFailMessage(result.body()).isEqualTo(200)
-        assertThat(send("GET","/v1/me/goals/current",token(b)).statusCode()).isEqualTo(404)
-        assertThat(send("PUT","/v1/me/goals/current",jwt,goal).statusCode()).isEqualTo(400)
+        assertThat(send("PUT","/v1/me/goals/current",jwt,goal,UUID.randomUUID()).statusCode()).isEqualTo(405)
+        val current=send("GET","/v1/me/goals/current",token(b))
+        assertThat(current.statusCode()).isEqualTo(200)
+        assertThat(mapper.readTree(current.body()).path("outcome").asString()).isEqualTo("NO_CALORIE_GOAL")
         Nats.connect("nats://${nats.host}:${nats.getMappedPort(4222)}").use { connection ->
             val config=ConsumerConfiguration.builder().durable("user-test-observer").ackPolicy(AckPolicy.Explicit)
                 .filterSubject("cookie.events.user.profile.updated.v1").build()
@@ -137,21 +137,11 @@ class UserRuntimeIntegrationTest {
             assertThat(event.path("payload").properties().map { it.key }).containsExactlyInAnyOrder("userId","changedFields","timezone","locale","onboardingCompleted")
         }
     }
-    @Test fun `review regression contract accepts exact cents with redundant trailing zeros`() {
+    @Test fun `cheat day rejects numerical overrides`() {
         val jwt=token(id())
-        val response=send("PUT","/v1/me/goals/current",jwt,
-            """{"calories":2000.000,"proteinG":100.000,"fatG":70.000,"carbsG":230.000,"fiberG":25.000,"targetWeightKg":75.000,"targetWeightChangeKgPerWeek":-0.500}""",UUID.randomUUID())
-        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200)
-    }
-    @Test fun `review regression equivalent numeric representations replay original command`() {
-        val jwt=token(id());val commandId=UUID.randomUUID()
-        val first=send("PUT","/v1/me/goals/current",jwt,
-            """{"calories":2000,"proteinG":100,"fatG":70,"carbsG":230,"fiberG":25}""",commandId)
-        assertThat(first.statusCode()).withFailMessage(first.body()).isEqualTo(200)
-        val replay=send("PUT","/v1/me/goals/current",jwt,
-            """{"calories":2000.00,"proteinG":100.00,"fatG":70.00,"carbsG":230.00,"fiberG":25.00}""",commandId)
-        assertThat(replay.statusCode()).withFailMessage(replay.body()).isEqualTo(200)
-        assertThat(replay.body()).isEqualTo(first.body())
+        val response=send("PUT","/v1/me/goals/overrides/2026-10-23",jwt,
+            """{"type":"CHEAT_DAY","unlimitedCalories":true,"calories":2000}""",UUID.randomUUID())
+        assertThat(response.statusCode()).isEqualTo(400)
     }
     @Test fun `consumer recovers from replaced connection and invalid event quarantine does not block healthy event`() {
         val before=jdbc.queryForObject("SELECT count(*) FROM message_quarantine",Long::class.java)!!

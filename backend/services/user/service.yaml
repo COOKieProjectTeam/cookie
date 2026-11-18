@@ -8,15 +8,19 @@ public_openapi:
 runtime_openapi: contracts/openapi/runtime.yaml
 messaging:
   publishes:
+    - type: user.goal_assessment.requested
+      version: 1
     - type: user.profile.updated
       version: 1
     - type: user.goal.changed
-      version: 1
+      version: 2
     - type: user.goal_override.changed
-      version: 1
+      version: 2
     - type: user.hydration_goal.changed
       version: 1
   consumes:
+    - type: health.goal_assessment.resolved
+      version: 1
     - type: account.activated
       version: 1
     - type: account.deletion.requested
@@ -30,6 +34,7 @@ ci: {
   "check": "user",
   "image": null,
   "runtime_inputs": [
+    "backend/contracts/health-assessment/**",
     "backend/platform/starter-web/**",
     "backend/platform/starter-postgres/**",
     "backend/platform/starter-messaging/**",

@@ -4,6 +4,7 @@ import com.cookie.platform.messaging.DevelopmentJetStreamTopology
 import com.cookie.platform.messaging.NatsConnectionLifecycle
 import com.cookie.platform.messaging.NatsConnectionSettings
 import com.cookie.user.config.UserProperties
+import com.cookie.user.persistence.GoalAttempts
 import com.cookie.user.persistence.LifecycleEvents
 import io.nats.client.Connection
 import jakarta.annotation.PreDestroy
@@ -25,8 +26,8 @@ class UserBroker(properties: UserProperties, environment: Environment) {
     private val lifecycle = NatsConnectionLifecycle(
         options = { settings.options("cookie-user", "_INBOX.cookie.user") },
         initialize = { connection ->
-            if (local) DevelopmentJetStreamTopology.ensure(connection, STREAM, LifecycleEvents.CONSUMER,
-                LifecycleEvents.TYPES.map { "cookie.events.$it.v1" })
+            if (local && properties.provisionLocalBroker) DevelopmentJetStreamTopology.ensure(connection, STREAM, LifecycleEvents.CONSUMER,
+                LifecycleEvents.TYPES.map { "cookie.events.$it.v1" } + GoalAttempts.SUBJECT)
         },
     )
 

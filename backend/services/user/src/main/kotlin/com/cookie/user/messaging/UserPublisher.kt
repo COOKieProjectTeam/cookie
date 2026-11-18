@@ -51,7 +51,7 @@ class UserPublisher(private val broker:UserBroker,private val store:JdbcUserStor
             UPDATE outbox_events o SET claim_id=?,claimed_until=now()+interval '30 seconds',attempt_count=attempt_count+1
             FROM pending p WHERE o.event_id=p.event_id RETURNING o.*""",{ r,_ ->
                 val id=r.getObject("event_id",UUID::class.java)
-                Claimed(id,token,EventEnvelope(id,r.getString("event_type"),1,r.getTimestamp("occurred_at").toInstant(),"user","user",
+                Claimed(id,token,EventEnvelope(id,r.getString("event_type"),r.getInt("event_version"),r.getTimestamp("occurred_at").toInstant(),"user","user",
                     r.getObject("user_id",UUID::class.java).toString(),store.mapper.readTree(r.getString("payload")),r.getLong("aggregate_version")),r.getInt("attempt_count"))
             },token).singleOrNull()
     }

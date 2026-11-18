@@ -1,7 +1,5 @@
 package com.cookie.user
 
-import com.cookie.user.domain.Nutrients
-import com.cookie.user.domain.NutritionGoalCommand
 import com.cookie.user.domain.ProfileChange
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -53,22 +51,12 @@ class UserContractTest {
         }
     }
 
-    @Test fun `goal weight schemas enforce domain boundaries and exact cents`() {
-        val nutrients = Nutrients(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO)
-        val cases = mapOf(
-            "targetWeightKg" to listOf("0.99", "1", "75.000", "75.001", "999.99", "1000"),
-            "targetWeightChangeKgPerWeek" to listOf("-100", "-99.99", "-0.500", "0", "0.001", "99.99", "100"),
-        )
-        for ((field, values) in cases) for (text in values) {
-            val value = BigDecimal(text)
-            val command = if (field == "targetWeightKg") NutritionGoalCommand(nutrients, targetWeightKg = value)
-                else NutritionGoalCommand(nutrients, targetWeightChangeKgPerWeek = value)
-            val domainAccepts = runCatching { command.validate() }.isSuccess
-            for (schema in listOf("NutritionGoalInput", "NutritionGoal")) {
-                assertThat(acceptsNumber(property(schema, field), value))
-                    .describedAs("%s.%s accepts %s", schema, field, text).isEqualTo(domainAccepts)
-            }
-        }
+    @Test fun `calorie goals require acceptance and cheat day accepts no numbers`() {
+        val paths = contract.getValue("paths") as Map<*, *>
+        assertThat((paths["/me/goals/current"] as Map<*, *>).keys).doesNotContain("put")
+        assertThat((paths["/me/goals/acceptances"] as Map<*, *>).keys).contains("post")
+        assertThat(property("DailyGoalOverrideInput", "type")["enum"]).isEqualTo(listOf("CHEAT_DAY"))
+        assertThat(property("HealthAssessmentInput", "currentWeightKg")["multipleOf"].toString()).isEqualTo("0.01")
     }
 
     // Evaluate only the numeric keywords under test; full OpenAPI validation runs in check.

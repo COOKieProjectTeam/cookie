@@ -107,8 +107,6 @@ services:
     stateful: true
     purpose: profile, onboarding state, persisted nutrition and hydration goals, allergies, diet and goal overrides
     synchronous_dependencies: [identity]
-    planned_dependencies: [health]
-    implementation_note: automatic onboarding awaits Health-owned nutrition assessment and idempotent initial weight recording
     openapi_tags: [profile]
     dbml: contracts/dbml/user.dbml
     publishes:
@@ -116,7 +114,8 @@ services:
       - user.goal.changed
       - user.goal_override.changed
       - user.hydration_goal.changed
-    consumes: [account.activated, account.deletion.requested]
+      - user.goal_assessment.requested
+    consumes: [account.activated, account.deletion.requested, health.goal_assessment.resolved]
 
   - id: food_catalog
     name: Food Catalog Service
@@ -185,11 +184,13 @@ services:
     stateful: true
     purpose: domain activity and weight data synchronized from platform health providers and calculation of suggested nutrition/hydration targets; never operational probes
     openapi_tags: [health]
+    synchronous_dependencies: [identity]
     dbml: contracts/dbml/health.dbml
     publishes:
       - health.activity.changed
       - health.weight.changed
-    consumes: [account.deletion.requested]
+      - health.goal_assessment.resolved
+    consumes: [account.deletion.requested, user.goal_assessment.requested]
     external_dependencies: [apple_healthkit, android_health_connect]
 
   - id: progress

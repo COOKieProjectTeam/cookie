@@ -33,9 +33,9 @@ ADR 0003–0015, имеют приоритет над более старым с
 9. `observability.md` — правила наблюдаемости.
 10. `notification.md` — reminder rules, contracts and delivery guarantees.
 11. `service-platform.md` — стандартная оболочка и lifecycle Kotlin-сервиса.
-12. `../adr/0015-user-service.md` — User ownership and planned Health calculation.
+12. `../adr/0016-health-data-service.md` — Health assessment, ordered import and asynchronous goal acceptance.
 13. `miro-snapshot.md` — происхождение модели и найденные расхождения.
-13. `../adr/` — причины принятых решений.
+14. `../adr/` — причины принятых решений.
 
 ## Non-negotiable invariants
 

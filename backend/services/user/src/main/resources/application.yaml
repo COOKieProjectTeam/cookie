@@ -31,8 +31,12 @@ cookie:
     jwks-url: ${COOKIE_IDENTITY_JWKS_URL:https://api.cookie.app/v1/auth/jwks}
     issuer: ${COOKIE_IDENTITY_ISSUER:https://api.cookie.app}
     audience: ${COOKIE_IDENTITY_AUDIENCE:cookie-api}
+    provision-local-broker: ${COOKIE_NATS_PROVISION_LOCAL:true}
     nats-url: ${COOKIE_NATS_URL:nats://localhost:4222}
     nats-credentials-path: ${COOKIE_NATS_CREDENTIALS_PATH:}
     nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
     nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
     messaging-enabled: ${COOKIE_USER_MESSAGING_ENABLED:true}
+    health-receipt-keys: ${COOKIE_HEALTH_RECEIPT_VERIFICATION_KEYS:}
+    health-encryption-keys: ${COOKIE_HEALTH_ASSESSMENT_ENCRYPTION_KEYS:}
+    assessment-decryption-keys: ${COOKIE_USER_ASSESSMENT_DECRYPTION_KEYS:}

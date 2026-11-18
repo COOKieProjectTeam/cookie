@@ -18,7 +18,7 @@
   let state = {view:"map", item:"notification", service:"", planned:false, direction:"all", flow:"", query:"", response:"", step:-1, zoom:1};
   let toastTimer;
   let filterFocus = "";
-  const titles = {mobile_client:"Мобильный клиент",gateway:"API Gateway",identity:"Identity",notification:"Notification",user:"User",user_db:"User DB",identity_db:"Identity DB",nutrition:"Nutrition",nutrition_db:"Nutrition DB",nutrition_client:"HTTP клиент",nutrition_jwks:"Public JWKS файл",notification_db:"Notification DB",nats:"NATS JetStream",redis:"Redis",smtp:"SMTP",apns:"APNs",fcm:"FCM",object_storage:"Object storage",infrastructure:"Инфраструктура"};
+  const titles = {mobile_client:"Мобильный клиент",gateway:"API Gateway",identity:"Identity",notification:"Notification",user:"User",user_db:"User DB",health:"Health",health_db:"Health DB",health_gateway:"Локальный Caddy",identity_db:"Identity DB",nutrition:"Nutrition",nutrition_db:"Nutrition DB",nutrition_client:"HTTP клиент",nutrition_jwks:"Public JWKS файл",notification_db:"Notification DB",nats:"NATS JetStream",redis:"Redis",smtp:"SMTP",apns:"APNs",fcm:"FCM",object_storage:"Object storage",infrastructure:"Инфраструктура"};
   function title(id) { return titles[id] || serviceById.get(id)?.name?.replace(/ Service$/, "") || asArray(D.externalSystems).find(e => e.id === id)?.name || id; }
   function serviceMark(id) { return `<span class="service-dot ${esc(id)}"></span>${esc(title(id))}`; }
   function statusPill(status) { return `<span class="pill ${esc(status)}">${status === "implemented" ? "Реализовано" : "План"}</span>`; }
@@ -108,6 +108,9 @@
   }
   const baseNodes = [
     {id:"user",x:276,y:582,w:182,sub:"Local :8083 · без deploy",kind:"service"},
+    {id:"health_gateway",x:18,y:841,w:176,sub:"Только локально · :8085",kind:"gateway"},
+    {id:"health",x:278,y:880,w:180,sub:"Kotlin · assessment / import",kind:"service"},
+    {id:"health_db",x:766,y:930,w:188,sub:"PostgreSQL · weight / inbox",kind:"store"},
     {id:"user_db",x:516,y:582,w:188,sub:"PostgreSQL · goals / inbox",kind:"store"},
     {id:"mobile_client",x:18,y:80,w:176,sub:"KMP · публичный HTTP",kind:"client"},
     {id:"gateway",x:18,y:258,w:176,sub:"Yandex API Gateway",kind:"infra"},
@@ -126,6 +129,9 @@
     {id:"apns",x:1047,y:333,w:165,sub:"iOS · через Firebase",kind:"external"}
   ];
   const baseEdges = [
+    {id:"local-health",from:"health_gateway",to:"health",kind:"http",label:"/v1/health/*",path:"M194 878H247V915H278",lx:200,ly:867},
+    {id:"health-publish",from:"health",to:"nats",kind:"event",label:"Health events",path:"M458 894H740V494H700",lx:744,ly:748},
+    {id:"health-db",from:"health",to:"health_db",kind:"store",label:"Weight / outbox / inbox",path:"M458 912H743V967H766",lx:650,ly:904},
     {id:"user-db",from:"user",to:"user_db",kind:"store",label:"state + outbox / inbox",path:"M458 619H516",lx:465,ly:674},
     {id:"user-jwks",from:"user",to:"identity",kind:"http",label:"JWKS",path:"M276 605H247V214H276",lx:207,ly:530},
     {id:"user-publish",from:"user",to:"nats",kind:"event",label:"User events",path:"M415 582V540H610V494",lx:438,ly:529},

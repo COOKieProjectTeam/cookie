@@ -113,3 +113,40 @@ erDiagram
     bigint stream_sequence
   }
   Profiles ||--o{ UserCommands : "user_id cascade"
+
+  UserLegacyActivity {
+    uuid user_id PK
+    text activity_level
+  }
+
+  UserGoalAttempts {
+    uuid id PK
+    uuid user_id
+    text purpose
+    uuid receipt_id
+    text intent_hash
+    text result_hash
+    timestamptz accepted_at
+    date effective_from
+    text status
+    text encrypted_command
+    text encrypted_input
+    jsonb response
+    timestamptz next_retry_at
+  }
+
+  UserAcceptedGoals {
+    uuid id PK
+    uuid user_id
+    uuid attempt_id
+    bigint revision
+    date effective_from
+    timestamptz accepted_at
+    text policy_version
+    text outcome
+    text reason
+    integer calorie_low
+    integer calorie_center
+    integer calorie_high
+    jsonb goal
+  }

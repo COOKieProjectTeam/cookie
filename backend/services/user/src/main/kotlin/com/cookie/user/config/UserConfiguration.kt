@@ -23,11 +23,15 @@ class UserProperties {
     var jwksUrl="https://api.cookie.app/v1/auth/jwks"
     var issuer="https://api.cookie.app"
     var audience="cookie-api"
+    var provisionLocalBroker = true
     var natsUrl="nats://localhost:4222"
     var natsCredentialsPath=""
     var natsTruststorePath=""
     var natsTruststorePassword=""
     var messagingEnabled=true
+    var healthReceiptKeys = ""
+    var healthEncryptionKeys = ""
+    var assessmentDecryptionKeys = ""
 }
 @Configuration
 @EnableScheduling

@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: health
+  datasource:
+    url: ${COOKIE_HEALTH_DATABASE_URL}
+    username: ${COOKIE_HEALTH_DATABASE_USER}
+    password: ${COOKIE_HEALTH_DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 12
+      connection-timeout: 2000
+      validation-timeout: 1000
+      data-source-properties:
+        options: "-c statement_timeout=5000 -c lock_timeout=2000"
+        socketTimeout: 10
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  flyway:
+    enabled: false
+  task:
+    scheduling:
+      pool:
+        size: 3
+server:
+  port: ${PORT:8084}
+  forward-headers-strategy: none
+management:
+  endpoints:
+    web:
+      exposure:
+        exclude: "*"
+cookie:
+  health:
+    jwks-url: ${COOKIE_IDENTITY_JWKS_URL:https://api.cookie.app/v1/auth/jwks}
+    issuer: ${COOKIE_IDENTITY_ISSUER:https://api.cookie.app}
+    audience: ${COOKIE_IDENTITY_AUDIENCE:cookie-api}
+    provision-local-broker: ${COOKIE_NATS_PROVISION_LOCAL:true}
+    nats-url: ${COOKIE_NATS_URL:nats://localhost:4222}
+    nats-credentials-path: ${COOKIE_NATS_CREDENTIALS_PATH:}
+    nats-truststore-path: ${COOKIE_NATS_TRUSTSTORE_PATH:}
+    nats-truststore-password: ${COOKIE_NATS_TRUSTSTORE_PASSWORD:}
+    messaging-enabled: ${COOKIE_HEALTH_MESSAGING_ENABLED:true}
+    receipt-key-path: ${COOKIE_HEALTH_RECEIPT_KEY_PATH:}
+    receipt-verification-keys: ${COOKIE_HEALTH_RECEIPT_VERIFICATION_KEYS:}
+    assessment-decryption-keys: ${COOKIE_HEALTH_ASSESSMENT_DECRYPTION_KEYS:}
+    user-encryption-keys: ${COOKIE_USER_ASSESSMENT_ENCRYPTION_KEYS:}

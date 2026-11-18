@@ -582,16 +582,27 @@ test("Nutrition operation limits come from its own runtime, never Notification o
 });
 
 test("event versions have distinct links and preserve historical subjects", () => {
-  const ui = harness(undefined, "#events?plan=1&service=nutrition");
-  const v1 = "cookie.events.nutrition.day.changed.v1";
-  const v2 = "cookie.events.nutrition.day.changed.v2";
+  const ui = harness(undefined, "#events?plan=1&service=user");
+  const v1 = "cookie.events.user.goal.changed.v1";
+  const v2 = "cookie.events.user.goal.changed.v2";
   assert.ok(catalogIds(ui).includes(v1));
   assert.ok(catalogIds(ui).includes(v2));
-  ui.navigate(`#events?plan=1&service=nutrition&item=${encodeURIComponent(v1)}`);
+  ui.navigate(`#events?plan=1&service=user&item=${encodeURIComponent(v1)}`);
   assert.match(visibleText(detailMarkup(ui)), /Event version 1/);
   ui.togglePlan(false);
   assert.ok(!catalogIds(ui).includes(v1));
   assert.ok(catalogIds(ui).includes(v2));
-  ui.navigate("#events?service=nutrition&item=nutrition.day.changed");
+  ui.navigate("#events?service=user&item=user.goal.changed");
   assert.match(visibleText(detailMarkup(ui)), /Event version 2/);
+});
+
+test("Health preview and account-scoped import link to owned flows", () => {
+  const ui = harness();
+  const health = ui.data.details.find(entry => entry.serviceId === "health");
+  for (const id of ["calculateNutritionAssessment","importHealthBatch","health:getLiveness","health:getReadiness"]) {
+    const flow = health.flows.find(item => item.id === health.operationNotes[id].flowId);
+    assert.ok(flow.operationIds.includes(id));
+    ui.navigate(`#map?flow=${flow.id}`);
+    assert.match(ui.markup(), /data-node="health"/);
+  }
 });
