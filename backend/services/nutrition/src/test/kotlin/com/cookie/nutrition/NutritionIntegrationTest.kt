@@ -130,7 +130,8 @@ class NutritionIntegrationTest {
     private fun assertNotificationContract(e: JsonNode) {
         UUID.fromString(e.path("event_id").stringValue());Instant.parse(e.path("occurred_at").stringValue())
         assertThat(e.path("producer").stringValue()).isEqualTo("nutrition")
-        assertThat(e.path("event_version").intValue()).isEqualTo(1)
+        val expectedWireVersion = if (e.path("event_type").asString()=="nutrition.day.changed") 2 else 1
+        assertThat(e.path("event_version").intValue()).isEqualTo(expectedWireVersion)
         assertThat(e.path("aggregate_version").longValue()).isPositive()
         val p=e.path("payload");UUID.fromString(p.path("userId").stringValue())
         when(e.path("event_type").stringValue()) {
@@ -325,6 +326,25 @@ class NutritionIntegrationTest {
         assertThat(count(u,"meals")).isEqualTo(1);assertThat(count(u,"outbox_events")).isEqualTo(2)
         assertThat(http(u,"POST","/v1/diary/meals",raw=meal().toString().replace("\"value\":150","\"value\":1000000")).statusCode()).isEqualTo(201)
     }
+    @Test fun equivalentEuUsLabelsAndUnknownFiber() {
+        fun create(label: String): JsonNode {
+            val account = user()
+            val input = meal().toString().replace(""" "proteinG":10 """.trim(), label)
+                .replace(""" "value":150 """.trim(), """ "value":100 """.trim())
+            val result = http(account,"POST","/v1/diary/meals",raw=input)
+            assertThat(result.statusCode()).withFailMessage(result.body()).isEqualTo(201)
+            val day = events(account).single { it.path("event_type").asString()=="nutrition.day.changed" }
+            assertThat(day.path("event_version").asInt()).isEqualTo(2)
+            return json(result.body()).path("dayTotals")
+        }
+        val european = create(""" "proteinG":10,"carbsG":12,"fiberG":5 """.trim())
+        val american = create(""" "proteinG":10,"totalCarbohydrateG":17,"fiberG":5 """.trim())
+        assertThat(european.path("carbsG").asString()).isEqualTo("12.000")
+        assertThat(american.path("carbsG")).isEqualTo(european.path("carbsG"))
+        assertThat(american.path("fiberG")).isEqualTo(european.path("fiberG"))
+        assertThat(create(""" "proteinG":10,"totalCarbohydrateG":17 """.trim()).path("carbsG").isNull).isTrue()
+    }
+
     @Test fun `large exact totals agree in SQL event bytes and HTTP decimal strings`() {
         val u=user()
         val item="""{"source":{"type":"MANUAL"},"name":"x","baseUnit":"G","amount":{"value":1000000,"unit":"G"},"nutritionPer100":{"calories":1000000}}"""
@@ -348,7 +368,7 @@ class NutritionIntegrationTest {
         val roundTrip=clientJson.encodeToString(com.cookie.mobile.generated.model.MealCreatedResponse.serializer(),generated)
         assertThat(json(roundTrip).path("dayTotals").path("calories").stringValue()).isEqualTo(exact)
         outbox.publishAvailable()
-        val published=natsConnection.connected().jetStreamManagement().getLastMessage("COOKIE_EVENTS","cookie.events.nutrition.day.changed.v1")
+        val published=natsConnection.connected().jetStreamManagement().getLastMessage("COOKIE_EVENTS","cookie.events.nutrition.day.changed.v2")
         assertThat(json(String(requireNotNull(published.data))).path("payload").path("nutritionTotals").path("calories").decimalValue()).isEqualByComparingTo(exact)
         assertThat(json(http(u,"GET","/v1/diary/days/2026-10-21").body()).path("total").path("calories").stringValue()).isEqualTo(exact)
     }

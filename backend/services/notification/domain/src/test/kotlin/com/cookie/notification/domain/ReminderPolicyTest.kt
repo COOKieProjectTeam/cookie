@@ -29,10 +29,10 @@ class ReminderPolicyTest {
         assertThat(ReminderPolicy.caloriesUnderTarget(null,BigDecimal(2000),false)).isFalse()
         assertThat(ReminderPolicy.caloriesUnderTarget(BigDecimal.ZERO,BigDecimal.ZERO,false)).isFalse()
         assertThat(ReminderPolicy.caloriesExceeded(BigDecimal(2001),BigDecimal(2000),true)).isFalse()
-        assertThat(ReminderPolicy.caloriesExceeded(BigDecimal(2000),BigDecimal(2000),false)).isFalse()
-        assertThat(ReminderPolicy.caloriesExceeded(BigDecimal(2001),BigDecimal(2000),false)).isTrue()
-        assertThat(ReminderPolicy.caloriesUnderTarget(BigDecimal(1600),BigDecimal(2000),false)).isFalse()
-        assertThat(ReminderPolicy.caloriesUnderTarget(BigDecimal(1599),BigDecimal(2000),false)).isTrue()
+        assertThat(ReminderPolicy.caloriesExceeded(BigDecimal(2400),BigDecimal(2400),false)).isFalse()
+        assertThat(ReminderPolicy.caloriesExceeded(BigDecimal(2401),BigDecimal(2400),false)).isTrue()
+        assertThat(ReminderPolicy.caloriesUnderTarget(BigDecimal(2200),BigDecimal(2200),false)).isFalse()
+        assertThat(ReminderPolicy.caloriesUnderTarget(BigDecimal(2199),BigDecimal(2200),false)).isTrue()
     }
     @Test fun `timezone is explicit and first configuration starts schedule once`() {
         val now=Instant.parse("2026-01-01T10:00:00Z")

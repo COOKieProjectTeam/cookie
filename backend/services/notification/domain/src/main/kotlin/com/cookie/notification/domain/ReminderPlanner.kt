@@ -13,10 +13,11 @@ data class ProgressSnapshot(
     val localDate: LocalDate,
     val timezone: String,
     val caloriesConsumed: BigDecimal?,
-    val calorieTarget: BigDecimal?,
+    val calorieHigh: BigDecimal?,
     val unlimitedCalories: Boolean?,
     val waterConsumedMl: Int?,
     val waterTargetMl: Int?,
+    val calorieLow: BigDecimal? = null,
 )
 
 data class OccurrenceKey(val kind: ReminderKind, val cycle: String)
@@ -175,8 +176,8 @@ object ReminderPlanner {
         ReminderPolicy.waterGoalReached(progress?.waterConsumedMl, progress?.waterTargetMl)
 
     private fun exceeded(progress: ProgressSnapshot?): Boolean =
-        ReminderPolicy.caloriesExceeded(progress?.caloriesConsumed, progress?.calorieTarget, progress?.unlimitedCalories)
+        ReminderPolicy.caloriesExceeded(progress?.caloriesConsumed, progress?.calorieHigh, progress?.unlimitedCalories)
 
     private fun underTarget(progress: ProgressSnapshot?): Boolean =
-        ReminderPolicy.caloriesUnderTarget(progress?.caloriesConsumed, progress?.calorieTarget, progress?.unlimitedCalories)
+        ReminderPolicy.caloriesUnderTarget(progress?.caloriesConsumed, progress?.calorieLow, progress?.unlimitedCalories)
 }

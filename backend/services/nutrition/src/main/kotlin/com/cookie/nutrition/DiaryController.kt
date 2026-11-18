@@ -21,7 +21,8 @@ class DiaryController(private val service: NutritionService, private val request
         if(node.isObject) {
             val result=node.deepCopy() as tools.jackson.databind.node.ObjectNode
             node.properties().forEach { (key,value) ->
-                if(key in service.snapshots.nutrients && value.isNumber)
+                if(key == "canonicalCarbs") result.remove(key)
+                else if(key in service.snapshots.nutrients && value.isNumber)
                     result.put(key,value.decimalValue().toPlainString())
                 else result.set(key,publicBody(value))
             }

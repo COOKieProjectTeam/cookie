@@ -29,6 +29,8 @@ messaging:
       version: 1
     - type: progress.day.updated
       version: 1
+    - type: progress.day.updated
+      version: 2
 synchronous_dependencies: [identity]
 infrastructure_dependencies: [postgresql, nats_jetstream, redis, notification_decryption_key, identity_jwks]
 probes:

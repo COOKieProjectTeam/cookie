@@ -235,7 +235,7 @@
       ${service?.status==="planned"?'<div class="callout warning">Активного service descriptor нет. Контракты roadmap не считаются работающим API.</div>':""}
       ${D.calls.some(c=>c.caller===id)?`<section class="inspector-section"><h3>Синхронные зависимости</h3>${D.calls.filter(c=>c.caller===id).map(c=>`<div class="fact"><strong>${esc(title(c.callee))}</strong> ${statusPill(c.status)}<p class="fact-description">${esc(c.purpose)}</p>${sourceLink(c.source)}</div>`).join("")}</section>`:""}
       ${service?.status==="implemented"?'<section class="inspector-section"><h3>Слои сервиса</h3><p class="muted">Generated OpenAPI transport → handwritten обработчики → принадлежащая сервису бизнес-логика → JDBC / инфраструктурные адаптеры. Конкретные transaction boundaries и зависимости показаны в сценариях и исходниках.</p></section>':""}
-      ${events.length?`<section class="inspector-section"><h3>События</h3>${events.map(e=>linkButton("events",e.type,`<span>${e.producer===id?"↗":"↙"}</span><code>${esc(e.type)}</code>`,"mini-link",{service:""})).join("")}</section>`:""}
+      ${events.length?`<section class="inspector-section"><h3>События</h3>${events.map(e=>linkButton("events",eventKey(e),`<span>${e.producer===id?"↗":"↙"}</span><code>${esc(e.type)}</code>`,"mini-link",{service:""})).join("")}</section>`:""}
       ${relevantFacts.length?`<section class="inspector-section compact-facts"><h3>Параметры</h3>${relevantFacts.map(factMarkup).join("")}${linkButton("facts","","Все таймауты и правила","mini-link",{service:service?owner:""})}</section>`:""}
       ${service?.dbml?`<section class="inspector-section">${sourceLink({path:service.dbml,line:1},"Схема данных · DBML")}</section>`:""}`;
   }
@@ -243,7 +243,7 @@
     const eventEdge=edge.kind==="event";
     const relevantEvents = D.events.filter(e=>(state.planned||e.status==="implemented")&&(edge.to==="nats" ? e.producer===edge.from : asArray(e.consumers).includes(edge.to)));
     return `<div class="eyeline"><span class="pill">${eventEdge?"JetStream":edge.kind==="store"?"Хранилище":edge.kind==="planned"?"Целевая связь":"Синхронный вызов"}</span></div><h2>${esc(title(edge.from))} → ${esc(title(edge.to))}</h2><p class="muted">${esc(edge.label)}</p>
-      ${eventEdge?`<div class="callout">At-least-once. Дубли допустимы; порядок не гарантирован. Потребитель фиксирует inbox и изменения в одной транзакции до ACK; invalid envelope следует отдельной durable rejection policy.</div><h3>Точные subjects</h3>${relevantEvents.map(e=>linkButton("events",e.type,`<code>${esc(e.subject)}</code>`,"mini-link",{service:""})).join("")}`:
+      ${eventEdge?`<div class="callout">At-least-once. Дубли допустимы; порядок не гарантирован. Потребитель фиксирует inbox и изменения в одной транзакции до ACK; invalid envelope следует отдельной durable rejection policy.</div><h3>Точные subjects</h3>${relevantEvents.map(e=>linkButton("events",eventKey(e),`<code>${esc(e.subject)}</code>`,"mini-link",{service:""})).join("")}`:
       edge.id==="notification-jwks"?`<div class="callout">Публичное получение ключей с фиксированного origin. Это не вызов доменного internal API.</div>${linkButton("api","getIdentityJwks","Открыть JWKS-контракт")}`:
       (edge.from==="gateway"||edge.id==="local-nutrition")?publicOps.filter(o=>o.service===edge.to).map(o=>linkButton("api",o.id,`${methodPill(o.method)}<code>${esc(o.path)}</code>`,"mini-link",{service:""})).join(""):
       edge.kind==="planned"?'<div class="callout warning">Разрешённая целевая зависимость. Реализация вызова, активный internal contract и его таймауты ещё не определены.</div>':
@@ -369,11 +369,18 @@
     if(!service)return true;
     return (direction!=="consumed"&&e.producer===service)||(direction!=="published"&&asArray(e.consumers).includes(service));
   }
+  function eventKey(e) {
+    return D.events.filter(candidate=>candidate.type===e.type).length>1 ? e.subject : e.type;
+  }
+  function eventForKey(events,key) {
+    return events.find(e=>eventKey(e)===key) ||
+      events.filter(e=>e.type===key).sort((a,b)=>b.version-a.version)[0];
+  }
   function eventMatches(e) { return (state.planned||e.status==="implemented")&&eventInvolves(e,state.service,state.direction); }
   function renderEvents() {
     const available=D.events.filter(e=>state.planned||e.status==="implemented");
-    const events=available.filter(eventMatches),selected=events.find(e=>e.type===state.item)||events[0];
-    const groups=catalogGroups(events,e=>e.producer,group=>group.map(e=>`<a href="${esc(hashFor("events",e.type))}" class="catalog-item ${selected?.type===e.type?"selected":""}" ${selected?.type===e.type?'aria-current="true"':""}><code class="item-title">${esc(e.type)}</code><span class="item-description">Получают: ${asArray(e.consumers).map(c=>esc(title(c))+(asArray(e.implementedConsumers).includes(c)?"":" (план)")).join(", ")||"не указаны"}</span><div class="eyeline" style="margin:10px 0 0">${statusPill(e.status)}<span>v${esc(e.version)}</span></div></a>`).join(""),"Публикует ");
+    const events=available.filter(eventMatches),selected=eventForKey(events,state.item)||events[0];
+    const groups=catalogGroups(events,e=>e.producer,group=>group.map(e=>`<a href="${esc(hashFor("events",eventKey(e)))}" class="catalog-item ${selected===e?"selected":""}" ${selected===e?'aria-current="true"':""}><code class="item-title">${esc(e.type)}</code><span class="item-description">Получают: ${asArray(e.consumers).map(c=>esc(title(c))+(asArray(e.implementedConsumers).includes(c)?"":" (план)")).join(", ")||"не указаны"}</span><div class="eyeline" style="margin:10px 0 0">${statusPill(e.status)}<span>v${esc(e.version)}</span></div></a>`).join(""),"Публикует ");
     $("main").innerHTML=heading("События","Точные JetStream subjects, producer, consumers и payload. Событие из модели отдельно от наличия работающего producer.")+
       catalogFilters(available,e=>[e.producer,...asArray(e.consumers)],"Фильтр учитывает публикацию и подписки. Список сгруппирован по сервису, который публикует событие.",(e,id)=>eventInvolves(e,id,state.direction))+
       (state.service?`<div class="event-direction" role="group" aria-label="Направление событий"><span class="filter-label">${esc(title(state.service))}</span>${[["all","Все связи"],["published","Публикует"],["consumed","Получает"]].map(([id,label])=>`<button type="button" class="filter-chip ${state.direction===id?"active":""}" data-action="event-direction" data-direction="${id}" aria-pressed="${state.direction===id}">${label}<span class="filter-count">${available.filter(e=>eventInvolves(e,state.service,id)).length}</span></button>`).join("")}</div>`:"")+
@@ -407,7 +414,7 @@
     const contains=obj=>JSON.stringify(obj).toLocaleLowerCase("ru").includes(q);
     const groups=[
       {label:"HTTP-запросы",view:"api",items:D.operations.filter(o=>matchesService(o.service)&&contains(o)).map(o=>({id:o.id,title:o.method.toUpperCase()+" "+o.path,description:o.summary}))},
-      {label:"События",view:"events",items:D.events.filter(e=>eventMatches(e)&&contains(e)).map(e=>({id:e.type,title:e.subject,description:title(e.producer)+" → "+e.consumers.map(title).join(", ")}))},
+      {label:"События",view:"events",items:D.events.filter(e=>eventMatches(e)&&contains(e)).map(e=>({id:eventKey(e),title:e.subject,description:title(e.producer)+" → "+e.consumers.map(title).join(", ")}))},
       {label:"Сценарии",view:"flows",items:flows.filter(f=>matchesService(f.service)&&contains(f)).map(f=>({id:f.id,title:f.title,description:f.description}))},
       {label:"Параметры",view:"facts",items:facts.filter(f=>matchesService(f.service)&&contains(f)).map(f=>({id:f.id,title:f.label,description:text(f.value)}))}
     ];
@@ -485,7 +492,7 @@
   });
   $("source-dialog").addEventListener("click",event=>{if(event.target===$("source-dialog"))$("source-dialog").close();});
   $("search").addEventListener("input",event=>{state.query=event.target.value.trim();render();});
-  $("show-planned").addEventListener("change",event=>{const item=!event.target.checked&&state.view==="events"&&D.events.find(e=>e.type===state.item)?.status!=="implemented"?"":state.item;go(state.view,item,{plan:event.target.checked?"1":"",flow:state.flow,service:!event.target.checked&&serviceById.get(state.service)?.status==="planned"?"":state.service});});
+  $("show-planned").addEventListener("change",event=>{const item=!event.target.checked&&state.view==="events"&&eventForKey(D.events,state.item)?.status!=="implemented"?"":state.item;go(state.view,item,{plan:event.target.checked?"1":"",flow:state.flow,service:!event.target.checked&&serviceById.get(state.service)?.status==="planned"?"":state.service});});
   window.addEventListener("hashchange",readHash);
   readHash();
 })();

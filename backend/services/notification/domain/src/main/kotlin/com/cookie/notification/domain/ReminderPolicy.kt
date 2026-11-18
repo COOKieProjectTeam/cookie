@@ -41,7 +41,7 @@ object ReminderPolicy {
         consumed != null && target != null && target.signum() > 0 && unlimited == false && consumed > target
 
     fun caloriesUnderTarget(consumed: BigDecimal?, target: BigDecimal?, unlimited: Boolean?): Boolean =
-        consumed != null && target != null && target.signum() > 0 && unlimited == false && consumed < target.multiply(BigDecimal("0.8"))
+        consumed != null && target != null && target.signum() > 0 && unlimited == false && consumed < target
 
     fun waterGoalReached(consumed: Int?, target: Int?): Boolean = consumed != null && target != null && target > 0 && consumed >= target
 }

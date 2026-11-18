@@ -14,7 +14,7 @@ class ReminderPlannerTest {
     private fun state()=ReminderPlanningState(NotificationSettings(UUID.randomUUID(),waterEnabled=false,weighEnabled=false,goalWarningEnabled=false,
         timezone="UTC",quietStart=LocalTime.MIDNIGHT,quietEnd=LocalTime.MIDNIGHT,schedulingStartedAt=start),start,start,null)
     private fun progress(consumed:Int?,target:Int?=2000,unlimited:Boolean?=false,date:LocalDate=LocalDate.of(2026,9,17),zone:String="UTC",water:Int?=null,waterGoal:Int?=null)=
-        ProgressSnapshot(date,zone,consumed?.toBigDecimal(),target?.toBigDecimal(),unlimited,water,waterGoal)
+        ProgressSnapshot(date,zone,consumed?.toBigDecimal(),target?.toBigDecimal(),unlimited,water,waterGoal,target?.toBigDecimal())
     private fun food(state:ReminderPlanningState,now:Instant=noon)=ReminderPlanner.plan(state,now).due.filter { it.kind==ReminderKind.FOOD }
 
     @Test fun `food once until next meal and editing same meal does not resend`() {
@@ -76,15 +76,23 @@ class ReminderPlannerTest {
     @Test fun `goal rules are once per type per current day with strict thresholds and cheat exemption`() {
         val evening=Instant.parse("2026-09-17T20:00:00Z")
         val initial=state().let { it.copy(settings=it.settings.copy(foodEnabled=false,goalWarningEnabled=true)) }
-        assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(1600))),evening).due).isEmpty()
-        val under=ReminderPlanner.plan(initial.copy(progress=listOf(progress(1599))),evening).due.single()
+        assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(2200,target=2200))),evening).due).isEmpty()
+        val under=ReminderPlanner.plan(initial.copy(progress=listOf(progress(2199,target=2200))),evening).due.single()
         assertThat(under.kind).isEqualTo(ReminderKind.CALORIES_UNDER_TARGET)
         assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(2100))),evening).due.single().kind).isEqualTo(ReminderKind.CALORIES_EXCEEDED)
         assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(2100,unlimited=true))),evening).due).isEmpty()
         assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(null))),evening).due).isEmpty()
-        assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(1599)),emitted=setOf(OccurrenceKey(under.kind,under.cycle))),evening).due).isEmpty()
-        assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(1599))),evening.plusSeconds(86400)).due).isEmpty()
+        assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(2199,target=2200)),emitted=setOf(OccurrenceKey(under.kind,under.cycle))),evening).due).isEmpty()
+        assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(2199,target=2200))),evening.plusSeconds(86400)).due).isEmpty()
     }
+    @Test fun `late crossing is eligible even after an in-range snapshot at eight`() {
+        val evening=Instant.parse("2026-09-17T20:00:00Z")
+        val initial=state().let { it.copy(settings=it.settings.copy(foodEnabled=false,goalWarningEnabled=true)) }
+        assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(2350,target=2400).copy(calorieLow=2200.toBigDecimal()))),evening).due).isEmpty()
+        assertThat(ReminderPlanner.plan(initial.copy(progress=listOf(progress(2500,target=2400).copy(calorieLow=2200.toBigDecimal()))),evening.plusSeconds(600))
+            .due.single().kind).isEqualTo(ReminderKind.CALORIES_EXCEEDED)
+    }
+
     @Test fun `no timezone means no schedules and first timezone grants timers a fresh baseline`() {
         val initial=state().let { it.copy(settings=it.settings.copy(timezone=null,schedulingStartedAt=null,waterEnabled=true,weighEnabled=true)) }
         assertThat(ReminderPlanner.plan(initial,noon)).isEqualTo(ReminderPlan(emptyList(),null))

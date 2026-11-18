@@ -279,16 +279,18 @@ class ReminderDeliveryStateIntegrationTest {
             type = "progress.day.updated"
             aggregate = "progress_day"
             val consumed = if (kind == ReminderKind.CALORIES_EXCEEDED) {
-                if (eligible) 2100 else 1900
+                if (eligible) 2401 else 2400
             } else {
-                if (eligible) 1500 else 1700
+                if (eligible) 2199 else 2200
             }
             payload = mapOf("userId" to user, "localDate" to clock.get().atZone(ZoneOffset.UTC).toLocalDate().toString(),
-                "timezone" to "UTC", "calories" to mapOf("consumed" to consumed, "target" to 2000, "unlimitedCalories" to false),
+                "timezone" to "UTC", "calories" to mapOf("consumed" to consumed, "low" to 2200, "high" to 2400,
+                    "goalState" to "RANGE", "goalId" to user, "goalRevision" to 1, "cheatDay" to false),
                 "water" to mapOf("consumedMl" to null, "targetMl" to null))
         }
-        events.handle("cookie.events.$type.v1", mapper.writeValueAsBytes(mapOf(
-            "event_id" to UUID.randomUUID(), "event_type" to type, "event_version" to 1,
+        val wireVersion = if (type == "progress.day.updated") 2 else 1
+        events.handle("cookie.events.$type.v$wireVersion", mapper.writeValueAsBytes(mapOf(
+            "event_id" to UUID.randomUUID(), "event_type" to type, "event_version" to wireVersion,
             "producer" to NotificationEventHandler.PRODUCERS.getValue(type), "aggregate_type" to aggregate,
             "aggregate_id" to user, "aggregate_version" to version, "occurred_at" to clock.get().toString(),
             "payload" to payload)))
@@ -296,8 +298,9 @@ class ReminderDeliveryStateIntegrationTest {
 
     private fun meal(user: UUID, meal: UUID, eatenAt: Instant, version: Int) {
         val type = "nutrition.meal.updated"
-        events.handle("cookie.events.$type.v1", mapper.writeValueAsBytes(mapOf(
-            "event_id" to UUID.randomUUID(), "event_type" to type, "event_version" to 1,
+        val wireVersion = if (type == "progress.day.updated") 2 else 1
+        events.handle("cookie.events.$type.v$wireVersion", mapper.writeValueAsBytes(mapOf(
+            "event_id" to UUID.randomUUID(), "event_type" to type, "event_version" to wireVersion,
             "producer" to NotificationEventHandler.PRODUCERS.getValue(type), "aggregate_type" to "meal",
             "aggregate_id" to meal, "aggregate_version" to version, "occurred_at" to clock.get().toString(),
             "payload" to mapOf("userId" to user, "mealId" to meal, "eatenAt" to eatenAt.toString()))))

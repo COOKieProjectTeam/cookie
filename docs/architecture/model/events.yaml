@@ -125,6 +125,14 @@ events:
     payload: [userId, localDate, nutritionTotals]
     aggregate_version: positive monotonic version scoped to userId and localDate, survives empty days
 
+  - type: nutrition.day.changed
+    version: 2
+    producer: nutrition
+    consumers: [progress]
+    implementation_note: Carbohydrates exclude fibre and include polyols. Unknown label semantics propagate as null.
+    payload: [userId, localDate, nutritionTotals]
+    aggregate_version: positive monotonic version scoped to userId and localDate, survives empty days
+
   - type: nutrition.water.changed
     version: 1
     producer: nutrition
@@ -167,4 +175,12 @@ events:
     consumers: [notification]
     payload: [userId, localDate, timezone, calories, water]
 
+    aggregate_version_required: true
+
+  - type: progress.day.updated
+    version: 2
+    producer: progress
+    consumers: [notification]
+    payload: [userId, localDate, timezone, calories, water]
+    implementation_note: "Calories include consumed, goalState, goalId, goalRevision, low, high and cheatDay. Unknown facts use null. Water is unchanged from v1."
     aggregate_version_required: true

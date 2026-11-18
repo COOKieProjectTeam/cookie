@@ -1367,6 +1367,12 @@ components:
           minimum: 0
           maximum: 1000000
           multipleOf: 0.000001
+        totalCarbohydrateG:
+          type: number
+          minimum: 0
+          maximum: 1000000
+          multipleOf: 0.000001
+          description: Raw label total including fibre. Mutually exclusive with carbsG.
         carbsG:
           type: number
           nullable: true

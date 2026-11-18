@@ -36,9 +36,10 @@ class JdbcReminderStateLoader(private val jdbc:JdbcTemplate,private val reposito
             progress=projections.filter { it.first=="PROGRESS" }.map { row ->
                 val node=row.third;val calories=node.path("calories");val water=node.path("water")
                 ProgressSnapshot(LocalDate.parse(node.path("localDate").stringValue()),node.path("timezone").stringValue(),
-                    calories.path("consumed").takeIf { it.isNumber }?.decimalValue(),calories.path("target").takeIf { it.isNumber }?.decimalValue(),
+                    calories.path("consumed").takeIf { it.isNumber }?.decimalValue(),calories.path("high").takeIf { it.isNumber }?.decimalValue(),
                     calories.path("unlimitedCalories").takeIf { it.isBoolean }?.booleanValue(),water.path("consumedMl").takeIf { it.isIntegralNumber }?.intValue(),
-                    water.path("targetMl").takeIf { it.isIntegralNumber }?.intValue())
+                    water.path("targetMl").takeIf { it.isIntegralNumber }?.intValue(),
+                    calories.path("low").takeIf { it.isNumber }?.decimalValue())
             },emitted=emitted,lastWaterSubmissionAt=waterSubmission)
     }
     private fun JsonNode.instantOrNull(field:String):Instant?=path(field).takeIf { it.isString }?.stringValue()?.let(Instant::parse)

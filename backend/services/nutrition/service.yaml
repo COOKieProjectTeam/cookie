@@ -15,7 +15,7 @@ messaging:
     - type: nutrition.meal.deleted
       version: 1
     - type: nutrition.day.changed
-      version: 1
+      version: 2
     - type: nutrition.water.changed
       version: 1
   consumes:

@@ -81,12 +81,19 @@ class Snapshots(val mapper: ObjectMapper) {
         }
         if(baseAmount > BigDecimal("1000000")) invalid()
         val per100 = input.path("nutritionPer100")
-        fields(per100,nutrients.toSet(),setOf("calories"))
+        fields(per100,nutrients.toSet() + "totalCarbohydrateG",setOf("calories"))
+        val totalCarbohydrate = per100.get("totalCarbohydrateG")
+        if (totalCarbohydrate != null && per100.has("carbsG")) invalid()
+        val canonicalCarbs = totalCarbohydrate?.let(::number)?.let { total ->
+            val fiber = per100.get("fiberG")?.takeUnless { it.isNull }?.let(::number)
+            fiber?.let { total.subtract(it).also { carbs -> if (carbs.signum() < 0) invalid() } }
+        }
         number(per100.path("calories"))
         val normalized = obj()
         val totals = obj()
         nutrients.forEach { key ->
-            val v = per100.get(key)
+            val v = if (key == "carbsG" && totalCarbohydrate != null)
+                canonicalCarbs?.let(mapper::valueToTree) else per100.get(key)
             if(v == null || v.isNull) {
                 if(key=="calories") invalid()
                 normalized.putNull(key); totals.putNull(key)
@@ -97,7 +104,7 @@ class Snapshots(val mapper: ObjectMapper) {
             }
         }
         val result = obj("id" to id,"source" to source,"name" to text(input,"name"),"baseUnit" to base,
-            "amount" to amount,"nutritionPer100" to normalized,"nutrition" to totals,"version" to version)
+            "amount" to amount,"nutritionPer100" to normalized,"nutrition" to totals,"version" to version,"canonicalCarbs" to true)
         if(input.has("brand")) {
             if(input.path("brand").isNull) result.putNull("brand") else result.put("brand",text(input,"brand"))
         }
@@ -111,9 +118,18 @@ class Snapshots(val mapper: ObjectMapper) {
     fun total(items: Iterable<JsonNode>): ObjectNode {
         val list=items.toList()
         return obj().also { result -> nutrients.forEach { key ->
-            if(list.any { it.path("nutrition").path(key).isNull || it.path("nutrition").path(key).isMissingNode }) result.putNull(key)
-            else result.put(key,list.fold(BigDecimal.ZERO) { acc,item -> acc + item.path("nutrition").path(key).decimalValue() })
+            val facts = list.map { fact(it, key) }
+            if (facts.any { it == null }) result.putNull(key)
+            else result.put(key, facts.filterNotNull().fold(BigDecimal.ZERO, BigDecimal::add))
         } }
+    }
+    private fun fact(item: JsonNode, key: String): BigDecimal? {
+        if (key == "carbsG" && !item.path("canonicalCarbs").asBoolean(false)) {
+            val children = item.get("dishes") ?: item.get("items") ?: return null
+            val facts = children.toList().map { fact(it, key) }
+            return if (facts.any { it == null }) null else facts.filterNotNull().fold(BigDecimal.ZERO, BigDecimal::add)
+        }
+        return item.path("nutrition").path(key).takeIf { it.isNumber }?.decimalValue()
     }
     fun dish(input: JsonNode, mealId: String): ObjectNode {
         fields(input,setOf("name","items"),setOf("items"))
@@ -134,6 +150,9 @@ class Snapshots(val mapper: ObjectMapper) {
         return result
     }
     fun entryInput(entry: JsonNode): ObjectNode = (entry.deepCopy() as ObjectNode).also {
-        it.remove(listOf("id","version","nutrition"))
+        if (!it.path("canonicalCarbs").asBoolean(false)) {
+            (it.get("nutritionPer100") as? ObjectNode)?.putNull("carbsG")
+        }
+        it.remove(listOf("id","version","nutrition","canonicalCarbs"))
     }
 }
