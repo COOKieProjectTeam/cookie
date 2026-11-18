@@ -17,6 +17,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 import tools.jackson.databind.DeserializationFeature
 import tools.jackson.databind.json.JsonMapper
 import java.time.Instant
+import java.time.LocalDate
+import java.time.Clock
 import java.util.UUID
 
 @Tag("integration")
@@ -65,6 +67,109 @@ class ProgressPersistenceTest {
         assertTrue(store.deleted(user))
         assertNull(store.latest(user, "nutrition.day.changed", "2026-11-19"))
         assertEquals(0L, store.cursor(user, "nutrition"))
+    }
+
+    @Test
+    fun `midnight waits for both cuts and late corrections do not rewrite achievements`() {
+        val user = UUID.randomUUID()
+        val date = LocalDate.parse("2026-11-18")
+        val boundary = Instant.parse("2026-11-18T21:00:00Z")
+        val calendar = ProgressCalendar(store, mapper, Clock.systemUTC())
+        userBaseline(user)
+        group(user, "user", 1, 2, "2026-11-18T09:00:00Z", "0/B100")
+        calendar.run(user, boundary.minusSeconds(30))
+        assertEquals("OPEN", calendar.active(user)?.state)
+        assertEquals(boundary, calendar.active(user)?.closesAt)
+        food(user, date.toString(), 2, 2, calories = "2490.000", protein = "100")
+        group(user, "nutrition", 2, 2, boundary.toString(), "0/B102")
+        cut(user, "nutrition", boundary, 1, 2, "0/B103")
+        cut(user, "user", boundary, 2, 2, "0/B104")
+        calendar.run(user, boundary.plusSeconds(5))
+        assertEquals("CLOSING", calendar.active(user)?.state)
+        assertNull(calendar.confirmed(user, date))
+        food(user, date.toString(), 1, 1, calories = "2000.000", protein = "100")
+        group(user, "nutrition", 1, 1, "2026-11-18T20:59:58Z", "0/B101")
+        calendar.run(user, boundary.plusSeconds(6))
+        val result = calendar.confirmed(user, date)!!
+        assertEquals("MACROS_MET", result.result.outcome.name)
+        assertEquals(1L, result.after)
+        assertEquals("2490.000", store.latest(user, "nutrition.day.changed", date.toString()).food().calories!!.toPlainString())
+        assertEquals("2000.000", result.facts.path("nutritionTotals").quantity("calories")!!.toPlainString())
+        calendar.run(user, boundary.plusSeconds(7))
+        assertEquals(1L, calendar.streak(user).first.best)
+        assertEquals(date.plusDays(1), calendar.active(user)?.date)
+        assertEquals(1L, calendar.confirmed(user, date)?.after)
+    }
+
+    @Test
+    fun `westward travel retains the fixed closing and does not open a repeated date`() {
+        val user = UUID.randomUUID()
+        val date = LocalDate.parse("2026-11-18")
+        val boundary = Instant.parse("2026-11-18T21:00:00Z")
+        val calendar = ProgressCalendar(store, mapper, Clock.systemUTC())
+        userBaseline(user)
+        group(user, "user", 1, 2, "2026-11-18T09:00:00Z", "0/C100")
+        calendar.run(user, boundary.minusSeconds(200))
+        receive(user, "user.profile.updated", "user", revision = 3, data = mapOf(
+            "sourceSeq" to 3, "timezone" to "Europe/Berlin", "baseline" to false, "hasAcceptedGoal" to true, "goalRevision" to 1,
+        ))
+        group(user, "user", 3, 3, "2026-11-18T20:58:00Z", "0/C101")
+        cut(user, "user", boundary, 3, 3, "0/C102")
+        cut(user, "nutrition", boundary, 0, 0, "0/C103")
+        calendar.run(user, boundary.plusSeconds(1))
+        val berlinOpening = boundary.plusSeconds(7200)
+        calendar.run(user, berlinOpening.minusSeconds(1))
+        assertEquals("CLOSED", calendar.day(user, date)?.state)
+        assertEquals("Europe/Moscow", calendar.day(user, date)?.zone?.id)
+        assertNull(calendar.active(user))
+        cut(user, "user", berlinOpening, 3, 3, "0/C104")
+        calendar.run(user, berlinOpening.plusSeconds(1))
+        val next = calendar.active(user)!!
+        assertEquals(date.plusDays(1), next.date)
+        assertEquals("Europe/Berlin", next.zone.id)
+        assertEquals(berlinOpening, next.openedAt)
+    }
+
+    @Test
+    fun `local midnight follows the opening timezone across daylight saving time`() {
+        listOf(
+            Triple("2026-03-08T05:00:00Z", "2026-03-09T04:00:00Z", 23L),
+            Triple("2026-11-01T04:00:00Z", "2026-11-02T05:00:00Z", 25L),
+        ).forEach { (start, end, hours) ->
+            val user = UUID.randomUUID()
+            val calendar = ProgressCalendar(store, mapper, Clock.systemUTC())
+            receive(user, "user.profile.updated", "user", revision = 1, data = mapOf(
+                "sourceSeq" to 1, "timezone" to "America/New_York", "baseline" to true, "hasAcceptedGoal" to false, "goalRevision" to 0,
+            ))
+            group(user, "user", 1, 1, start, "0/D100")
+            calendar.run(user, Instant.parse(start))
+            val day = calendar.active(user)!!
+            assertEquals(Instant.parse(end), day.closesAt)
+            assertEquals(hours, java.time.Duration.between(day.openedAt, day.closesAt).toHours())
+        }
+    }
+
+    private fun userBaseline(user: UUID) {
+        receive(user, "user.profile.updated", "user", revision = 1, data = mapOf(
+            "sourceSeq" to 1, "timezone" to "Europe/Moscow", "baseline" to true, "hasAcceptedGoal" to false, "goalRevision" to 0,
+        ))
+        fun band(low: Int, high: Int) = mapOf("kind" to "RANGE", "low" to low, "high" to high)
+        receive(user, "user.goal.changed", "user", wire = 2, revision = 2, data = mapOf(
+            "sourceSeq" to 2,
+            "nutritionGoalVersion" to mapOf("id" to UUID.randomUUID(), "revision" to 1,
+                "outcome" to "CALCULATED", "effectiveFrom" to "2026-11-18",
+                "calories" to band(1800, 2200), "proteinG" to band(90, 120), "fatG" to band(8, 15), "carbsG" to band(10, 20)),
+        ))
+    }
+
+    private fun group(user: UUID, owner: String, first: Long, last: Long, at: String, lsn: String) {
+        receive(user, "$owner.progress_commit.recorded", owner,
+            data = mapOf("firstSeq" to first, "lastSeq" to last, "committedAt" to at, "endLsn" to lsn))
+    }
+
+    private fun cut(user: UUID, owner: String, at: Instant, before: Long, through: Long, lsn: String) {
+        receive(user, "$owner.progress_cut.confirmed", owner,
+            data = mapOf("boundary" to at.toString(), "beforeSeq" to before, "throughSeq" to through, "endLsn" to lsn))
     }
 
     private fun food(

@@ -32,7 +32,7 @@ sealed interface ProgressSourceRequest {
             require(event.path("aggregate_type").asString() == "progress_source" && event.path("aggregate_id").asString() == user.toString())
             return if (type == "progress.${owner}_cut.requested") {
                 val boundary = Instant.parse(payload.path("boundary").stringValue())
-                require(boundary.nano == 0)
+                require(boundary.nano % 1000 == 0)
                 Cut(id, user, boundary)
             } else {
                 val first = payload.path("firstSeq")
