@@ -120,7 +120,7 @@ internal class ProgressReads(
             val food = food(facts[FOOD to dayKey])
             val water = facts[WATER to dayKey]
             val activity = facts[ACTIVITY to dayKey]?.takeUnless { it.bool("deleted") }
-            val cheat = facts[OVERRIDE to dayKey]?.path("override")?.stringValue() == "CHEAT_DAY"
+            val cheat = facts[OVERRIDE to dayKey]?.path("override")?.asString("") == "CHEAT_DAY"
             val row = Facts(food, water?.count("totalMl")?.toInt() ?: 0,
                 water?.path("lastConsumedAt")?.isString == true, activity?.path("steps")?.takeIf(JsonNode::isNumber)?.intValue(),
                 activity?.quantity("activeKcal"))

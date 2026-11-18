@@ -64,6 +64,7 @@ ci: {
   ],
   "test_inputs": [
     "backend/platform/starter-testing/**",
+    "backend/contracts/health-assessment/**",
     "backend/services/nutrition/**",
     "backend/services/user/**",
     "backend/services/health/**",

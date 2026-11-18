@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/health-service]
   push:
     branches: [main]
 
@@ -226,6 +226,8 @@ jobs:
           :backend:services:progress:check
           :backend:services:progress:integrationTest
           :backend:services:progress:bootJar
+          :backend:clients:progress:check
+          :backend:services:progress:processE2e
 
   nutrition:
     name: Nutrition service
@@ -406,6 +408,8 @@ jobs:
           done
       - name: Validate local development Compose
         run: docker compose -f deploy/docker/compose.yaml config
+      - name: Validate local Progress overlay
+        run: docker compose -f deploy/docker/compose.yaml -f deploy/docker/progress.compose.yaml config --quiet
       - name: Validate Make targets
         run: >-
           make --dry-run

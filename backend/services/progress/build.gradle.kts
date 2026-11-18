@@ -139,6 +139,7 @@ tasks.named<Test>("test") {
 }
 
 val integrationTest = tasks.register<Test>("integrationTest") {
+    inputs.file(layout.projectDirectory.file("ops/jetstream.json")).withPathSensitivity(PathSensitivity.RELATIVE)
     description = "Runs Progress HTTP and JDBC integration tests against required containers."
     group = "verification"
     testClassesDirs = sourceSets["test"].output.classesDirs
@@ -147,6 +148,24 @@ val integrationTest = tasks.register<Test>("integrationTest") {
         includeTags("integration")
     }
     shouldRunAfter(tasks.named("test"))
+}
+
+tasks.register<Test>("processE2e") {
+    group = "verification"
+    description = "Runs the Progress integration path with real Owner, Identity and Notification JVM processes."
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform { includeTags("process-e2e") }
+    shouldRunAfter(integrationTest)
+    systemProperty("cookie.test.root", rootProject.layout.projectDirectory.asFile.absolutePath)
+    for (service in listOf("identity", "user", "health", "nutrition", "progress", "notification")) {
+        dependsOn(":backend:services:$service:bootJar")
+        val jar = rootProject.layout.projectDirectory.file("backend/services/$service/build/libs/$service.jar")
+        systemProperty("cookie.test.$service-jar", jar.asFile.absolutePath)
+        inputs.file(jar).withPathSensitivity(PathSensitivity.RELATIVE)
+    }
+    inputs.files(rootProject.fileTree("backend/services/nutrition/ops"), rootProject.fileTree("backend/services/user/ops"))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 springBoot {

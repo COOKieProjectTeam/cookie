@@ -22,10 +22,11 @@ internal data class SourceCut(val owner: String, val boundary: Instant, val befo
 internal class InvalidProgressEvent(val reason: String) : RuntimeException(reason)
 
 internal class ProgressInbox(private val store: ProgressStore, private val mapper: ObjectMapper) {
-    fun receive(subject: String, bytes: ByteArray) {
+    fun receive(subject: String, bytes: ByteArray, brokerPosition: Pair<Long, Long>? = null) {
         val input = parse(subject, bytes)
         store.transactions.executeWithoutResult {
             store.lock(input.user)
+            brokerPosition?.let { (stream, consumer) -> store.recordBrokerReceipt(stream, consumer) }
             if (!store.acceptInbox(input.id) || store.deleted(input.user)) return@executeWithoutResult
             if (input.change is Deletion) {
                 store.erase(input.user, input.change.request, input.change.at)

@@ -7,6 +7,8 @@ import com.cookie.platform.messaging.NatsConnectionSettings
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
 import io.nats.client.JetStreamOptions
+import io.nats.client.api.AckPolicy
+import io.nats.client.api.DeliverPolicy
 import io.nats.client.impl.Headers
 import jakarta.annotation.PreDestroy
 import org.springframework.core.env.Environment
@@ -40,12 +42,19 @@ internal class ProgressMessaging(
         connection = connection::connection,
         stream = STREAM,
         durable = DURABLE,
-        handle = { inbox.receive(it.subject, it.data) },
+        handle = { message ->
+            val position = message.metaData()
+            inbox.receive(message.subject, message.data, position.streamSequence() to position.consumerSequence())
+        },
         invalidReason = { (it as? InvalidProgressEvent)?.reason },
         quarantine = { message, reason ->
             val hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(message.data))
-            store.jdbc.update("INSERT INTO message_quarantine(stream_sequence,reason,event_hash) VALUES (?,?,?) ON CONFLICT DO NOTHING",
-                message.metaData().streamSequence(), reason, hash)
+            val position = message.metaData()
+            store.transactions.executeWithoutResult {
+                store.jdbc.update("INSERT INTO message_quarantine(stream_sequence,reason,event_hash) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+                    position.streamSequence(), reason, hash)
+                store.recordBrokerReceipt(position.streamSequence(), position.consumerSequence())
+            }
         },
         processed = { metrics.counter("cookie.progress.inbox.processed").increment() },
         quarantined = { metrics.counter("cookie.progress.inbox.quarantined").increment() },
@@ -71,10 +80,20 @@ internal class ProgressMessaging(
     @Scheduled(fixedDelay = 2_000)
     fun inspectRetention() {
         try {
-            val management = connection.connection().jetStreamManagement(JetStreamOptions.builder().requestTimeout(Duration.ofSeconds(2)).build())
-            val stream = management.getStreamInfo(STREAM)
-            val floor = management.getConsumerInfo(STREAM, DURABLE).ackFloor.streamSequence
-            gate.inspect(stream.createTime.toInstant(), stream.streamState.firstSequence, floor)
+            gate.inspect {
+                val options = JetStreamOptions.builder().requestTimeout(Duration.ofSeconds(2)).build()
+                val management = connection.connection().jetStreamManagement(options)
+                val stream = management.getStreamInfo(STREAM)
+                val durable = management.getConsumerInfo(STREAM, DURABLE)
+                val config = durable.consumerConfiguration
+                ProgressEvidenceGate.BrokerState(
+                    stream.createTime.toInstant(), durable.creationTime.toInstant(),
+                    stream.streamState.firstSequence, durable.ackFloor.streamSequence,
+                    durable.ackFloor.consumerSequence, durable.numAckPending,
+                    config.filterSubjects.orEmpty().toSet() == ProgressInbox.subjects && config.ackPolicy == AckPolicy.Explicit &&
+                        config.deliverPolicy == DeliverPolicy.All,
+                )
+            }
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         } catch (_: Exception) {

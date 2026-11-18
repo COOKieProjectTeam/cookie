@@ -29,7 +29,7 @@ internal class ProgressNotificationSnapshots(private val store: ProgressStore, p
                 "goalState" to if (calories == null) "NO_CALORIE_GOAL" else "RANGE",
                 "goalId" to goal?.payload?.string("id"), "goalRevision" to goal?.version,
                 "low" to calories?.low, "high" to calories?.high,
-                "cheatDay" to (override?.path("override")?.stringValue() == "CHEAT_DAY"),
+                "cheatDay" to (override?.path("override")?.asString("") == "CHEAT_DAY"),
             ),
             "water" to mapOf(
                 "consumedMl" to if (waterKnown) water.count("totalMl") else null,

@@ -1,0 +1,223 @@
+{
+  "serviceId": "progress",
+  "facts": [
+    {
+      "id": "progress-period",
+      "label": "Интервал чтения",
+      "value": "1–366 дат",
+      "description": "Сводки используют только закрытые дни и считают покрытие отдельно по каждой метрике.",
+      "source": {
+        "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/ProgressReads.kt",
+        "line": 239
+      }
+    },
+    {
+      "id": "progress-cut",
+      "label": "Подтверждение границы",
+      "value": "User + Nutrition",
+      "description": "PostgreSQL фиксирует момент открытия и двухстороннее доказательство полноты перед необратимым зачётом.",
+      "source": {
+        "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/Calendar.kt",
+        "line": 106
+      }
+    },
+    {
+      "id": "progress-readiness",
+      "label": "Восстановление чтения",
+      "value": "Поток, durable и ACK",
+      "description": "Утрата необходимых событий фиксирует постоянный запрет чтения до сверки владельцами данных.",
+      "source": {
+        "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/ProgressEvidenceGate.kt",
+        "line": 50
+      }
+    },
+    {
+      "id": "progress-internal-timeout",
+      "label": "Таймаут внутреннего чтения",
+      "value": "2 с",
+      "description": "Клиент передаёт workload JWT, пользовательский JWT и traceparent.",
+      "source": {
+        "path": "backend/clients/progress/src/main/kotlin/com/cookie/progress/client/ProgressTodayClient.kt",
+        "line": 35
+      }
+    }
+  ],
+  "flows": [
+    {
+      "id": "progress-public-read",
+      "title": "День, период и динамика веса",
+      "description": "Локальный Caddy маршрутизирует публичные GET. Progress читает согласованную проекцию аккаунта.",
+      "operationIds": [
+        "getDailyProgress",
+        "getProgressRange",
+        "getWeightProgress"
+      ],
+      "steps": [
+        {
+          "node": "progress_gateway",
+          "label": "Публичный HTTP",
+          "detail": "Разрешены только маршруты Progress.",
+          "source": {
+            "path": "deploy/docker/progress.Caddyfile",
+            "line": 2
+          }
+        },
+        {
+          "node": "progress",
+          "label": "Identity JWT",
+          "detail": "Идентификатор владельца берётся из проверенного токена.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/ProgressController.kt",
+            "line": 36
+          }
+        },
+        {
+          "node": "progress_db",
+          "label": "Согласованное чтение",
+          "detail": "Общая блокировка аккаунта защищает проекцию от гонки с удалением.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/ProgressReads.kt",
+            "line": 73
+          }
+        }
+      ],
+      "nextFlows": [
+        "progress-close"
+      ]
+    },
+    {
+      "id": "progress-bff-today",
+      "title": "Текущий день для Mobile BFF",
+      "description": "Сервисная учётная запись и делегированный пользователь проверяются независимо.",
+      "operationIds": [
+        "progress:getProgressTodayInternal"
+      ],
+      "steps": [
+        {
+          "node": "mobile_bff",
+          "label": "Внутренний клиент",
+          "detail": "Клиент использует сгенерированный контракт и передаёт два токена.",
+          "source": {
+            "path": "backend/clients/progress/src/main/kotlin/com/cookie/progress/client/ProgressTodayClient.kt",
+            "line": 30
+          }
+        },
+        {
+          "node": "progress",
+          "label": "Права вызова",
+          "detail": "Разрешение progress.today.read принадлежит Mobile BFF.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/ProgressInternalController.kt",
+            "line": 42
+          }
+        },
+        {
+          "node": "progress_db",
+          "label": "Текущая дата",
+          "detail": "При перелёте используется уже открытая календарная дата до её границы.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/ProgressReads.kt",
+            "line": 79
+          }
+        }
+      ]
+    },
+    {
+      "id": "progress-close",
+      "title": "Финализация календарного дня",
+      "description": "Финальный исход создаётся один раз после подтверждения обеих границ.",
+      "steps": [
+        {
+          "node": "progress",
+          "label": "Закрытие по дедлайну",
+          "detail": "Планировщик переводит дату в CLOSING.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/Calendar.kt",
+            "line": 105
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Запрос доказательств",
+          "detail": "Адресованные запросы идут в Nutrition и User, повтор доставляет нужные сохранённые факты.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/Calendar.kt",
+            "line": 276
+          }
+        },
+        {
+          "node": "progress_db",
+          "label": "Фиксация результата",
+          "detail": "Результат, защита от повторов и рекорд записываются одной транзакцией.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/Calendar.kt",
+            "line": 160
+          }
+        }
+      ],
+      "nextFlows": [
+        "progress-notification"
+      ]
+    },
+    {
+      "id": "progress-notification",
+      "title": "Снимок цели для Notification",
+      "description": "Смена целей и дневных фактов обновляет снимок v2. Смешанные зоны не дают ложное предупреждение.",
+      "steps": [
+        {
+          "node": "progress_db",
+          "label": "Версия снимка",
+          "detail": "Только отличие смысловой нагрузки увеличивает версию.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/ProgressNotificationSnapshots.kt",
+            "line": 42
+          }
+        },
+        {
+          "node": "nats",
+          "label": "Публикация после commit",
+          "detail": "Публикация из durable outbox с исходным event ID.",
+          "source": {
+            "path": "backend/services/progress/src/main/kotlin/com/cookie/progress/ProgressMessaging.kt",
+            "line": 101
+          }
+        },
+        {
+          "node": "notification",
+          "label": "Входная проекция",
+          "detail": "Принимаются поля версии 2 и сохраняется независимая версия дневной проекции.",
+          "source": {
+            "path": "backend/services/notification/src/main/kotlin/com/cookie/notification/messaging/NotificationEventHandler.kt",
+            "line": 137
+          }
+        }
+      ]
+    }
+  ],
+  "operationNotes": {
+    "getDailyProgress": {
+      "flowId": "progress-public-read",
+      "factIds": [
+        "progress-period"
+      ]
+    },
+    "getProgressRange": {
+      "flowId": "progress-public-read",
+      "factIds": [
+        "progress-period"
+      ]
+    },
+    "getWeightProgress": {
+      "flowId": "progress-public-read",
+      "factIds": [
+        "progress-period"
+      ]
+    },
+    "progress:getProgressTodayInternal": {
+      "flowId": "progress-bff-today",
+      "factIds": [
+        "progress-internal-timeout"
+      ]
+    }
+  }
+}

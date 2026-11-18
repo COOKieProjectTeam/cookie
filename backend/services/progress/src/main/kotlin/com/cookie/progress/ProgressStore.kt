@@ -22,6 +22,11 @@ internal class ProgressStore(
         jdbc.query("SELECT $function(hashtextextended(?,0))", { _, _ -> Unit }, user.toString())
     }
 
+    fun recordBrokerReceipt(streamSequence: Long, consumerSequence: Long) {
+        jdbc.update("""INSERT INTO progress_broker_receipts(consumer_sequence,stream_sequence)
+            VALUES (?,?) ON CONFLICT DO NOTHING""", consumerSequence, streamSequence)
+    }
+
     fun deleted(user: UUID): Boolean =
         jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM account_tombstones WHERE user_id=?)", Boolean::class.java, user) == true
 

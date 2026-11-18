@@ -70,6 +70,41 @@ class ProgressPersistenceTest {
     }
 
     @Test
+    fun `retention gaps latch reconciliation across restart and block reads`() {
+        val operator = JdbcTemplate(DriverManagerDataSource(postgres.jdbcUrl, postgres.username, postgres.password))
+        val birth = Instant.parse("2026-11-18T19:00:00Z")
+        val genesis = ProgressEvidenceGate.BrokerState(birth, birth, firstAvailable = 1, ackFloor = 0, ackDeliveryFloor = 0)
+        val gate = ProgressEvidenceGate(store)
+        fun resetAsOperator() {
+            operator.execute("TRUNCATE progress_broker_checkpoint, progress_broker_receipts")
+        }
+        for (mismatch in listOf(
+            genesis.copy(firstAvailable = 15),
+            genesis.copy(ackFloor = 11, ackDeliveryFloor = 4),
+            genesis.copy(configurationMatches = false),
+            genesis.copy(consumerCreated = birth.plusSeconds(1)),
+        )) {
+            resetAsOperator()
+            gate.inspect { genesis }
+            store.recordBrokerReceipt(9, 3)
+            gate.inspect { genesis.copy(ackFloor = 10, ackDeliveryFloor = 3) }
+            assertTrue(gate.ready())
+            gate.inspect { mismatch.copy(ackFloor = maxOf(10, mismatch.ackFloor), ackDeliveryFloor = maxOf(3, mismatch.ackDeliveryFloor)) }
+            assertFalse(gate.ready())
+            assertThrows(DataAccessException::class.java) {
+                store.jdbc.update("UPDATE progress_broker_checkpoint SET reconciliation_required=false")
+            }
+            val restart = ProgressEvidenceGate(store)
+            restart.inspect { genesis.copy(ackFloor = 10, ackDeliveryFloor = 3) }
+            assertFalse(restart.ready())
+            assertThrows(ProgressFailure::class.java) { restart.requireReadable() }
+        }
+        resetAsOperator()
+        gate.inspect { genesis.copy(ackFloor = 10, ackDeliveryFloor = 3) }
+        assertFalse(gate.ready())
+    }
+
+    @Test
     fun `midnight waits for both cuts and late corrections do not rewrite achievements`() {
         val user = UUID.randomUUID()
         val date = LocalDate.parse("2026-11-18")
@@ -128,6 +163,84 @@ class ProgressPersistenceTest {
         assertEquals(date.plusDays(1), next.date)
         assertEquals("Europe/Berlin", next.zone.id)
         assertEquals(berlinOpening, next.openedAt)
+    }
+
+    @Test
+    fun `eastward travel picks up the next day's existing food and preserves a skipped day's streak`() {
+        listOf(
+            Triple("Europe/Moscow", "Asia/Tokyo", "2026-11-18T21:00:00Z"),
+            Triple("Pacific/Honolulu", "Pacific/Kiritimati", "2026-11-19T10:00:00Z"),
+        ).forEach { (from, to, closing) ->
+            val user = UUID.randomUUID()
+            val date = LocalDate.parse("2026-11-18")
+            val boundary = Instant.parse(closing)
+            val nextDate = boundary.atZone(java.time.ZoneId.of(to)).toLocalDate()
+            val calendar = ProgressCalendar(store, mapper, Clock.systemUTC())
+            receive(user, "user.profile.updated", "user", revision = 1, data = mapOf(
+                "sourceSeq" to 1, "timezone" to from, "baseline" to true, "hasAcceptedGoal" to false, "goalRevision" to 0,
+            ))
+            calculatedGoal(user)
+            group(user, "user", 1, 2, "2026-11-18T11:00:00Z", "0/E100")
+            calendar.run(user, boundary.minusSeconds(400))
+            food(user, date.toString(), 1, 1, calories = "2000", protein = "100")
+            food(user, nextDate.toString(), 2, 1, calories = "1900", protein = "100")
+            group(user, "nutrition", 1, 2, boundary.minusSeconds(300).toString(), "0/E101")
+            receive(user, "user.profile.updated", "user", revision = 3, data = mapOf(
+                "sourceSeq" to 3, "timezone" to to, "baseline" to false, "hasAcceptedGoal" to true, "goalRevision" to 1,
+            ))
+            group(user, "user", 3, 3, boundary.minusSeconds(120).toString(), "0/E102")
+            cut(user, "user", boundary, 3, 3, "0/E103")
+            cut(user, "nutrition", boundary, 2, 2, "0/E104")
+            val after = boundary.plusSeconds(1)
+            calendar.run(user, after)
+            calendar.run(user, after)
+            assertEquals(nextDate, calendar.active(user)?.date)
+            assertEquals(to, calendar.active(user)?.zone?.id)
+            assertEquals(1L, calendar.confirmed(user, date)?.after)
+            if (nextDate > date.plusDays(1)) {
+                assertEquals("TRAVEL_SKIPPED", calendar.day(user, date.plusDays(1))?.state)
+                assertNull(calendar.confirmed(user, date.plusDays(1)))
+            }
+            val readings = ProgressReads(store, calendar, Clock.fixed(after, java.time.ZoneOffset.UTC), mapper)
+            val today = mapper.valueToTree<tools.jackson.databind.JsonNode>(readings.today(user))
+            assertEquals("1900", today.path("facts").path("caloriesKcal").asString())
+            assertEquals(2L, today.path("streak").path("current").asLong())
+            assertEquals(1L, today.path("streak").path("confirmedBest").asLong())
+        }
+    }
+
+    @Test
+    fun `weight correction and tombstone restore the daily winner`() {
+        val user = UUID.randomUUID()
+        val first = UUID.fromString("7fffffff-0000-4000-8000-000000000000")
+        val second = UUID.fromString("80000000-0000-4000-8000-000000000000")
+        val day = LocalDate.parse("2026-11-18")
+        val next = day.plusDays(1)
+        val clock = Clock.systemUTC()
+        val readings = ProgressReads(store, ProgressCalendar(store, mapper, clock), clock, mapper)
+        fun weight(id: UUID, revision: Long, date: LocalDate, time: String, kg: String, source: String) =
+            receive(user, "health.weight.changed", "health", wire = 2, revision = revision, data = mapOf(
+                "measurementId" to id, "measurementLocalDate" to date.toString(), "measuredAt" to time,
+                "valueKg" to kg.toBigDecimal(), "source" to source, "deleted" to false,
+            ))
+        fun weights(from: LocalDate = day, to: LocalDate = next) =
+            mapper.valueToTree<tools.jackson.databind.JsonNode>(readings.weights(user, from, to))
+
+        weight(first, 1, day, "2026-11-18T21:00:00Z", "72.00", "MANUAL")
+        weight(second, 1, day, "2026-11-18T21:00:00Z", "71.25", "APPLE_HEALTH")
+        assertEquals(second.toString(), weights().path("points").get(0).path("measurementId").asString())
+        assertEquals("APPLE_HEALTH", weights().path("latestKnown").path("source").asString())
+        assertTrue(weights().path("periodChangeKg").isNull)
+        weight(second, 2, next, "2026-11-18T21:00:00Z", "71.25", "APPLE_HEALTH")
+        assertEquals("-0.75", weights().path("periodChangeKg").asString())
+        assertTrue(weights(day.minusDays(1), day.minusDays(1)).path("points").isEmpty)
+        assertEquals(second.toString(), weights(day.minusDays(1), day.minusDays(1)).path("latestKnown").path("measurementId").asString())
+        receive(user, "health.weight.changed", "health", wire = 2, revision = 3, data = mapOf(
+            "measurementId" to second, "deleted" to true,
+        ))
+        assertEquals(1, weights().path("points").size())
+        assertEquals(first.toString(), weights().path("latestKnown").path("measurementId").asString())
+        assertTrue(weights().path("periodChangeKg").isNull)
     }
 
     @Test
@@ -264,6 +377,7 @@ class ProgressPersistenceTest {
         val (aggregate, key) = when (type) {
             "account.deletion.requested" -> "account" to user.toString()
             "nutrition.day.changed" -> "nutrition_day" to "$user:${data.getValue("localDate")}"
+            "health.weight.changed" -> "weight_measurement" to data.getValue("measurementId").toString()
             "health.connection_summary.changed" -> "health_connections" to user.toString()
             "user.profile.updated", "user.goal.changed" -> "user" to user.toString()
             else -> "progress_source" to user.toString()

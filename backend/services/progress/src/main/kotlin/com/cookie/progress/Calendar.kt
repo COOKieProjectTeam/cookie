@@ -190,7 +190,7 @@ internal class ProgressCalendar(
     }
 
     fun cheatDay(user: UUID, date: LocalDate, through: Long? = null): Boolean =
-        store.latest(user, "user.goal_override.changed", date.toString(), through)?.payload?.path("override")?.stringValue() == "CHEAT_DAY"
+        store.latest(user, "user.goal_override.changed", date.toString(), through)?.payload?.path("override")?.asString("") == "CHEAT_DAY"
 
     private fun openNext(user: UUID, now: Instant): CalendarDay? {
         val previous = db.query(
