@@ -25,3 +25,4 @@ ADR фиксируют долгоживущие технические реше�
 - `0015-user-service.md` — User profile/goals, lifecycle and Health-owned calculation dependency.
 
 - [0016 — Health data, nutrition assessment and goal acceptance](0016-health-data-service.md)
+- [0017 — Progress day boundaries and achievements](0017-progress-day-boundaries.md)
