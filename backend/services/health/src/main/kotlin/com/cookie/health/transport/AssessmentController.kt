@@ -39,6 +39,7 @@ class AssessmentController(
         if (input.timezone !in ZoneId.getAvailableZoneIds()) invalid("timezone")
         if (input.profileVersion < 1) invalid("profileVersion")
         if (input.goalRevision < 0) invalid("goalRevision")
+        if (input.measurementOffsetMinutes !in -1080..1080) invalid("measurementOffsetMinutes")
         val zone = ZoneId.of(input.timezone)
         return database.forAccount(account) {
             val now = clock.instant().truncatedTo(ChronoUnit.SECONDS)
@@ -57,11 +58,13 @@ class AssessmentController(
     }
 
     override fun addWeightMeasurement(idempotencyKey: UUID, healthWeightInput: HealthWeightInput): ResponseEntity<HealthWeight> =
-        respond(measurements.addManual(account(), idempotencyKey, healthWeightInput.valueKg, healthWeightInput.measuredAt), 201)
+        respond(measurements.addManual(account(), idempotencyKey, healthWeightInput.valueKg,
+            healthWeightInput.measuredAt, healthWeightInput.measurementOffsetMinutes), 201)
 
     override fun updateWeightMeasurement(weightId: UUID, ifMatch: Long, idempotencyKey: UUID,
                                          healthWeightPatch: HealthWeightPatch): ResponseEntity<HealthWeight> =
-        respond(measurements.editManual(account(), weightId, ifMatch, idempotencyKey, healthWeightPatch.valueKg, healthWeightPatch.measuredAt))
+        respond(measurements.editManual(account(), weightId, ifMatch, idempotencyKey, healthWeightPatch.valueKg,
+            healthWeightPatch.measuredAt, healthWeightPatch.measurementOffsetMinutes))
 
     override fun deleteWeightMeasurement(weightId: UUID, ifMatch: Long, idempotencyKey: UUID): ResponseEntity<Unit> {
         measurements.deleteManual(account(), weightId, ifMatch, idempotencyKey)

@@ -26,7 +26,7 @@ class HealthBroker(properties: HealthProperties, environment: Environment) {
         options = { settings.options("cookie-health", "_INBOX.cookie.health") },
         initialize = { connection ->
             if (local && properties.provisionLocalBroker) DevelopmentJetStreamTopology.ensure(connection, STREAM, HealthDeletion.CONSUMER,
-                listOf(HealthDeletion.SUBJECT, HealthAssessmentExecution.SUBJECT))
+                listOf(HealthDeletion.SUBJECT, HealthDeletion.ACTIVATION, HealthAssessmentExecution.SUBJECT))
         },
     )
 

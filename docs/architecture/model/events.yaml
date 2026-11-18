@@ -35,7 +35,7 @@ events:
   - type: account.activated
     version: 1
     producer: identity
-    consumers: [user, notification]
+    consumers: [user, notification, health]
     payload: [userId, accountMetadata]
 
   - type: account.deletion.requested
@@ -242,6 +242,20 @@ events:
     consumers: [progress, notification]
     payload: [measurementId, userId, deleted, valueKg, measuredAt]
 
+    aggregate_version_required: true
+
+  - type: health.weight.changed
+    version: 2
+    producer: health
+    consumers: [progress, notification]
+    payload: [measurementId, userId, deleted, valueKg, measuredAt, measurementLocalDate, source]
+    aggregate_version_required: true
+
+  - type: health.connection_summary.changed
+    version: 1
+    producer: health
+    consumers: [progress]
+    payload: [userId, activeConnectionCount]
     aggregate_version_required: true
 
   - type: health.activity.changed

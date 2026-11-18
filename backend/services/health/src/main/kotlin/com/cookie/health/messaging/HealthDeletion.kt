@@ -1,6 +1,7 @@
 package com.cookie.health.messaging
 
 import com.cookie.health.persistence.HealthDatabase
+import com.cookie.health.persistence.HealthMeasurements
 import com.cookie.platform.messaging.JetStreamPullConsumer
 import com.cookie.health.config.HealthProperties
 import io.micrometer.core.instrument.MeterRegistry
@@ -50,12 +51,37 @@ class HealthDeletion(private val database: HealthDatabase, private val mapper: O
         }
     }
 
+    fun activate(body: ByteArray, measurements: HealthMeasurements) {
+        val (id, account) = try {
+            require(body.size <= 65536)
+            val event = mapper.readTree(body)
+            require(event.path("event_version").isIntegralNumber && event.path("event_version").asLong() == 1L)
+            require(event.path("event_type").asString() == "account.activated" && event.path("producer").asString() == "identity")
+            require(event.path("aggregate_type").asString() == "account")
+            Instant.parse(event.path("occurred_at").asString())
+            val user = UUID.fromString(event.path("payload").path("userId").asString())
+            require(UUID.fromString(event.path("aggregate_id").asString()) == user)
+            UUID.fromString(event.path("event_id").asString()) to user
+        } catch (_: Exception) {
+            throw InvalidHealthEvent("invalid_activation_envelope")
+        }
+        database.transactions.executeWithoutResult {
+            database.lock(account)
+            val inserted = database.jdbc.update(
+                "INSERT INTO inbox_events(consumer_name,event_id,event_type) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+                CONSUMER, id, "account.activated",
+            )
+            if (inserted != 0 && !database.deleted(account)) measurements.connectionSummary(account)
+        }
+    }
+
     companion object {
         private val ERASE_IN_ORDER = listOf("outbox_events", "assessment_executions", "command_receipts", "import_batches", "purge_jobs",
-            "weight_measurements", "activity_source_days", "activity_day_versions", "primary_connection_periods", "connections")
+            "weight_measurements", "activity_source_days", "activity_day_versions", "primary_connection_periods", "connections", "connection_summaries")
         const val CONSUMER = "health-lifecycle-v1"
         const val TYPE = "account.deletion.requested"
         const val SUBJECT = "cookie.events.account.deletion.requested.v1"
+        const val ACTIVATION = "cookie.events.account.activated.v1"
     }
 }
 
@@ -65,6 +91,7 @@ class HealthConsumer(
     private val properties: HealthProperties,
     deletion: HealthDeletion,
     assessments: HealthAssessmentExecution,
+    measurements: HealthMeasurements,
     database: HealthDatabase,
     metrics: MeterRegistry,
 ) {
@@ -75,8 +102,11 @@ class HealthConsumer(
         stream = HealthBroker.STREAM,
         durable = HealthDeletion.CONSUMER,
         handle = {
-            if (it.subject == HealthAssessmentExecution.SUBJECT) assessments.handle(it.subject, it.data)
-            else deletion.handle(it.subject, it.data)
+            when (it.subject) {
+                HealthAssessmentExecution.SUBJECT -> assessments.handle(it.subject, it.data)
+                HealthDeletion.ACTIVATION -> deletion.activate(it.data, measurements)
+                else -> deletion.handle(it.subject, it.data)
+            }
         },
         invalidReason = { (it as? InvalidHealthEvent)?.reason },
         quarantine = { message, reason ->

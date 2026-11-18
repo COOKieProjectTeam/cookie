@@ -36,7 +36,7 @@ object AssessmentWire {
         val integral = setOf("profileVersion","goalRevision")
         val decimal = setOf("heightCm","currentWeightKg","weeklyChangeKg")
         val tags = mapOf("foodRestrictions" to 5, "dietStyles" to 1, "allergies" to 14)
-        val required = text + integral + decimal + tags.keys + "standardAdultPolicyApplies"
+        val required = text + integral + decimal + tags.keys + setOf("standardAdultPolicyApplies", "measurementOffsetMinutes")
         if (!node.isObject || required.any { !node.hasNonNull(it) }) return false
         return node.properties().all { (field, value) ->
             when (field) {
@@ -44,6 +44,7 @@ object AssessmentWire {
                 in integral -> value.isIntegralNumber && value.canConvertToLong()
                 in decimal, "targetWeightKg" -> value.isNumber
                 "standardAdultPolicyApplies" -> value.isBoolean
+                "measurementOffsetMinutes" -> value.isIntegralNumber && value.canConvertToInt() && value.intValue() in -1080..1080
                 in tags -> value.isArray && value.size() <= tags.getValue(field) && value.all {
                     it.isString && it.asString().length in 1..40
                 } && value.toList().map(JsonNode::asString).toSet().size == value.size()

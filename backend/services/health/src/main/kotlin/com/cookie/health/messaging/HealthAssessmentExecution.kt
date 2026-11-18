@@ -108,7 +108,8 @@ class HealthAssessmentExecution(
             if (weightId == null) {
                 weightId = UUID.randomUUID()
                 store.insert(request.account, HealthMeasurements.Weight(weightId, input.measuredAt, input.currentWeightKg,
-                    1, "MANUAL", null, false), first = true)
+                    1, "MANUAL", null, false, input.measurementOffsetMinutes,
+                    store.measurementDate(input.measuredAt, input.measurementOffsetMinutes)), first = true)
             }
         }
         val payload = store.json(mapOf(

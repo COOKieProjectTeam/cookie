@@ -195,8 +195,9 @@ services:
     publishes:
       - health.activity.changed
       - health.weight.changed
+      - health.connection_summary.changed
       - health.goal_assessment.resolved
-    consumes: [account.deletion.requested, user.goal_assessment.requested]
+    consumes: [account.activated, account.deletion.requested, user.goal_assessment.requested]
     external_dependencies: [apple_healthkit, android_health_connect]
 
   - id: progress
@@ -221,6 +222,7 @@ services:
       - nutrition.progress_fact.replayed
       - health.activity.changed
       - health.weight.changed
+      - health.connection_summary.changed
       - user.profile.updated
       - user.goal.changed
       - user.goal_override.changed

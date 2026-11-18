@@ -1,5 +1,12 @@
 # Health Data Service
 
+Manual, onboarding and imported weight writes carry the UTC offset of the
+measurement location in minutes. Health derives and stores the local date
+before normalizing the instant. Offset corrections are part of the weight
+revision and signed assessment input. Weight v2 carries the stable date and
+source. Account activation and connection transitions emit a versioned count
+of active connections, independent of the presence of measurements.
+
 Health owns weight, daily activity and nutrition assessments. See the
 [accepted policy and invariants](../../../docs/adr/0016-health-data-service.md).
 User owns accepted goals. Its acceptance returns 202 and an attempt URI.

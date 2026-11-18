@@ -11,6 +11,8 @@ messaging:
     - type: health.goal_assessment.resolved
       version: 1
     - type: health.weight.changed
+      version: 2
+    - type: health.connection_summary.changed
       version: 1
     - type: health.activity.changed
       version: 2
@@ -18,6 +20,8 @@ messaging:
     - type: user.goal_assessment.requested
       version: 1
     - type: account.deletion.requested
+      version: 1
+    - type: account.activated
       version: 1
 synchronous_dependencies: [identity]
 infrastructure_dependencies: [postgresql, nats_jetstream, identity_jwks]
