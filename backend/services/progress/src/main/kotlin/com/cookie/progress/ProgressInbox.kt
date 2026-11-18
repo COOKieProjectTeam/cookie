@@ -106,11 +106,21 @@ internal class ProgressInbox(private val store: ProgressStore, private val mappe
     }
 
     private fun readFact(type: String, owner: String, event: JsonNode, payload: JsonNode): SourceFact {
+        val user = payload.uuid("userId")
         val key = when (type) {
             "nutrition.day.changed", "nutrition.water.changed", "user.goal_override.changed", "health.activity.changed" -> payload.date("localDate").toString()
             "health.weight.changed" -> payload.uuid("measurementId").toString()
-            else -> payload.uuid("userId").toString()
+            else -> user.toString()
         }
+        val aggregate = when (type) {
+            "nutrition.day.changed" -> "nutrition_day" to "$user:$key"
+            "nutrition.water.changed" -> "water_day" to "$user:$key"
+            "health.activity.changed" -> "activity_day" to "$user:$key"
+            "health.weight.changed" -> "weight_measurement" to key
+            "health.connection_summary.changed" -> "health_connections" to key
+            else -> "user" to user.toString()
+        }
+        require(event.string("aggregate_type") == aggregate.first && event.string("aggregate_id") == aggregate.second)
         when (type) {
             "user.profile.updated" -> {
                 payload.zone("timezone")
@@ -124,6 +134,13 @@ internal class ProgressInbox(private val store: ProgressStore, private val mappe
                 goal.positive("revision")
                 goal.date("effectiveFrom")
                 require(goal.string("outcome") in setOf("CALCULATED", "NO_CALORIE_GOAL"))
+                if (goal.string("outcome") == "CALCULATED") {
+                    goal.checkBand("calories", setOf("RANGE"), positiveLow = true)
+                    goal.checkBand("proteinG", setOf("RANGE"))
+                    goal.checkBand("fatG", setOf("RANGE"))
+                    goal.checkBand("carbsG", setOf("RANGE", "UPPER_LIMIT"))
+                    if (goal.path("fiberG").isObject) goal.checkBand("fiberG", setOf("AT_LEAST"))
+                }
             }
             "user.goal_override.changed" -> require(payload.has("override") &&
                 (payload.path("override").isNull || payload.string("override") == "CHEAT_DAY"))
@@ -198,5 +215,22 @@ private fun JsonNode.provenance() {
         "SINGLE" -> origin.zone("timezone")
         "EMPTY", "MIXED" -> Unit
         else -> error("Invalid timezone provenance")
+    }
+}
+
+private fun JsonNode.checkBand(field: String, allowed: Set<String>, positiveLow: Boolean = false) {
+    val band = path(field)
+    val kind = band.string("kind")
+    require(kind in allowed)
+    fun decimal(name: String) = band.path(name).also { require(it.isNumber) }.decimalValue().also { require(it.signum() >= 0) }
+    when (kind) {
+        "RANGE" -> {
+            val low = decimal("low")
+            val high = decimal("high")
+            require(high >= low && (!positiveLow || low.signum() > 0))
+            if (band.path("center").isNumber) require(decimal("center") in low..high)
+        }
+        "UPPER_LIMIT" -> decimal("high")
+        else -> decimal("low")
     }
 }

@@ -56,10 +56,11 @@ baseline; existing historical records never trigger an immediate catch-up burst.
   to other devices of the same occurrence is allowed.
 - Weigh: once per local date at the selected time, unless an extant measurement
   belongs to that date. Previous dates are not caught up.
-- Calories exceeded: once per local date when consumed calories exceed the known
-  positive effective target and `unlimitedCalories=false`.
-- Calories under target: independently once per date from 20:00 when consumed
-  calories are below 80% of that target. Missing data never means zero.
+- Calories exceeded: once per local date when known consumption exceeds the
+  effective upper bound and the date is eligible for goal warnings.
+- Calories under target: independently once per date from 20:00 when known
+  consumption falls below the effective lower bound. Unknown consumption,
+  no goal, mixed-zone diary data and cheat days suppress warnings.
 
 Food/water use elapsed UTC durations; daily schedules and quiet hours use the
 chosen IANA zone. A DST gap uses the first valid instant after the gap, an overlap

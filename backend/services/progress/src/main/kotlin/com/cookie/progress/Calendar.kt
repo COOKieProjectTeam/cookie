@@ -173,11 +173,20 @@ internal class ProgressCalendar(
     fun chooseGoal(user: UUID, day: CalendarDay, through: Long, before: Instant): GoalRevision? {
         val opened = checkNotNull(day.openedAt)
         val revisions = store.history(user, "user.goal.changed", through).map { GoalRevision(it.first) to it.second }
-            .filter { it.first.effectiveFrom <= day.date && it.second < before }
-        val atOpen = revisions.filter { it.second <= opened }.maxByOrNull { it.first.version }?.first
+            .filter { it.second < before }
+        val atOpen = revisions.filter { it.first.effectiveFrom <= day.date && it.second <= opened }
+            .maxByOrNull { it.first.version }?.first
         val hadGoal = db.queryForObject("SELECT first_goal_applied FROM progress_accounts WHERE user_id=?", Boolean::class.java, user)
         if (hadGoal == true || atOpen?.calculated == true) return atOpen
-        return revisions.firstOrNull { it.first.calculated && it.second > opened }?.first ?: atOpen
+        val profiles = profiles(user, through)
+        return revisions.firstOrNull { (goal, commit) ->
+            goal.calculated && commit >= opened && (
+                goal.effectiveFrom <= day.date ||
+                    profiles.lastOrNull { it.seq <= checkNotNull(goal.source.sequence) }?.let {
+                        goal.effectiveFrom <= commit.atZone(it.zone).toLocalDate()
+                    } == true
+                )
+        }?.first ?: atOpen
     }
 
     fun cheatDay(user: UUID, date: LocalDate, through: Long? = null): Boolean =
@@ -189,7 +198,13 @@ internal class ProgressCalendar(
             dayRow, user,
         ).singleOrNull()
         if (previous == null) {
-            val first = profiles(user).firstOrNull()
+            val profiles = profiles(user)
+            val initial = profiles.firstOrNull()
+            val groupEnd = initial?.let {
+                db.queryForObject("SELECT last_seq FROM source_groups WHERE user_id=? AND owner='user' AND ? BETWEEN first_seq AND last_seq",
+                    Long::class.java, user, it.seq)
+            }
+            val first = groupEnd?.let { end -> profiles.last { it.seq <= end } }
             if (first == null || first.at > now) {
                 due(user, first?.at, now)
                 return null

@@ -149,10 +149,83 @@ class ProgressPersistenceTest {
         }
     }
 
+    @Test
+    fun `range statistics use metric coverage and show late facts separately from outcomes`() {
+        val user = UUID.randomUUID()
+        val beginning = LocalDate.parse("2026-11-12")
+        val last = beginning.plusDays(6)
+        val clock = Clock.fixed(Instant.parse("2026-11-20T00:00:00Z"), java.time.ZoneOffset.UTC)
+        val reads = ProgressReads(store, ProgressCalendar(store, mapper, clock), clock, mapper)
+        userBaseline(user)
+        group(user, "user", 1, 2, "2026-11-12T00:00:00Z", "0/E100")
+        for (date in beginning.datesUntil(last.plusDays(1))) {
+            val start = date.atStartOfDay(java.time.ZoneOffset.UTC).toOffsetDateTime()
+            store.jdbc.update("""INSERT INTO calendar_days(user_id,local_date,zone_id,state,opened_at,closes_at,profile_seq)
+                VALUES (?,?,'UTC','CLOSED',?,?,1)""", user, date, start, start.plusDays(1))
+            val cheat = date == last
+            store.jdbc.update("""INSERT INTO day_results(user_id,local_date,outcome,cheat_day,credit,nutrition_before_seq,user_before_seq,facts)
+                VALUES (?,?,?,?,?,0,2,'{}')""", user, date, if (cheat) "CHEAT_DAY_CREDIT" else "INSUFFICIENT_DATA", cheat, if (cheat) 1 else 0)
+        }
+        food(user, beginning.toString(), 1, 1, calories = "1800.000", protein = "80")
+        food(user, beginning.plusDays(1).toString(), 2, 1, calories = "2100.000", protein = "100")
+        food(user, last.toString(), 3, 1, calories = "2400.000")
+        group(user, "nutrition", 1, 3, "2026-11-19T09:00:00Z", "0/E101")
+        val result = mapper.valueToTree<tools.jackson.databind.JsonNode>(reads.range(user, beginning, last))
+        val sum = result.path("summary")
+        assertEquals(7, result.path("days").size())
+        assertEquals(7, sum.path("closedDays").intValue())
+        assertEquals(3, sum.path("closedFoodDays").intValue())
+        assertEquals(1, sum.path("creditedDays").intValue())
+        assertEquals("6300.000", sum.path("nutrients").path("caloriesKcal").path("sum").stringValue())
+        assertEquals("2100.000", sum.path("nutrients").path("caloriesKcal").path("average").stringValue())
+        assertEquals(2, sum.path("nutrients").path("proteinG").path("coveredDays").intValue())
+        assertEquals("90.000", sum.path("nutrients").path("proteinG").path("average").stringValue())
+        assertEquals(2, sum.path("macroComposition").path("commonDays").intValue())
+        assertEquals("CHEAT_DAY_CREDIT", result.path("days")[6].path("achievement").path("outcome").stringValue())
+        assertThrows(ProgressFailure::class.java) { reads.range(user, beginning, beginning.plusDays(366)) }
+    }
+
+    @Test
+    fun `reads apply the first goal immediately and mixed zones retract the notification snapshot`() {
+        val user = UUID.randomUUID()
+        val date = LocalDate.parse("2026-11-18")
+        val clock = Clock.fixed(Instant.parse("2026-11-18T20:00:00Z"), java.time.ZoneOffset.UTC)
+        val snapshots = ProgressNotificationSnapshots(store, mapper)
+        val calendar = ProgressCalendar(store, mapper, clock, snapshots::emit)
+        val reads = ProgressReads(store, calendar, clock, mapper)
+        receive(user, "user.profile.updated", "user", revision = 1, data = mapOf(
+            "sourceSeq" to 1, "timezone" to "Europe/Moscow", "baseline" to true, "hasAcceptedGoal" to false, "goalRevision" to 0,
+        ))
+        group(user, "user", 1, 1, "2026-11-18T09:00:00Z", "0/F100")
+        food(user, date.toString(), 1, 1, calories = "2000.000", protein = "100")
+        group(user, "nutrition", 1, 1, "2026-11-18T10:00:00Z", "0/F101")
+        calendar.run(user)
+        calculatedGoal(user)
+        group(user, "user", 2, 2, "2026-11-18T11:00:00Z", "0/F102")
+        val displayed = mapper.valueToTree<tools.jackson.databind.JsonNode>(reads.day(user, date))
+        assertEquals("MACROS_MET", displayed.path("achievement").path("outcome").stringValue())
+        assertEquals(1L, displayed.path("streak").path("current").longValue())
+        calendar.run(user)
+        calendar.run(user)
+        food(user, date.toString(), 2, 2, calories = "2400.000", protein = "100", mixed = true)
+        group(user, "nutrition", 2, 2, "2026-11-18T12:00:00Z", "0/F103")
+        calendar.run(user)
+        val emitted = store.jdbc.query("""SELECT envelope::text FROM outbox_events WHERE user_id=? AND subject='cookie.events.progress.day.updated.v2'
+            ORDER BY (envelope->>'aggregate_version')::bigint""", { row, _ -> mapper.readTree(row.getString(1)) }, user)
+        assertEquals(listOf(1L, 2L, 3L), emitted.map { it.path("aggregate_version").longValue() })
+        assertTrue(emitted[1].path("payload").path("calories").path("consumed").isNumber)
+        assertTrue(emitted[2].path("payload").path("calories").path("consumed").isNull)
+        assertEquals("Europe/Moscow", emitted[2].path("payload").path("timezone").stringValue())
+    }
+
     private fun userBaseline(user: UUID) {
         receive(user, "user.profile.updated", "user", revision = 1, data = mapOf(
             "sourceSeq" to 1, "timezone" to "Europe/Moscow", "baseline" to true, "hasAcceptedGoal" to false, "goalRevision" to 0,
         ))
+        calculatedGoal(user)
+    }
+
+    private fun calculatedGoal(user: UUID) {
         fun band(low: Int, high: Int) = mapOf("kind" to "RANGE", "low" to low, "high" to high)
         receive(user, "user.goal.changed", "user", wire = 2, revision = 2, data = mapOf(
             "sourceSeq" to 2,
@@ -174,11 +247,11 @@ class ProgressPersistenceTest {
 
     private fun food(
         user: UUID, day: String, seq: Long, revision: Long, id: UUID = UUID.randomUUID(),
-        calories: String = "9000000000000.001", protein: String? = null,
+        calories: String = "9000000000000.001", protein: String? = null, mixed: Boolean = false,
     ) {
         receive(user, "nutrition.day.changed", "nutrition", wire = 3, revision = revision, id = id, data = mapOf(
             "localDate" to day, "mealCount" to 1, "sourceSeq" to seq,
-            "zoneProvenance" to mapOf("state" to "SINGLE", "timezone" to "Europe/Moscow"),
+            "zoneProvenance" to if (mixed) mapOf("state" to "MIXED") else mapOf("state" to "SINGLE", "timezone" to "Europe/Moscow"),
             "nutritionTotals" to mapOf("calories" to calories.toBigDecimal(), "proteinG" to protein?.toBigDecimal(),
                 "fatG" to 10, "carbsG" to 15, "fiberG" to null),
         ))
@@ -188,10 +261,17 @@ class ProgressPersistenceTest {
         user: UUID, type: String, producer: String, wire: Int = 1, revision: Long? = null, id: UUID = UUID.randomUUID(),
         data: Map<String, Any?>,
     ) {
+        val (aggregate, key) = when (type) {
+            "account.deletion.requested" -> "account" to user.toString()
+            "nutrition.day.changed" -> "nutrition_day" to "$user:${data.getValue("localDate")}"
+            "health.connection_summary.changed" -> "health_connections" to user.toString()
+            "user.profile.updated", "user.goal.changed" -> "user" to user.toString()
+            else -> "progress_source" to user.toString()
+        }
         val envelope = mapper.writeValueAsBytes(mapOf(
             "event_id" to id, "event_type" to type, "event_version" to wire, "occurred_at" to Instant.now().toString(),
-            "producer" to producer, "aggregate_type" to if (producer == "identity") "account" else "progress_source",
-            "aggregate_id" to user, "aggregate_version" to revision, "payload" to data + ("userId" to user),
+            "producer" to producer, "aggregate_type" to aggregate,
+            "aggregate_id" to key, "aggregate_version" to revision, "payload" to data + ("userId" to user),
         ))
         inbox.receive("cookie.events.$type.v$wire", envelope)
     }

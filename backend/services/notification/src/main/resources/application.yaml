@@ -26,6 +26,8 @@ spring:
       connect-timeout: 1s
       timeout: 1s
   jackson:
+    deserialization:
+      use-big-decimal-for-floats: true
     default-property-inclusion: non_null
   task:
     scheduling:
