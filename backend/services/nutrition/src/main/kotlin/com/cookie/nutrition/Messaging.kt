@@ -1,5 +1,6 @@
 package com.cookie.nutrition
 
+import com.cookie.platform.messaging.ProgressSourceRequest
 import io.micrometer.core.instrument.MeterRegistry
 import io.nats.client.PullSubscribeOptions
 import io.nats.client.JetStreamSubscription
@@ -79,9 +80,11 @@ class AccountDeletion(private val service: NutritionService,private val mapper: 
             service.lock(user)
             if(service.jdbc.update("INSERT INTO inbox_events(event_id) VALUES (?) ON CONFLICT DO NOTHING",eventId)==0) return@executeWithoutResult
             service.jdbc.update("INSERT INTO account_tombstones(user_id,deletion_request_id,deleted_at) VALUES (?,?,?) ON CONFLICT DO NOTHING",user,requestId,java.sql.Timestamp.from(at))
-            listOf("meals","water_entries","saved_dishes","day_versions","outbox_events").forEach { table -> service.jdbc.update("DELETE FROM $table WHERE user_id=?",user) }
+            listOf("meals","water_entries","saved_dishes","day_versions","outbox_events","progress_source_accounts").forEach { table -> service.jdbc.update("DELETE FROM $table WHERE user_id=?",user) }
         }
     }
+
+    fun handleProgress(subject: String, data: ByteArray) = service.handleProgressRequest(subject, data)
 }
 
 @Component
@@ -95,8 +98,8 @@ class DeletionConsumer(private val nats: NatsJetStreamConnection,private val han
             val sub=subscription?.takeIf { it.isActive } ?: run {
                 val connection=nats.connected()
                 if(local) connection.jetStreamManagement().addOrUpdateConsumer(NatsJetStreamConnection.STREAM_NAME,
-                    ConsumerConfiguration.builder().durable("nutrition-account-deletion-v1").filterSubject(SUBJECT).ackPolicy(AckPolicy.Explicit).ackWait(Duration.ofSeconds(30)).maxAckPending(20).build())
-                connection.jetStream().subscribe(SUBJECT,PullSubscribeOptions.bind(NatsJetStreamConnection.STREAM_NAME,"nutrition-account-deletion-v1")).also { subscription=it }
+                    ConsumerConfiguration.builder().durable("nutrition-account-deletion-v1").filterSubjects(SUBJECTS).ackPolicy(AckPolicy.Explicit).ackWait(Duration.ofSeconds(30)).maxAckPending(20).build())
+                connection.jetStream().subscribe(null,PullSubscribeOptions.bind(NatsJetStreamConnection.STREAM_NAME,"nutrition-account-deletion-v1")).also { subscription=it }
             }
             for(message in sub.fetch(20,Duration.ofMillis(200))) {
                 consume(message)
@@ -107,7 +110,11 @@ class DeletionConsumer(private val nats: NatsJetStreamConnection,private val han
     }
     internal fun consume(message: io.nats.client.Message) {
         try {
-            try { handler.handle(message.subject,message.data);message.ackSync(Duration.ofSeconds(2)) }
+            try {
+                if (message.subject == SUBJECT) handler.handle(message.subject,message.data)
+                else handler.handleProgress(message.subject,message.data)
+                message.ackSync(Duration.ofSeconds(2))
+            }
             catch (e: NutritionFailure) {
                 if(e.status!=400) throw e
                 // Rejection must commit before TERM; otherwise leave this message for redelivery.
@@ -121,5 +128,8 @@ class DeletionConsumer(private val nats: NatsJetStreamConnection,private val han
             metrics.counter("cookie.nutrition.consumer.recovery.failure").increment()
         }
     }
-    companion object { const val SUBJECT="cookie.events.account.deletion.requested.v1" }
+    companion object {
+        const val SUBJECT="cookie.events.account.deletion.requested.v1"
+        val SUBJECTS = listOf(SUBJECT) + ProgressSourceRequest.subjects("nutrition")
+    }
 }

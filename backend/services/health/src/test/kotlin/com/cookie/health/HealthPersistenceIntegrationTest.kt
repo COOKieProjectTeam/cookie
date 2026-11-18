@@ -33,6 +33,7 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.json.JsonMapper
+import tools.jackson.databind.node.ObjectNode
 import java.time.Clock
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -106,10 +107,10 @@ class HealthPersistenceIntegrationTest {
         val id = connection(user, "APPLE_HEALTH")
         val oldUuid = "00000000-0000-4000-8000-000000000010"
         val newUuid = "00000000-0000-4000-8000-000000000011"
-        val old = read("""{"op":"WEIGHT_UPSERT","externalId":"$oldUuid","valueKg":70,"measuredAt":"2026-11-18T11:30:00Z"}""")
+        val old = read("""{"op":"WEIGHT_UPSERT","externalId":"$oldUuid","valueKg":70,"measuredAt":"2026-11-18T11:30:00Z","measurementOffsetMinutes":0}""")
         val first = imports.applyBatch(user, id, UUID.randomUUID(), batch(1, 1, old))
         val deletion = read("""{"op":"WEIGHT_DELETE","externalId":"$oldUuid"}""")
-        val replacement = read("""{"op":"WEIGHT_UPSERT","externalId":"$newUuid","valueKg":71,"measuredAt":"2026-11-18T11:30:00Z"}""")
+        val replacement = read("""{"op":"WEIGHT_UPSERT","externalId":"$newUuid","valueKg":71,"measuredAt":"2026-11-18T11:30:00Z","measurementOffsetMinutes":0}""")
         val second = imports.applyBatch(user, id, UUID.randomUUID(), batch(1, 2, deletion, replacement))
         assertThat(second.path("items")[0].path("measurementId")).isEqualTo(first.path("items")[0].path("measurementId"))
         assertThat(second.path("items")[0].path("version").asLong()).isEqualTo(2)
@@ -135,6 +136,67 @@ class HealthPersistenceIntegrationTest {
     }
 
     @Test
+    fun weightImportPersistsMeasurementDateAndRevisesOffsetAtSameInstant() {
+        val user = UUID.randomUUID()
+        val id = connection(user, "HEALTH_CONNECT")
+        val original = weight(72, -720)
+        val first = imports.applyBatch(user, id, UUID.randomUUID(), batch(1, 1, original)).path("items")[0]
+        val stored = requireNotNull(measurements.byExternal(user, id, "hc-42"))
+        assertThat(stored.measurementLocalDate.toString()).isEqualTo("2026-11-17")
+
+        val corrected = weight(72, 840)
+        val second = imports.applyBatch(user, id, UUID.randomUUID(), batch(1, 2, corrected)).path("items")[0]
+        val revised = requireNotNull(measurements.byExternal(user, id, "hc-42"))
+        assertThat(second.path("measurementId")).isEqualTo(first.path("measurementId"))
+        assertThat(second.path("version").asLong()).isEqualTo(2)
+        assertThat(revised.measuredAt?.toInstant()).isEqualTo(stored.measuredAt?.toInstant())
+        assertThat(revised.measurementOffsetMinutes).isEqualTo(840)
+        assertThat(revised.measurementLocalDate.toString()).isEqualTo("2026-11-19")
+        val repeated = imports.applyBatch(user, id, UUID.randomUUID(), batch(1, 3, corrected)).path("items")[0]
+        assertThat(repeated.path("status").asString()).isEqualTo("UNCHANGED")
+        assertThat(repeated.path("version").asLong()).isEqualTo(2)
+        assertThat(owner.queryForList(
+            """SELECT payload->>'measurementLocalDate' FROM outbox_events
+               WHERE user_id=? AND event_type='health.weight.changed' AND event_version=2 ORDER BY aggregate_version""",
+            String::class.java, user,
+        )).containsExactly("2026-11-17", "2026-11-19")
+    }
+
+    @Test
+    fun weightImportRejectsMissingFractionalAndOutOfBoundsOffsets() {
+        val user = UUID.randomUUID()
+        val id = connection(user, "HEALTH_CONNECT")
+        for (offset in listOf(null, "null", "1.5", "1081", "-1081", "4294967296")) {
+            val item = weight(72) as ObjectNode
+            if (offset == null) item.remove("measurementOffsetMinutes") else item.set("measurementOffsetMinutes", read(offset))
+            assertThatThrownBy { imports.applyBatch(user, id, UUID.randomUUID(), batch(1, 1, item)) }
+                .isInstanceOfSatisfying(HealthFailure::class.java) { assertThat(it.field).isEqualTo("measurementOffsetMinutes") }
+        }
+        val accepted = imports.applyBatch(user, id, UUID.randomUUID(), batch(1, 1, weight(72, 1080), weight(72, -1080)))
+        assertThat(accepted.path("items").toList().map { it.path("status").asString() }).containsExactly("APPLIED", "APPLIED")
+    }
+
+    @Test
+    fun connectionChangesPublishOnlyChangedActiveCounts() {
+        val user = UUID.randomUUID()
+        val id = connection(user, "HEALTH_CONNECT")
+        val disconnect = UUID.randomUUID()
+        imports.changeConnection(user, id, 1, disconnect, resume = false)
+        imports.changeConnection(user, id, 1, disconnect, resume = false)
+        imports.changeConnection(user, id, 2, UUID.randomUUID(), resume = false)
+        imports.changeConnection(user, id, 2, UUID.randomUUID(), resume = true)
+        val purge = UUID.randomUUID()
+        imports.startPurge(user, id, purge, 3)
+        imports.startPurge(user, id, purge, 3)
+        val changes = owner.query(
+            """SELECT aggregate_version,payload->>'activeConnectionCount' FROM outbox_events
+               WHERE user_id=? AND event_type='health.connection_summary.changed' AND event_version=1 ORDER BY aggregate_version""",
+            { row, _ -> row.getLong(1) to row.getLong(2) }, user,
+        )
+        assertThat(changes).containsExactly(1L to 1L, 2L to 0L, 3L to 1L, 4L to 0L)
+    }
+
+    @Test
     fun cleanupRetainsEvidenceAndRejectsEarlyPrimaryChange() {
         val user = UUID.randomUUID()
         val old = connection(user, "APPLE_HEALTH")
@@ -144,7 +206,7 @@ class HealthPersistenceIntegrationTest {
         assertThatThrownBy { imports.applyBatch(user, next, UUID.randomUUID(), batch(1, 1, premature)) }.hasMessage("INVALID_REQUEST")
 
         val key = UUID.randomUUID()
-        val appleWeight = read("""{"op":"WEIGHT_UPSERT","externalId":"00000000-0000-4000-8000-000000000010","valueKg":70,"measuredAt":"2026-11-18T11:30:00Z"}""")
+        val appleWeight = read("""{"op":"WEIGHT_UPSERT","externalId":"00000000-0000-4000-8000-000000000010","valueKg":70,"measuredAt":"2026-11-18T11:30:00Z","measurementOffsetMinutes":0}""")
         val immutablePacket = batch(1, 1, appleWeight)
         imports.applyBatch(user, old, key, immutablePacket)
         owner.update("UPDATE import_batches SET created_at=now()-interval '31 days'")
@@ -169,13 +231,13 @@ class HealthPersistenceIntegrationTest {
         val other = UUID.randomUUID()
         val key = UUID.randomUUID()
         val measured = OffsetDateTime.parse("2026-11-18T11:00:00Z")
-        val weight = measurements.addManual(user, key, 70.toBigDecimal(), measured)
-        assertThat(measurements.fingerprint(measurements.addManual(user, key, 70.toBigDecimal(), measured))).isEqualTo(measurements.fingerprint(weight))
+        val weight = measurements.addManual(user, key, 70.toBigDecimal(), measured, 0)
+        assertThat(measurements.fingerprint(measurements.addManual(user, key, 70.toBigDecimal(), measured, 0))).isEqualTo(measurements.fingerprint(weight))
         val props = HealthProperties().apply { natsUrl = "nats://admin:fixture-only@${nats.host}:${nats.getMappedPort(4222)}" }
         val broker = HealthBroker(props, MockEnvironment().withProperty("spring.profiles.active", "test"))
         try {
             HealthPublisher(broker, db, props, SimpleMeterRegistry(), mapper).poll()
-            val event = broker.connection().jetStreamManagement().getLastMessage(HealthBroker.STREAM, "cookie.events.health.weight.changed.v1")
+            val event = broker.connection().jetStreamManagement().getLastMessage(HealthBroker.STREAM, "cookie.events.health.weight.changed.v2")
             assertThat(mapper.readTree(event.data).path("payload").path("measurementId")).isEqualTo(weight.path("measurementId"))
         } finally { broker.close() }
 
@@ -189,9 +251,9 @@ class HealthPersistenceIntegrationTest {
         consumer.handle(HealthDeletion.SUBJECT, deletion)
         assertThat(owner.queryForObject("SELECT count(*) FROM inbox_events", Int::class.java)).isEqualTo(1)
         assertThat(owner.queryForObject("SELECT count(*) FROM outbox_events WHERE user_id=?", Int::class.java, user)).isZero()
-        assertThatThrownBy { measurements.addManual(user, key, 70.toBigDecimal(), measured) }.hasMessage("NOT_FOUND")
+        assertThatThrownBy { measurements.addManual(user, key, 70.toBigDecimal(), measured, 0) }.hasMessage("NOT_FOUND")
         assertThatThrownBy { db.jdbc.update("DELETE FROM account_tombstones") }.isInstanceOf(org.springframework.dao.DataAccessException::class.java)
-        assertThat(measurements.addManual(other, key, 70.toBigDecimal(), measured).path("source").asString()).isEqualTo("MANUAL")
+        assertThat(measurements.addManual(other, key, 70.toBigDecimal(), measured, 0).path("source").asString()).isEqualTo("MANUAL")
     }
 
     @Test
@@ -205,7 +267,7 @@ class HealthPersistenceIntegrationTest {
             ))
             val lifecycle = HealthDeletion(db,mapper)
             fun delete() = lifecycle.handle(HealthDeletion.SUBJECT,payload)
-            fun write() { measurements.addManual(user,UUID.randomUUID(),70.toBigDecimal(),instant.minusSeconds(1).atOffset(ZoneOffset.UTC)) }
+            fun write() { measurements.addManual(user,UUID.randomUUID(),70.toBigDecimal(),instant.minusSeconds(1).atOffset(ZoneOffset.UTC), 0) }
 
             val locked = CountDownLatch(1)
             val release = CountDownLatch(1)
@@ -237,7 +299,7 @@ class HealthPersistenceIntegrationTest {
         val host = "${nats.host}:${nats.getMappedPort(4222)}"
         Nats.connect("nats://admin:fixture-only@$host").use { admin ->
             DevelopmentJetStreamTopology.ensure(admin, HealthBroker.STREAM, HealthDeletion.CONSUMER,
-                listOf(HealthDeletion.SUBJECT, "cookie.events.user.goal_assessment.requested.v1"))
+                listOf(HealthDeletion.SUBJECT, HealthDeletion.ACTIVATION, "cookie.events.user.goal_assessment.requested.v1"))
         }
         val properties = HealthProperties().apply {
             natsUrl = "nats://health:fixture-only@$host"
@@ -270,10 +332,11 @@ class HealthPersistenceIntegrationTest {
             duplicate.ackSync(Duration.ofSeconds(3))
             assertThat(owner.queryForObject("SELECT count(*) FROM inbox_events", Int::class.java)).isEqualTo(1)
             assertThat(db.deleted(account)).isTrue()
-            assertThat(js.publish("cookie.events.health.weight.changed.v1", "{}".toByteArray()).seqno).isPositive()
+            assertThat(js.publish("cookie.events.health.weight.changed.v2", "{}".toByteArray()).seqno).isPositive()
+            assertThat(js.publish("cookie.events.health.connection_summary.changed.v1", "{}".toByteArray()).seqno).isPositive()
             assertThatThrownBy { js.publish("cookie.events.account.activated.v1", "{}".toByteArray()) }
                 .isInstanceOf(Exception::class.java)
-            assertThatThrownBy { admin.getLastMessage(HealthBroker.STREAM, "cookie.events.health.weight.changed.v1") }
+            assertThatThrownBy { admin.getLastMessage(HealthBroker.STREAM, "cookie.events.health.weight.changed.v2") }
                 .isInstanceOf(Exception::class.java)
         } finally { broker.close() }
     }
@@ -285,7 +348,7 @@ class HealthPersistenceIntegrationTest {
     private fun batch(generation: Int, sequence: Int, vararg items: JsonNode): JsonNode =
         mapper.valueToTree(mapOf("generation" to generation, "seq" to sequence, "items" to items))
     private fun activity(steps: Int) = read("""{"op":"ACTIVITY_SNAPSHOT","localDate":"2026-11-18","timezone":"UTC","steps":$steps,"activeKcal":null}""")
-    private fun weight(kg: Int) = read("""{"op":"WEIGHT_UPSERT","externalId":"hc-42","valueKg":$kg,"measuredAt":"2026-11-18T11:30:00Z"}""")
+    private fun weight(kg: Int, offset: Int = 0) = read("""{"op":"WEIGHT_UPSERT","externalId":"hc-42","valueKg":$kg,"measuredAt":"2026-11-18T11:30:00Z","measurementOffsetMinutes":$offset}""")
     private fun read(value: String): JsonNode = mapper.readTree(value)
 
     companion object {
@@ -297,7 +360,8 @@ class HealthPersistenceIntegrationTest {
                 {user: admin, password: fixture-only},
                 {user: health, password: fixture-only, permissions: {
                   publish: {allow: [
-                    "cookie.events.health.weight.changed.v1",
+                    "cookie.events.health.weight.changed.v2",
+                    "cookie.events.health.connection_summary.changed.v1",
                     "cookie.events.health.activity.changed.v2",
                     "cookie.events.health.goal_assessment.resolved.v1",
                     "${'$'}JS.API.CONSUMER.INFO.COOKIE_EVENTS.health-lifecycle-v1",

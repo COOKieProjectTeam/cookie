@@ -1,6 +1,7 @@
 package com.cookie.user
 
 import com.cookie.user.bootstrap.UserMigrationApplication
+import com.cookie.user.persistence.runUserCommitWorker
 import org.springframework.boot.SpringApplication
 import org.springframework.boot.WebApplicationType
 import org.springframework.boot.autoconfigure.SpringBootApplication
@@ -15,6 +16,7 @@ fun main(args: Array<String>) {
         ?: System.getenv("COOKIE_USER_MODE") ?: "runtime"
     when(mode) {
         "runtime" -> SpringApplication.run(UserApplication::class.java,*args)
+        "progress-capture" -> runUserCommitWorker()
         "migrate" -> SpringApplication(UserMigrationApplication::class.java).apply {
             setWebApplicationType(WebApplicationType.NONE)
             setDefaultProperties(mapOf("spring.config.name" to "user-migrate"))

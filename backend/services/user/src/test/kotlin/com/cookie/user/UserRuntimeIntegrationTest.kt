@@ -131,10 +131,18 @@ class UserRuntimeIntegrationTest {
                 subscription.fetch(20,Duration.ofMillis(200)).forEach { received.add(mapper.readTree(it.data));it.ack() }
                 received.any { it.path("payload").path("userId").stringValue()==a.toString() && it.path("payload").path("locale").stringValue()=="en" }
             }
-            val event=received.last { it.path("payload").path("userId").stringValue()==a.toString() }
+            val event=received.first { it.path("payload").path("userId").stringValue()==a.toString() && it.path("payload").path("locale").stringValue()=="en" }
             assertThat(event.path("aggregate_version").longValue()).isEqualTo(2)
             assertThat(event.path("producer").stringValue()).isEqualTo("user")
-            assertThat(event.path("payload").properties().map { it.key }).containsExactlyInAnyOrder("userId","changedFields","timezone","locale","onboardingCompleted")
+            val payload = event.path("payload")
+            assertThat(payload.properties().map { it.key }).containsExactlyInAnyOrder(
+                "userId", "changedFields", "timezone", "locale", "onboardingCompleted",
+                "baseline", "sourceSeq", "goalRevision", "hasAcceptedGoal",
+            )
+            assertThat(payload.path("baseline").booleanValue()).isFalse()
+            assertThat(payload.path("sourceSeq").longValue()).isEqualTo(2L)
+            assertThat(payload.path("goalRevision").longValue()).isZero()
+            assertThat(payload.path("hasAcceptedGoal").booleanValue()).isFalse()
         }
     }
     @Test fun `cheat day rejects numerical overrides`() {

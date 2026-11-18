@@ -15,6 +15,7 @@
     "cookie.events.nutrition.meal.deleted.v1",
     "cookie.events.nutrition.water.changed.v1",
     "cookie.events.health.weight.changed.v1",
+    "cookie.events.health.weight.changed.v2",
     "cookie.events.user.profile.updated.v1",
     "cookie.events.progress.day.updated.v1",
     "cookie.events.progress.day.updated.v2"

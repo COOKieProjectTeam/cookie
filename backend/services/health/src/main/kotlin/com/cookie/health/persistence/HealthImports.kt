@@ -50,6 +50,7 @@ class HealthImports(private val measurements: HealthMeasurements, private val cl
                 user, connection.connectionId, platform, timezone, connection.status, connection.initialFrom, today,
             )
             if (latestPrimary(user) == null) schedule(user, Primary(connection.connectionId, connection.initialFrom, timezone, 1))
+            measurements.connectionSummary(user)
             measurements.json(connection)
         }
 
@@ -74,6 +75,7 @@ class HealthImports(private val measurements: HealthMeasurements, private val cl
                 "UPDATE connections SET generation=?,version=?,status=?,next_seq=? WHERE user_id=? AND id=?",
                 after.generation, after.version, after.status, after.nextSeq, user, id,
             )
+            measurements.connectionSummary(user)
             measurements.json(after)
         }
 
@@ -175,7 +177,7 @@ class HealthImports(private val measurements: HealthMeasurements, private val cl
         val version = previous?.version ?: 0
         val id = previous?.measurementId ?: UUID.randomUUID()
         fun status(value: String, current: Long) = mapOf("status" to value, "measurementId" to id, "version" to current)
-        fields(item, if (deleted) setOf("op", "externalId") else setOf("op", "externalId", "valueKg", "measuredAt"))
+        fields(item, if (deleted) setOf("op", "externalId") else setOf("op", "externalId", "valueKg", "measuredAt", "measurementOffsetMinutes"))
         if (deleted) {
             if (previous?.deleted == true) return status("ALREADY_DELETED", version)
             if (previous != null) return status("APPLIED", measurements.delete(user, previous).version)
@@ -184,13 +186,18 @@ class HealthImports(private val measurements: HealthMeasurements, private val cl
         }
         val value = item.path("valueKg").takeIf { it.isNumber }?.decimalValue() ?: invalid("valueKg")
         val measuredAt = OffsetDateTime.parse(item.path("measuredAt").asString())
+        val offset = item.path("measurementOffsetMinutes")
+            .takeIf { it.isIntegralNumber && it.canConvertToInt() && it.intValue() in -1080..1080 }
+            ?.intValue() ?: invalid("measurementOffsetMinutes")
         measurements.validateWeight(value, measuredAt)
         if (previous == null && measuredAt.atZoneSameInstant(zone(source.timezone)).toLocalDate() < source.initialFrom) invalid("measuredAt")
         if (previous?.deleted == true) return status("ALREADY_DELETED", version)
-        if (previous?.valueKg?.compareTo(value) == 0 && previous.measuredAt?.toInstant() == measuredAt.toInstant()) {
+        if (previous?.valueKg?.compareTo(value) == 0 && previous.measuredAt?.toInstant() == measuredAt.toInstant() &&
+            previous.measurementOffsetMinutes == offset) {
             return status("UNCHANGED", version)
         }
-        val current = Weight(id, measuredAt, value, version + 1, source.platform, source.connectionId, false)
+        val current = Weight(id, measuredAt, value, version + 1, source.platform, source.connectionId, false,
+            measurementOffsetMinutes = offset, measurementLocalDate = measurements.measurementDate(measuredAt, offset))
         if (previous == null) measurements.insert(user, current, key) else measurements.update(user, current)
         return status("APPLIED", current.version)
     }
@@ -275,6 +282,7 @@ class HealthImports(private val measurements: HealthMeasurements, private val cl
             jdbc.update("UPDATE connections SET generation=generation+1,version=version+1,status='PURGING' WHERE user_id=? AND id=?", user, id)
             jdbc.update("DELETE FROM outbox_events WHERE user_id=? AND connection_id=? AND payload->>'deleted'='false'", user, id)
             jdbc.update("INSERT INTO purge_jobs(user_id,connection_id,id) VALUES (?,?,?)", user, id, purgeId)
+            measurements.connectionSummary(user)
             measurements.json(Purge(purgeId, "PENDING"))
         }
 

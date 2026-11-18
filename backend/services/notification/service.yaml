@@ -25,6 +25,8 @@ messaging:
       version: 1
     - type: health.weight.changed
       version: 1
+    - type: health.weight.changed
+      version: 2
     - type: user.profile.updated
       version: 1
     - type: progress.day.updated

@@ -81,3 +81,8 @@ superseded. Both mobile platforms register opaque FCM tokens.
 The Health frame still contains the labels “Progress API” and
 `account.deletion.completed`. The Health API belongs to Health under ADR 0016.
 The only deletion lifecycle message remains the request defined by ADR 0011.
+
+The [Progress frame](https://miro.com/app/board/uXjVGuhJKXc=/?moveToWidget=3458764681044183056)
+also shows an outgoing `account.deletion.completed`. Progress consumes the
+request and erases its own data under ADR 0011. Boundaries and evidence for
+Progress are specified in [ADR 0017](../adr/0017-progress-day-boundaries.md).

@@ -18,12 +18,22 @@ messaging:
       version: 2
     - type: user.hydration_goal.changed
       version: 1
+    - type: user.progress_commit.recorded
+      version: 1
+    - type: user.progress_cut.confirmed
+      version: 1
+    - type: user.progress_fact.replayed
+      version: 1
   consumes:
     - type: health.goal_assessment.resolved
       version: 1
     - type: account.activated
       version: 1
     - type: account.deletion.requested
+      version: 1
+    - type: progress.user_cut.requested
+      version: 1
+    - type: progress.user_replay.requested
       version: 1
 synchronous_dependencies: [identity]
 infrastructure_dependencies: [postgresql, nats_jetstream, identity_jwks]

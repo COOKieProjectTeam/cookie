@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: COOKie Health API
-  version: 1.0.0
+  version: 2.0.0
 servers:
   - url: /v1
 tags:
@@ -147,7 +147,7 @@ components:
     HealthAssessmentInput:
       type: object
       additionalProperties: false
-      required: [purpose, profileVersion, goalRevision, timezone, sex, birthDate, heightCm, currentWeightKg, weeklyChangeKg, activity, macroProfile, standardAdultPolicyApplies, measuredAt, foodRestrictions, dietStyles, allergies]
+      required: [purpose, profileVersion, goalRevision, timezone, sex, birthDate, heightCm, currentWeightKg, weeklyChangeKg, activity, macroProfile, standardAdultPolicyApplies, measuredAt, measurementOffsetMinutes, foodRestrictions, dietStyles, allergies]
       properties:
         purpose: {type: string, enum: [INITIAL, RECALC]}
         profileVersion: {type: integer, format: int64, minimum: 1}
@@ -163,6 +163,7 @@ components:
         macroProfile: {type: string, enum: [BALANCED, HIGH_PROTEIN, LOW_CARB, KETO]}
         standardAdultPolicyApplies: {type: boolean}
         measuredAt: {type: string, format: date-time}
+        measurementOffsetMinutes: {type: integer, minimum: -1080, maximum: 1080}
         foodRestrictions:
           type: array
           uniqueItems: true
@@ -203,18 +204,27 @@ components:
         center: {type: number}
         high: {type: number}
 
+    HealthMeasurementOffsetMinutes:
+      type: integer
+      format: int32
+      minimum: -1080
+      maximum: 1080
+      description: UTC offset at the place and instant of measurement, in whole minutes east of UTC.
     HealthWeightInput:
       type: "object"
       additionalProperties: false
-      required: ["measuredAt","valueKg"]
+      required: ["measuredAt","measurementOffsetMinutes","valueKg"]
       properties:
         measuredAt: {"type":"string","format":"date-time"}
+        measurementOffsetMinutes: {$ref: '#/components/schemas/HealthMeasurementOffsetMinutes'}
         valueKg: {"type":"number","minimum":0.01,"maximum":999.99,"multipleOf":0.01}
     HealthWeightPatch:
       type: "object"
+      description: Supply measurementOffsetMinutes when changing measuredAt. An offset-only correction uses the stored measurement instant.
       additionalProperties: false
       properties:
         measuredAt: {"type":"string","format":"date-time"}
+        measurementOffsetMinutes: {$ref: '#/components/schemas/HealthMeasurementOffsetMinutes'}
         valueKg: {"type":"number"}
     HealthWeight:
       type: "object"
@@ -223,6 +233,7 @@ components:
       properties:
         measurementId: {"type":"string","format":"uuid"}
         measuredAt: {"type":"string","format":"date-time"}
+        measurementLocalDate: {type: string, format: date, nullable: true, description: Local date at the place of measurement. Older measurements can have an unknown date.}
         valueKg: {"type":"number"}
         version: {"type":"integer","format":"int64","minimum":1}
         source: {"type":"string","enum":["MANUAL","APPLE_HEALTH","HEALTH_CONNECT"]}
@@ -281,13 +292,19 @@ components:
         revision: {"type":"integer","format":"int64","minimum":1}
     HealthImportItem:
       type: "object"
+      description: WEIGHT_UPSERT requires externalId, valueKg, measuredAt and measurementOffsetMinutes.
       additionalProperties: false
       required: ["op"]
+      not:
+        properties:
+          op: {type: string, enum: [WEIGHT_UPSERT]}
+        not: {required: [externalId, valueKg, measuredAt, measurementOffsetMinutes]}
       properties:
         op: {"type":"string","enum":["WEIGHT_UPSERT","WEIGHT_DELETE","ACTIVITY_SNAPSHOT","ACTIVITY_DELETE"]}
         externalId: {"type":"string","maxLength":200}
         valueKg: {"type":"number"}
         measuredAt: {"type":"string","format":"date-time"}
+        measurementOffsetMinutes: {$ref: '#/components/schemas/HealthMeasurementOffsetMinutes'}
         localDate: {"type":"string","format":"date"}
         timezone: {"type":"string"}
         steps: {"type":"integer","minimum":0,"nullable":true}

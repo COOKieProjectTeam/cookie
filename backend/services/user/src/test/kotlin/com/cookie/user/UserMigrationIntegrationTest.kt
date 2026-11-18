@@ -20,6 +20,8 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.json.JsonMapper
 import java.time.Clock
+import java.time.LocalDate
+import java.time.ZoneOffset
 
 @Tag("integration")
 @Testcontainers
@@ -30,10 +32,12 @@ class UserMigrationIntegrationTest {
         owner.execute("CREATE ROLE user_app LOGIN PASSWORD 'test-only-runtime'")
         Flyway.configure().dataSource(source).target("2").load().migrate()
         val id=UUID.randomUUID()
+        val effectiveDate = LocalDate.of(2026, 10, 22)
+        val clock = Clock.fixed(effectiveDate.atTime(12, 0).toInstant(ZoneOffset.UTC), ZoneOffset.UTC)
         owner.update("INSERT INTO profiles(user_id,locale,version) VALUES (?,'en',8)",id)
         owner.update("""INSERT INTO nutrition_goal_versions(id,user_id,revision,effective_from,calorie_target,protein_g,fat_g,carbs_g,fiber_g,source)
-            VALUES (?,?,7,current_date,2000,100,70,240,25,'MANUAL')""",UUID.randomUUID(),id)
-        owner.update("INSERT INTO hydration_goal_versions(id,user_id,revision,effective_from,target_ml,source) VALUES (?,?,6,current_date,2000,'MANUAL')",UUID.randomUUID(),id)
+            VALUES (?,?,7,?,2000,100,70,240,25,'MANUAL')""",UUID.randomUUID(),id,effectiveDate)
+        owner.update("INSERT INTO hydration_goal_versions(id,user_id,revision,effective_from,target_ml,source) VALUES (?,?,6,?,2000,'MANUAL')",UUID.randomUUID(),id,effectiveDate)
         val other=UUID.randomUUID()
         owner.update("INSERT INTO profiles(user_id,locale,version) VALUES (?,'ru',3)",other)
         owner.update("INSERT INTO outbox_events(event_id,user_id,event_type,aggregate_version,payload) VALUES (?,?,'user.profile.updated',10,'{}'::jsonb)",UUID.randomUUID(),other)
@@ -64,7 +68,7 @@ class UserMigrationIntegrationTest {
                 .containsEntry("profile_version",8L).containsEntry("aggregate_version",8L)
                 .containsEntry("goal_revision",7L).containsEntry("hydration_revision",6L)
             val store=JdbcUserStore(runtime,TransactionTemplate(DataSourceTransactionManager(runtimeSource)),
-                JsonMapper.builder().findAndAddModules().build(),Clock.systemUTC())
+                JsonMapper.builder().findAndAddModules().build(),clock)
             assertThat(AcceptedGoalHistory(store).current(id).path("reason").asString()).isEqualTo("LEGACY_REQUIRES_ASSESSMENT")
             assertThat(AcceptedGoalHistory(store).page(id,null,5).path("items")[0].path("revision").asLong()).isEqualTo(7)
             assertThat(store.setHydration(id,UUID.randomUUID(),2200).revision).isEqualTo(7)

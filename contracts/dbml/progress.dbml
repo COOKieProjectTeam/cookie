@@ -1,43 +1,144 @@
-// COOKie — progress service database schema
-//
-// This file contains only tables owned by the progress service.
-// Cross-service references are logical IDs only; never add cross-service foreign keys.
+// Progress owns these tables. See Flyway for checks, partial indexes and grants.
 
-Table daily_progress as DailyProgress {
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  local_date date [not null]
-  calories_consumed decimal(10,3)
-  protein_g decimal(10,3)
-  fat_g decimal(10,3)
-  carbs_g decimal(10,3)
-  fiber_g decimal(10,3)
-  water_ml integer
-  steps integer
-  active_calories decimal(10,3)
-  calorie_target decimal(10,3)
-  protein_target_g decimal(10,3)
-  fat_target_g decimal(10,3)
-  carbs_target_g decimal(10,3)
-  fiber_target_g decimal(10,3)
-  water_target_ml integer
-  unlimited_calories boolean [not null, default: false]
-  weight_kg decimal(6,2) [null]
-  food_logged boolean [not null, default: false]
-  updated_at timestamptz [not null]
+Table progress_accounts {
+  user_id uuid [pk]
+  next_due_at timestamptz
+  confirmed_streak bigint
+  confirmed_best bigint [not null]
+  last_confirmed_date date
+  first_goal_applied boolean [not null]
+}
 
+Table account_tombstones {
+  user_id uuid [pk]
+  deletion_request_id uuid [not null]
+  deleted_at timestamptz [not null]
+}
+
+Table inbox_events {
+  event_id uuid [pk]
+  received_at timestamptz [not null]
+}
+
+Table message_quarantine {
+  stream_sequence bigint [pk]
+  reason text [not null]
+  event_hash text [not null]
+  recorded_at timestamptz [not null]
+}
+
+Table source_cursors {
+  user_id uuid [not null]
+  owner text [not null]
+  applied_through bigint [not null]
+  indexes { (user_id, owner) [pk] }
+}
+
+Table source_facts {
+  user_id uuid [not null]
+  owner text [not null]
+  kind text [not null]
+  entity_key text [not null]
+  version bigint [not null]
+  source_seq bigint
+  event_id uuid [not null, unique]
+  payload jsonb [not null]
   indexes {
-    (user_id, local_date) [pk]
+    (user_id, kind, entity_key, version) [pk]
+    (user_id, owner, source_seq) [unique]
   }
-
-  Note: 'Service: Progress. Built entirely from NATS events (nutrition.*, health.*, user.*) — never queries other service DBs directly'
 }
 
-Table user_streaks as UserStreaks {
-  user_id uuid [pk, note: 'logical ref -> Identity.accounts.id']
-  current_streak integer [not null, default: 0]
-  longest_streak integer [not null, default: 0]
-  last_logged_date date [null]
-  updated_at timestamptz [not null]
-
-  Note: 'Service: Progress'
+Table source_groups {
+  user_id uuid [not null]
+  owner text [not null]
+  first_seq bigint [not null]
+  last_seq bigint [not null]
+  committed_at timestamptz [not null]
+  end_lsn pg_lsn [not null]
+  indexes { (user_id, owner, first_seq) [pk] }
 }
+
+Table source_cuts {
+  user_id uuid [not null]
+  owner text [not null]
+  boundary timestamptz [not null]
+  before_seq bigint [not null]
+  through_seq bigint [not null]
+  end_lsn pg_lsn [not null]
+  indexes { (user_id, owner, boundary) [pk] }
+}
+
+Table source_requests {
+  user_id uuid [not null]
+  key text [not null]
+  last_requested_at timestamptz [not null]
+  indexes { (user_id, key) [pk] }
+}
+
+Table calendar_days {
+  user_id uuid [not null]
+  local_date date [not null]
+  zone_id text [not null]
+  state text [not null]
+  opened_at timestamptz
+  closes_at timestamptz
+  profile_seq bigint [not null]
+  goal_seq bigint
+  indexes { (user_id, local_date) [pk] }
+}
+
+Table day_results {
+  user_id uuid [not null]
+  local_date date [not null]
+  outcome text [not null]
+  goal_seq bigint
+  cheat_day boolean [not null]
+  macros_met boolean
+  credit integer [not null]
+  streak_before bigint
+  streak_after bigint
+  nutrition_before_seq bigint [not null]
+  user_before_seq bigint [not null]
+  facts jsonb [not null]
+  indexes { (user_id, local_date) [pk] }
+}
+
+Table notification_versions {
+  user_id uuid [not null]
+  local_date date [not null]
+  zone_id text [not null]
+  version bigint [not null]
+  payload jsonb [not null]
+  indexes { (user_id, local_date, zone_id) [pk] }
+}
+
+Table outbox_events {
+  event_id uuid [pk]
+  user_id uuid [not null]
+  subject text [not null]
+  envelope jsonb [not null]
+  created_at timestamptz [not null]
+  available_at timestamptz [not null]
+  published_at timestamptz
+  claim_id uuid
+  claimed_until timestamptz
+  attempts integer [not null]
+}
+
+Table progress_broker_checkpoint {
+  singleton boolean [pk]
+  stream_created_at timestamptz [not null]
+  ack_floor bigint [not null]
+  reconciliation_required boolean [not null]
+}
+
+Ref: source_cursors.user_id > progress_accounts.user_id [delete: cascade]
+Ref: source_facts.user_id > progress_accounts.user_id [delete: cascade]
+Ref: source_groups.user_id > progress_accounts.user_id [delete: cascade]
+Ref: source_cuts.user_id > progress_accounts.user_id [delete: cascade]
+Ref: source_requests.user_id > progress_accounts.user_id [delete: cascade]
+Ref: calendar_days.user_id > progress_accounts.user_id [delete: cascade]
+Ref: notification_versions.user_id > progress_accounts.user_id [delete: cascade]
+Ref: outbox_events.user_id > progress_accounts.user_id [delete: cascade]
+Ref: day_results.(user_id, local_date) > calendar_days.(user_id, local_date) [delete: cascade]

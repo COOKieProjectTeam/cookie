@@ -115,7 +115,10 @@ services:
       - user.goal_override.changed
       - user.hydration_goal.changed
       - user.goal_assessment.requested
-    consumes: [account.activated, account.deletion.requested, health.goal_assessment.resolved]
+      - user.progress_commit.recorded
+      - user.progress_cut.confirmed
+      - user.progress_fact.replayed
+    consumes: [account.activated, account.deletion.requested, health.goal_assessment.resolved, progress.user_cut.requested, progress.user_replay.requested]
 
   - id: food_catalog
     name: Food Catalog Service
@@ -147,7 +150,10 @@ services:
       - nutrition.meal.deleted
       - nutrition.day.changed
       - nutrition.water.changed
-    consumes: [account.deletion.requested]
+      - nutrition.progress_commit.recorded
+      - nutrition.progress_cut.confirmed
+      - nutrition.progress_fact.replayed
+    consumes: [account.deletion.requested, progress.nutrition_cut.requested, progress.nutrition_replay.requested]
     synchronous_dependencies: []
     planned_synchronous_dependencies: [recipe, media]
     implementation_note: Autonomous diary; Recipe import and Media attachments await real callees.
@@ -189,8 +195,9 @@ services:
     publishes:
       - health.activity.changed
       - health.weight.changed
+      - health.connection_summary.changed
       - health.goal_assessment.resolved
-    consumes: [account.deletion.requested, user.goal_assessment.requested]
+    consumes: [account.activated, account.deletion.requested, user.goal_assessment.requested]
     external_dependencies: [apple_healthkit, android_health_connect]
 
   - id: progress
@@ -200,18 +207,30 @@ services:
     purpose: event-driven daily nutrition and health progress read models
     openapi_tags: [progress]
     dbml: contracts/dbml/progress.dbml
+    synchronous_dependencies: [identity]
     publishes:
       - progress.day.updated
+      - progress.nutrition_cut.requested
+      - progress.nutrition_replay.requested
+      - progress.user_cut.requested
+      - progress.user_replay.requested
     consumes:
       - account.deletion.requested
       - nutrition.day.changed
       - nutrition.water.changed
+      - nutrition.progress_commit.recorded
+      - nutrition.progress_cut.confirmed
+      - nutrition.progress_fact.replayed
       - health.activity.changed
       - health.weight.changed
+      - health.connection_summary.changed
       - user.profile.updated
       - user.goal.changed
       - user.goal_override.changed
       - user.hydration_goal.changed
+      - user.progress_commit.recorded
+      - user.progress_cut.confirmed
+      - user.progress_fact.replayed
 
   - id: notification
     name: Notification Service

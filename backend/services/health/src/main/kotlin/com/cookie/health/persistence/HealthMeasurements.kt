@@ -31,12 +31,16 @@ class HealthMeasurements(val db: HealthDatabase, val mapper: ObjectMapper, priva
         val source: String,
         val connectionId: UUID?,
         val deleted: Boolean,
+        val measurementOffsetMinutes: Int? = null,
+        val measurementLocalDate: LocalDate? = null,
     )
 
     private val weightRow = RowMapper<Weight> { row, _ ->
         Weight(row.uuid("id"), row.getObject("measured_at", OffsetDateTime::class.java),
             row.getBigDecimal("value_kg"), row.getLong("version"), row.getString("source"),
-            row.getObject("connection_id", UUID::class.java), row.getBoolean("deleted"))
+            row.getObject("connection_id", UUID::class.java), row.getBoolean("deleted"),
+            row.getObject("measurement_offset_minutes", Int::class.javaObjectType),
+            row.getObject("measurement_local_date", LocalDate::class.java))
     }
 
     fun <T : Any> read(user: UUID, action: () -> T): T = db.forAccount(user, action = action)
@@ -93,25 +97,32 @@ class HealthMeasurements(val db: HealthDatabase, val mapper: ObjectMapper, priva
         json(mapOf("items" to items.map(::publicWeight), "nextCursor" to next))
     }
 
-    fun addManual(user: UUID, key: UUID, weight: BigDecimal, time: OffsetDateTime): JsonNode =
-        command(user, "manual-weight", key, listOf(weight, time.toInstant())) {
+    fun addManual(user: UUID, key: UUID, weight: BigDecimal, time: OffsetDateTime, offset: Int): JsonNode =
+        command(user, "manual-weight", key, listOf(weight, time.toInstant(), offset)) {
             validateWeight(weight, time)
-            val record = Weight(UUID.randomUUID(), time, weight, 1, "MANUAL", null, false)
+            val record = Weight(UUID.randomUUID(), time, weight, 1, "MANUAL", null, false,
+                offset, measurementDate(time, offset))
             insert(user, record)
             publicWeight(record)
         }
 
-    fun editManual(user: UUID, id: UUID, expected: Long, key: UUID, value: BigDecimal?, time: OffsetDateTime?): JsonNode =
-        command(user, "manual-weight-update:$id", key, listOf(expected, value, time?.toInstant())) {
+    fun editManual(user: UUID, id: UUID, expected: Long, key: UUID, value: BigDecimal?, time: OffsetDateTime?, offset: Int?): JsonNode =
+        command(user, "manual-weight-update:$id", key, listOf(expected, value, time?.toInstant(), offset)) {
             val previous = manual(user, id, expected)
-            if (value == null && time == null) invalid("weight")
+            if (value == null && time == null && offset == null) invalid("weight")
+            if (time != null && offset == null) invalid("measurementOffsetMinutes")
             val weight = value ?: requireNotNull(previous.valueKg)
             val measuredAt = time ?: requireNotNull(previous.measuredAt)
             validateWeight(weight, measuredAt)
-            if (previous.valueKg?.compareTo(weight) == 0 && previous.measuredAt?.toInstant() == measuredAt.toInstant()) {
+            val placeOffset = offset ?: previous.measurementOffsetMinutes
+            val placeDate = offset?.let { measurementDate(measuredAt, it) } ?: previous.measurementLocalDate
+            if (previous.valueKg?.compareTo(weight) == 0 && previous.measuredAt?.toInstant() == measuredAt.toInstant() &&
+                previous.measurementOffsetMinutes == placeOffset
+            ) {
                 return@command publicWeight(previous)
             }
-            val updated = previous.copy(valueKg = weight, measuredAt = measuredAt, version = previous.version + 1)
+            val updated = previous.copy(valueKg = weight, measuredAt = measuredAt, version = previous.version + 1,
+                measurementOffsetMinutes = placeOffset, measurementLocalDate = placeDate)
             update(user, updated)
             publicWeight(updated)
         }
@@ -141,22 +152,32 @@ class HealthMeasurements(val db: HealthDatabase, val mapper: ObjectMapper, priva
 
     fun insert(user: UUID, weight: Weight, external: String? = null, first: Boolean = false) {
         jdbc.update(
-            """INSERT INTO weight_measurements(user_id,id,source,connection_id,external_id,first_weight,version,value_kg,measured_at,deleted)
-                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO weight_measurements(user_id,id,source,connection_id,external_id,first_weight,version,value_kg,measured_at,deleted,
+                measurement_offset_minutes,measurement_local_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             user, weight.measurementId, weight.source, weight.connectionId, external, first,
-            weight.version, weight.valueKg, weight.measuredAt, weight.deleted,
+            weight.version, weight.valueKg, weight.measuredAt, weight.deleted, weight.measurementOffsetMinutes, weight.measurementLocalDate,
         )
         if (!weight.deleted) weightEvent(user, weight)
     }
 
     fun update(user: UUID, weight: Weight) {
-        jdbc.update("UPDATE weight_measurements SET value_kg=?,measured_at=?,version=?,deleted=? WHERE user_id=? AND id=?",
-            weight.valueKg, weight.measuredAt, weight.version, weight.deleted, user, weight.measurementId)
+        jdbc.update("""UPDATE weight_measurements SET value_kg=?,measured_at=?,version=?,deleted=?,
+            measurement_offset_minutes=?,measurement_local_date=? WHERE user_id=? AND id=?""",
+            weight.valueKg, weight.measuredAt, weight.version, weight.deleted,
+            weight.measurementOffsetMinutes, weight.measurementLocalDate, user, weight.measurementId)
         weightEvent(user, weight)
     }
 
     fun delete(user: UUID, weight: Weight): Weight =
-        weight.copy(valueKg = null, measuredAt = null, deleted = true, version = weight.version + 1).also { update(user, it) }
+        weight.copy(valueKg = null, measuredAt = null, deleted = true, version = weight.version + 1,
+            measurementOffsetMinutes = null, measurementLocalDate = null).also { update(user, it) }
+
+    fun measurementDate(time: OffsetDateTime, offsetMinutes: Int): LocalDate {
+        if (offsetMinutes !in -1080..1080) invalid("measurementOffsetMinutes")
+        val date = time.withOffsetSameInstant(ZoneOffset.ofTotalSeconds(offsetMinutes * 60)).toLocalDate()
+        if (date.year !in 1..9999) invalid("measurementOffsetMinutes")
+        return date
+    }
 
     fun validateWeight(weight: BigDecimal, time: OffsetDateTime) {
         if (!AssessmentPolicy.validWeight(weight)) invalid("valueKg")
@@ -166,6 +187,7 @@ class HealthMeasurements(val db: HealthDatabase, val mapper: ObjectMapper, priva
     private fun publicWeight(weight: Weight): JsonNode = json(mapOf(
         "measurementId" to weight.measurementId, "measuredAt" to weight.measuredAt, "valueKg" to weight.valueKg,
         "version" to weight.version, "source" to weight.source, "connectionId" to weight.connectionId,
+        "measurementLocalDate" to weight.measurementLocalDate,
     ))
 
     private fun weightEvent(user: UUID, weight: Weight) {
@@ -175,8 +197,23 @@ class HealthMeasurements(val db: HealthDatabase, val mapper: ObjectMapper, priva
         if (!weight.deleted) {
             properties["valueKg"] = weight.valueKg
             properties["measuredAt"] = weight.measuredAt?.toInstant()?.toString()
+            properties["measurementLocalDate"] = weight.measurementLocalDate
+            properties["source"] = weight.source
         }
-        event(user, "health.weight.changed", 1, "weight_measurement", weight.measurementId.toString(), weight.version, properties, weight.connectionId)
+        event(user, "health.weight.changed", 2, "weight_measurement", weight.measurementId.toString(), weight.version, properties, weight.connectionId)
+    }
+
+    /** Called under the account lock by activation and connection transitions. */
+    fun connectionSummary(user: UUID) {
+        val active = jdbc.queryForObject("SELECT count(*) FROM connections WHERE user_id=? AND status='ACTIVE'", Long::class.java, user)!!
+        val revision = jdbc.query(
+            """INSERT INTO connection_summaries(user_id,active_count,version) VALUES (?,?,1)
+               ON CONFLICT (user_id) DO UPDATE SET active_count=EXCLUDED.active_count,version=connection_summaries.version+1
+               WHERE connection_summaries.active_count <> EXCLUDED.active_count RETURNING version""",
+            { row, _ -> row.getLong(1) }, user, active,
+        ).singleOrNull() ?: return
+        event(user, "health.connection_summary.changed", 1, "health_connections", user.toString(), revision,
+            mapOf("userId" to user, "activeConnectionCount" to active))
     }
 
     fun event(user: UUID, type: String, wireVersion: Int, aggregate: String, id: String, version: Long, payload: Any, connection: UUID? = null) {

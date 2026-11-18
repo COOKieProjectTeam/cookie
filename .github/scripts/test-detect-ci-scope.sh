@@ -358,7 +358,24 @@ done
 
 classify backend/services/health/src/main/kotlin/example.kt
 expect_flag health true
-expect_flag user false
+
+classify backend/services/progress/src/main/kotlin/Example.kt
+expect_flag progress true
+classify contracts/openapi/public/progress.yaml
+expect_flag progress true
+expect_flag public_client true
+classify contracts/openapi/internal/progress.yaml
+expect_flag progress true
+expect_flag service_contracts true
+expect_flag public_client false
+classify backend/clients/progress/src/main/kotlin/Example.kt
+expect_flag progress true
+classify docs/architecture/model/sync-calls.yaml
+expect_flag progress true
+expect_flag service_contracts true
+classify backend/services/user/src/main/kotlin/Example.kt
+expect_flag progress true
+expect_flag user true
 classify contracts/openapi/public/health.yaml
 expect_flag health true
 expect_flag service_contracts true
@@ -367,6 +384,7 @@ expect_flag public_client true
 classify backend/contracts/health-assessment/src/main/kotlin/example.kt
 expect_flag health true
 expect_flag user true
+expect_flag progress true
 expect_flag identity false
 
 echo "CI scope mapping tests passed."

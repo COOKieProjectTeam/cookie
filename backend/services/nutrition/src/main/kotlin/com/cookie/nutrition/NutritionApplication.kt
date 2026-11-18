@@ -26,7 +26,10 @@ class NutritionApplication {
         return "nutrition"
     }
 }
-fun main(args: Array<String>) { runApplication<NutritionApplication>(*args) }
+fun main(args: Array<String>) {
+    if (args.contentEquals(arrayOf("--progress-commit-worker"))) runNutritionCommitWorker()
+    else runApplication<NutritionApplication>(*args)
+}
 
 @ConfigurationProperties("cookie.nutrition")
 data class NutritionProperties(

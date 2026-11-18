@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/health-service]
   push:
     branches: [main]
 
@@ -29,6 +29,7 @@ jobs:
       notification: ${{ steps.scope.outputs.notification }}
       user: ${{ steps.scope.outputs.user }}
       health: ${{ steps.scope.outputs.health }}
+      progress: ${{ steps.scope.outputs.progress }}
       notification_image: ${{ steps.scope.outputs.notification_image }}
       notification_container: ${{ steps.scope.outputs.notification_container }}
       notification_sink: ${{ steps.scope.outputs.notification_sink }}
@@ -200,6 +201,33 @@ jobs:
           ./gradlew
           :backend:services:health:check
           :backend:services:health:integrationTest
+
+  progress:
+    name: Progress service
+    if: needs.changes.outputs.progress == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+      - name: Require Docker for Testcontainers
+        run: docker info
+      - name: Run Progress unit and integration tests
+        run: >-
+          ./gradlew
+          :backend:services:progress:check
+          :backend:services:progress:integrationTest
+          :backend:services:progress:bootJar
+          :backend:clients:progress:check
+          :backend:services:progress:processE2e
 
   nutrition:
     name: Nutrition service
@@ -380,6 +408,8 @@ jobs:
           done
       - name: Validate local development Compose
         run: docker compose -f deploy/docker/compose.yaml config
+      - name: Validate local Progress overlay
+        run: docker compose -f deploy/docker/compose.yaml -f deploy/docker/progress.compose.yaml config --quiet
       - name: Validate Make targets
         run: >-
           make --dry-run
@@ -524,6 +554,7 @@ jobs:
       - notification
       - user
       - health
+      - progress
       - notification_sink
       - service_contracts
       - planned_openapi
@@ -557,6 +588,8 @@ jobs:
           HEALTH_EXPECTED: ${{ needs.changes.outputs.health }}
           USER_RESULT: ${{ needs.user.result }}
           HEALTH_RESULT: ${{ needs.health.result }}
+          PROGRESS_EXPECTED: ${{ needs.changes.outputs.progress }}
+          PROGRESS_RESULT: ${{ needs.progress.result }}
           NOTIFICATION_EXPECTED: ${{ needs.changes.outputs.notification }}
           NOTIFICATION_RESULT: ${{ needs.notification.result }}
           NOTIFICATION_CONTAINER_EXPECTED: ${{ github.event_name == 'pull_request' && needs.changes.outputs.notification_container == 'true' }}
@@ -600,6 +633,7 @@ jobs:
               "identity:${IDENTITY_EXPECTED}" \
               "user:${USER_EXPECTED}" \
               "health:${HEALTH_EXPECTED}" \
+              "progress:${PROGRESS_EXPECTED}" \
               "notification:${NOTIFICATION_EXPECTED}" \
               "notification_image:${NOTIFICATION_IMAGE_SELECTED}" \
               "notification_container:${NOTIFICATION_CONTAINER_SELECTED}" \
@@ -648,6 +682,7 @@ jobs:
             "identity:${IDENTITY_EXPECTED}:${IDENTITY_RESULT}" \
             "user:${USER_EXPECTED}:${USER_RESULT}" \
             "health:${HEALTH_EXPECTED}:${HEALTH_RESULT}" \
+            "progress:${PROGRESS_EXPECTED}:${PROGRESS_RESULT}" \
             "notification:${NOTIFICATION_EXPECTED}:${NOTIFICATION_RESULT}" \
             "notification_container:${NOTIFICATION_CONTAINER_EXPECTED}:${NOTIFICATION_CONTAINER_RESULT}" \
             "notification_sink:${NOTIFICATION_SINK_EXPECTED}:${NOTIFICATION_SINK_RESULT}" \

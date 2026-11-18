@@ -30,7 +30,7 @@ class NotificationEventHandler(
         val version = event.path("event_version")
         if (!version.isIntegralNumber || !version.canConvertToInt()) invalid("unsupported_event_version")
         val wireVersion = version.intValue()
-        if (wireVersion != 1 && (wireVersion != 2 || type != "progress.day.updated")) invalid("unsupported_event_version")
+        if (wireVersion != 1 && (wireVersion != 2 || type !in VERSION_TWO_TYPES)) invalid("unsupported_event_version")
         if (subject != "cookie.events.$type.v$wireVersion") invalid("subject_mismatch")
         val expectedProducer = PRODUCERS[type] ?: invalid("unsupported_event_type")
         if (text(event,"producer") != expectedProducer) invalid("producer_mismatch")
@@ -117,7 +117,15 @@ class NotificationEventHandler(
             "health.weight.changed" -> {
                 val key = uuid(payload,"measurementId").toString()
                 val deleted = boolean(payload,"deleted")
-                if(!deleted) { instant(payload,"measuredAt"); number(payload,"valueKg",false,false) }
+                if(!deleted) {
+                    instant(payload,"measuredAt")
+                    number(payload,"valueKg",false,false)
+                    if (wireVersion == 2) {
+                        if (!payload.has("measurementLocalDate")) invalid("missing_measurementLocalDate")
+                        if (!payload.path("measurementLocalDate").isNull) date(payload, "measurementLocalDate")
+                        if (text(payload, "source") !in setOf("MANUAL", "APPLE_HEALTH", "HEALTH_CONNECT")) invalid("invalid_weight_source")
+                    }
+                }
                 Projection("WEIGHT",key,version,deleted)
             }
             "progress.day.updated" -> {
@@ -204,6 +212,7 @@ class NotificationEventHandler(
             "account.activated" to "identity","account.deletion.requested" to "identity","notification.email.requested" to "identity",
             "nutrition.meal.created" to "nutrition","nutrition.meal.updated" to "nutrition","nutrition.meal.deleted" to "nutrition","nutrition.water.changed" to "nutrition",
             "health.weight.changed" to "health","user.profile.updated" to "user","progress.day.updated" to "progress")
-        val SUBJECTS = PRODUCERS.keys.map { "cookie.events.$it.v1" } + "cookie.events.progress.day.updated.v2"
+        private val VERSION_TWO_TYPES = setOf("progress.day.updated", "health.weight.changed")
+        val SUBJECTS = PRODUCERS.keys.map { "cookie.events.$it.v1" } + VERSION_TWO_TYPES.map { "cookie.events.$it.v2" }
     }
 }

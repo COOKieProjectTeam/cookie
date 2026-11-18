@@ -105,6 +105,9 @@ class GoalAcceptanceIntegrationTest {
         val completed = awaitAttempt(statusUrl,accountToken)
         assertThat(completed.path("outcome").asString()).isEqualTo("NO_CALORIE_GOAL")
         assertThat(count("health","weight_measurements")).isEqualTo(1)
+        val measurement = mapper.readTree(get(healthPort, "/v1/health/weight", accountToken).body()).path("items")[0]
+        val localDate = Instant.parse(input.getValue("measuredAt").toString()).atOffset(java.time.ZoneOffset.ofHours(3)).toLocalDate()
+        assertThat(measurement.path("measurementLocalDate").stringValue()).isEqualTo(localDate.toString())
         assertThat(count("user_service","accepted_goal_versions")).isEqualTo(1)
         assertThat(count("user_service","hydration_goal_versions")).isEqualTo(1)
 
@@ -156,6 +159,7 @@ class GoalAcceptanceIntegrationTest {
             "goalRevision" to revision,"sex" to "MALE","birthDate" to "1996-01-01","heightCm" to 170,"currentWeightKg" to 70,
             "weeklyChangeKg" to 0,"activity" to "ACTIVE","macroProfile" to "BALANCED","standardAdultPolicyApplies" to standard,
             "measuredAt" to Instant.now().minusSeconds(1).truncatedTo(ChronoUnit.MICROS).toString(),
+            "measurementOffsetMinutes" to 180,
             "foodRestrictions" to listOf("VEGAN"),"dietStyles" to emptyList<String>(),"allergies" to emptyList<String>())
     }
 

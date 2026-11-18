@@ -333,8 +333,11 @@ while IFS= read -r -d '' path; do
         unmapped_component=true
       fi
       ;;
+    contracts/openapi/internal/progress.yaml)
+      service_contracts=true
+      ;;
     contracts/openapi/internal/*.yaml)
-      # These files do not have executable validators yet; never report a false green.
+      # Unregistered internal contracts have no executable validators.
       unmapped_component=true
       ;;
     contracts/openapi/*)
@@ -344,13 +347,13 @@ while IFS= read -r -d '' path; do
       service_contracts=true
       public_client=true
       ;;
-    docs/architecture/model/events.yaml)
+    docs/architecture/model/events.yaml | docs/architecture/model/sync-calls.yaml)
       service_contracts=true
       ;;
   esac
 
   case "$path" in
-    backend/clients/identity/*)
+    backend/clients/identity/* | backend/clients/progress/*)
       # Consumers are selected by service descriptor inputs.
       ;;
     backend/clients/*)

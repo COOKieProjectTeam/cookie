@@ -79,12 +79,12 @@ class ServiceScopeTest(unittest.TestCase):
     def test_repository_descriptors_select_every_platform_runtime_consumer(self):
         services = scope.load_services(scope.ROOT)
         selected = scope.select(services, ["backend/platform/starter-web/src/main/kotlin/Changed.kt"])
-        self.assertTrue({"identity", "notification", "user", "nutrition", "health"}.issubset(selected))
+        self.assertTrue({"identity", "notification", "user", "nutrition", "health", "progress"}.issubset(selected))
 
-    def test_assessment_protocol_selects_both_consumers(self):
+    def test_assessment_protocol_selects_both_consumers_and_progress_acceptance(self):
         services = scope.load_services(scope.ROOT)
         selected = scope.select(services, ["backend/contracts/health-assessment/src/main/kotlin/Changed.kt"])
-        self.assertEqual({"health", "user"}, selected)
+        self.assertEqual({"health", "user", "progress"}, selected)
 
     def test_omitted_gradle_dependency_fails_instead_of_silently_skipping_consumer(self):
         self.descriptor.with_name("build.gradle.kts").write_text(

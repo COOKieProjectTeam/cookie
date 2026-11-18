@@ -1,0 +1,78 @@
+schema_version: 1
+id: progress
+runtime: kotlin_jvm
+stateful: true
+database: progress
+public_openapi:
+  source: contracts/openapi/public/progress.yaml
+runtime_openapi: contracts/openapi/runtime.yaml
+internal_openapi:
+  source: contracts/openapi/internal/progress.yaml
+access:
+  http:
+    - id: progress-today-read
+      contract: internal
+      operations: [getProgressTodayInternal]
+      permission: progress.today.read
+      exposure: internal
+      authentication:
+        workload_identity: required
+        user_context: required
+      callers:
+        - service: mobile_bff
+messaging:
+  publishes:
+    - {type: progress.day.updated, version: 2}
+    - {type: progress.nutrition_cut.requested, version: 1}
+    - {type: progress.nutrition_replay.requested, version: 1}
+    - {type: progress.user_cut.requested, version: 1}
+    - {type: progress.user_replay.requested, version: 1}
+  consumes:
+    - {type: account.deletion.requested, version: 1}
+    - {type: nutrition.day.changed, version: 3}
+    - {type: nutrition.water.changed, version: 1}
+    - {type: nutrition.progress_commit.recorded, version: 1}
+    - {type: nutrition.progress_cut.confirmed, version: 1}
+    - {type: nutrition.progress_fact.replayed, version: 1}
+    - {type: health.activity.changed, version: 2}
+    - {type: health.weight.changed, version: 2}
+    - {type: health.connection_summary.changed, version: 1}
+    - {type: user.profile.updated, version: 1}
+    - {type: user.goal.changed, version: 2}
+    - {type: user.goal_override.changed, version: 2}
+    - {type: user.hydration_goal.changed, version: 1}
+    - {type: user.progress_commit.recorded, version: 1}
+    - {type: user.progress_cut.confirmed, version: 1}
+    - {type: user.progress_fact.replayed, version: 1}
+synchronous_dependencies: [identity]
+infrastructure_dependencies: [postgresql, nats_jetstream, identity_jwks]
+probes:
+  liveness: /healthz
+  readiness: /readyz
+ci: {
+  "check": "progress",
+  "image": null,
+  "runtime_inputs": [
+    "backend/platform/starter-web/**",
+    "backend/platform/starter-postgres/**",
+    "backend/platform/starter-messaging/**",
+    "backend/clients/progress/**",
+    "contracts/openapi/public/progress.yaml",
+    "contracts/openapi/internal/progress.yaml",
+    "contracts/openapi/runtime.yaml",
+    "contracts/openapi/generation.yaml"
+  ],
+  "test_inputs": [
+    "backend/platform/starter-testing/**",
+    "backend/contracts/health-assessment/**",
+    "backend/services/nutrition/**",
+    "backend/services/user/**",
+    "backend/services/health/**",
+    "backend/services/identity/**",
+    "backend/services/notification/**",
+    "docs/architecture/model/events.yaml",
+    "docs/architecture/model/sync-calls.yaml",
+    "deploy/docker/progress.*"
+  ],
+  "descriptor_outputs": ["service_contracts"]
+}

@@ -124,6 +124,8 @@ val integrationTest = tasks.register<Test>("integrationTest") {
         .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(layout.projectDirectory.file("ops/runtime-grants.sql"))
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(layout.projectDirectory.file("ops/progress-capture.sql"))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("cookie.test.notification-jar", rootProject.layout.projectDirectory.file("backend/services/notification/build/libs/notification.jar").asFile.absolutePath)
     description = "Runs Nutrition HTTP and JDBC integration tests against required containers."
     group = "verification"

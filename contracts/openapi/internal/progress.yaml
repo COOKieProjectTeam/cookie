@@ -1,0 +1,34 @@
+openapi: 3.0.3
+info:
+  title: COOKie Progress internal API
+  version: 1.0.0
+servers:
+  - url: /
+tags:
+  - name: progressInternal
+    description: Authenticated Mobile BFF views
+paths:
+  /internal/v1/progress/today:
+    get:
+      tags: [progressInternal]
+      operationId: getProgressTodayInternal
+      summary: Resolve the current calendar date for the verified user
+      security:
+        - workloadIdentity: []
+      x-cookie-permission: progress.today.read
+      x-cookie-user-context: required
+      parameters:
+        - {name: X-Cookie-User-Token, in: header, schema: {type: string}, description: Delegated Identity access JWT}
+        - {name: traceparent, in: header, schema: {type: string}}
+      responses:
+        '200':
+          description: Today's Progress projection
+          content:
+            application/json:
+              schema: {$ref: '../public/progress.yaml#/components/schemas/ProgressDay'}
+        '401': {description: Invalid workload credential}
+        '403': {description: Caller or delegated user context denied}
+        '503': {description: Verification or projection unavailable}
+components:
+  securitySchemes:
+    workloadIdentity: {type: http, scheme: bearer, bearerFormat: workload+jwt}

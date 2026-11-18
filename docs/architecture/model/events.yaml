@@ -35,7 +35,7 @@ events:
   - type: account.activated
     version: 1
     producer: identity
-    consumers: [user, notification]
+    consumers: [user, notification, health]
     payload: [userId, accountMetadata]
 
   - type: account.deletion.requested
@@ -66,7 +66,7 @@ events:
     version: 1
     producer: user
     consumers: [progress, notification]
-    payload: [userId, changedFields, timezone, locale, onboardingCompleted]
+    payload: [userId, changedFields, timezone, locale, onboardingCompleted, baseline, goalRevision, hasAcceptedGoal, sourceSeq]
 
     aggregate_version_required: true
 
@@ -82,7 +82,7 @@ events:
     version: 2
     producer: user
     consumers: [progress]
-    payload: [userId, nutritionGoalVersion]
+    payload: [userId, nutritionGoalVersion, sourceSeq]
 
   - type: user.goal_override.changed
     aggregate_version_required: true
@@ -96,14 +96,44 @@ events:
     version: 2
     producer: user
     consumers: [progress]
-    payload: [userId, localDate, override]
+    payload: [userId, localDate, override, sourceSeq]
 
   - type: user.hydration_goal.changed
     aggregate_version_required: true
     version: 1
     producer: user
     consumers: [progress]
-    payload: [userId, targetMl, effectiveFrom]
+    payload: [userId, id, revision, targetMl, effectiveFrom, sourceSeq]
+
+  - type: progress.user_cut.requested
+    version: 1
+    producer: progress
+    consumers: [user]
+    payload: [userId, boundary]
+
+  - type: progress.user_replay.requested
+    version: 1
+    producer: progress
+    consumers: [user]
+    payload: [userId, firstSeq, lastSeq]
+
+  - type: user.progress_commit.recorded
+    version: 1
+    producer: user
+    consumers: [progress]
+    payload: [userId, endLsn, committedAt, firstSeq, lastSeq]
+
+  - type: user.progress_cut.confirmed
+    version: 1
+    producer: user
+    consumers: [progress]
+    payload: [userId, endLsn, boundary, beforeSeq, throughSeq]
+
+  - type: user.progress_fact.replayed
+    version: 1
+    producer: user
+    consumers: [progress]
+    payload: [userId, event]
 
   - type: nutrition.meal.created
     version: 1
@@ -147,15 +177,52 @@ events:
     payload: [userId, localDate, nutritionTotals]
     aggregate_version: positive monotonic version scoped to userId and localDate, survives empty days
 
+  - type: nutrition.day.changed
+    version: 3
+    producer: nutrition
+    consumers: [progress]
+    payload: [userId, localDate, nutritionTotals, mealCount, zoneProvenance, sourceSeq]
+    aggregate_version: positive monotonic version scoped to userId and localDate, survives empty days
+
   - type: nutrition.water.changed
     version: 1
     producer: nutrition
     consumers: [progress, notification]
-    payload: [userId, localDate, totalMl, lastConsumedAt]
+    payload: [userId, localDate, totalMl, lastConsumedAt, zoneProvenance, sourceSeq]
     aggregate_version: positive monotonic version scoped to userId and localDate, survives empty days
     implementation_note: totalMl is an integer in [0, 2147483647]; overflow is rejected atomically by Nutrition. lastConsumedAt is explicitly null when totalMl is zero; complete snapshot, never a delta
 
     aggregate_version_required: true
+
+  - type: progress.nutrition_cut.requested
+    version: 1
+    producer: progress
+    consumers: [nutrition]
+    payload: [userId, boundary]
+
+  - type: progress.nutrition_replay.requested
+    version: 1
+    producer: progress
+    consumers: [nutrition]
+    payload: [userId, firstSeq, lastSeq]
+
+  - type: nutrition.progress_commit.recorded
+    version: 1
+    producer: nutrition
+    consumers: [progress]
+    payload: [userId, endLsn, committedAt, firstSeq, lastSeq]
+
+  - type: nutrition.progress_cut.confirmed
+    version: 1
+    producer: nutrition
+    consumers: [progress]
+    payload: [userId, endLsn, boundary, beforeSeq, throughSeq]
+
+  - type: nutrition.progress_fact.replayed
+    version: 1
+    producer: nutrition
+    consumers: [progress]
+    payload: [userId, event]
 
   - type: recipe.customization.updated
     version: 1
@@ -175,6 +242,20 @@ events:
     consumers: [progress, notification]
     payload: [measurementId, userId, deleted, valueKg, measuredAt]
 
+    aggregate_version_required: true
+
+  - type: health.weight.changed
+    version: 2
+    producer: health
+    consumers: [progress, notification]
+    payload: [measurementId, userId, deleted, valueKg, measuredAt, measurementLocalDate, source]
+    aggregate_version_required: true
+
+  - type: health.connection_summary.changed
+    version: 1
+    producer: health
+    consumers: [progress]
+    payload: [userId, activeConnectionCount]
     aggregate_version_required: true
 
   - type: health.activity.changed

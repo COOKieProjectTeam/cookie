@@ -19,6 +19,7 @@ class LifecycleEvents(private val store: JdbcUserStore) {
             if(event.type=="account.deletion.requested") {
                 store.jdbc.update("INSERT INTO account_tombstones(user_id,deletion_request_id) VALUES (?,?) ON CONFLICT DO NOTHING",event.userId,event.deletionRequestId)
                 store.jdbc.update("DELETE FROM profiles WHERE user_id=?",event.userId)
+                store.jdbc.update("DELETE FROM progress_source_accounts WHERE user_id=?",event.userId)
                 // Profile/goal payloads and idempotency evidence are user-owned data, too.
                 store.jdbc.update("DELETE FROM outbox_events WHERE user_id=?",event.userId)
             } else {

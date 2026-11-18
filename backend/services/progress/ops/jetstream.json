@@ -1,0 +1,40 @@
+{
+  "stream": "COOKIE_EVENTS",
+  "durable": "progress-v1",
+  "ack_policy": "explicit",
+  "deliver_policy": "all",
+  "ack_wait_seconds": 30,
+  "max_ack_pending": 64,
+  "filter_subjects": [
+    "cookie.events.account.deletion.requested.v1",
+    "cookie.events.nutrition.day.changed.v3",
+    "cookie.events.nutrition.water.changed.v1",
+    "cookie.events.nutrition.progress_commit.recorded.v1",
+    "cookie.events.nutrition.progress_cut.confirmed.v1",
+    "cookie.events.nutrition.progress_fact.replayed.v1",
+    "cookie.events.health.activity.changed.v2",
+    "cookie.events.health.weight.changed.v2",
+    "cookie.events.health.connection_summary.changed.v1",
+    "cookie.events.user.profile.updated.v1",
+    "cookie.events.user.goal.changed.v2",
+    "cookie.events.user.goal_override.changed.v2",
+    "cookie.events.user.hydration_goal.changed.v1",
+    "cookie.events.user.progress_commit.recorded.v1",
+    "cookie.events.user.progress_cut.confirmed.v1",
+    "cookie.events.user.progress_fact.replayed.v1"
+  ],
+  "runtime_permissions": {
+    "publish": [
+      "cookie.events.progress.day.updated.v2",
+      "cookie.events.progress.nutrition_cut.requested.v1",
+      "cookie.events.progress.nutrition_replay.requested.v1",
+      "cookie.events.progress.user_cut.requested.v1",
+      "cookie.events.progress.user_replay.requested.v1",
+      "$JS.API.STREAM.INFO.COOKIE_EVENTS",
+      "$JS.API.CONSUMER.INFO.COOKIE_EVENTS.progress-v1",
+      "$JS.API.CONSUMER.MSG.NEXT.COOKIE_EVENTS.progress-v1",
+      "$JS.ACK.COOKIE_EVENTS.progress-v1.>"
+    ],
+    "subscribe": ["_INBOX.cookie.progress.>"]
+  }
+}

@@ -8,5 +8,5 @@ dependencies {
     api("org.springframework:spring-jdbc")
     api("com.zaxxer:HikariCP")
     api("org.flywaydb:flyway-database-postgresql")
-    runtimeOnly("org.postgresql:postgresql")
+    implementation("org.postgresql:postgresql")
 }

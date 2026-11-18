@@ -1,5 +1,6 @@
 package com.cookie.user
 
+import com.cookie.platform.postgres.CommitMarkerReader
 import com.cookie.user.application.UserService
 import com.cookie.user.domain.*
 import com.cookie.user.persistence.*
@@ -14,6 +15,7 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import tools.jackson.databind.json.JsonMapper
+import java.nio.file.Path
 import java.time.*
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
@@ -41,7 +43,7 @@ class UserPersistenceIntegrationTest {
         events=LifecycleEvents(store);service=UserService(store)
     }
     @BeforeEach fun clean() {
-        owner.execute("TRUNCATE profiles,account_tombstones,inbox_events,outbox_events,message_quarantine CASCADE")
+        owner.execute("TRUNCATE profiles,account_tombstones,inbox_events,outbox_events,message_quarantine,progress_source_accounts CASCADE")
     }
     private fun id()=store.newId()
     private fun activate(user:UUID=id()):UUID { events.handle("cookie.events.account.activated.v1",event(user));return user }
@@ -86,6 +88,52 @@ class UserPersistenceIntegrationTest {
         assertThat(listOf(first.revision,second.revision)).containsExactly(1L,2L)
         assertThat(owner.queryForList("SELECT aggregate_version FROM outbox_events WHERE user_id=? ORDER BY aggregate_version",Long::class.java,user))
             .containsExactly(1L,2L,3L,4L,5L,6L)
+    }
+    @Test fun `User confirms profile hydration and override in source commit groups`() {
+        owner.execute("CREATE ROLE user_progress_capture LOGIN PASSWORD 'capture-test'")
+        owner.execute("CREATE ROLE user_progress_replication LOGIN REPLICATION PASSWORD 'replication-test'")
+        owner.execute(Path.of("ops/progress-capture.sql").toFile().readLines().filterNot { it.startsWith("\\") }.joinToString("\n"))
+        val captureSource = DriverManagerDataSource(postgres.jdbcUrl, "user_progress_capture", "capture-test")
+        val capture = JdbcUserStore(JdbcTemplate(captureSource), TransactionTemplate(DataSourceTransactionManager(captureSource)), mapper, clock)
+        val user = activate()
+        val hydration = requireNotNull(store.transactions.execute {
+            val target = service.setHydration(user, UUID.randomUUID(), 1800)
+            service.setOverride(user, UUID.randomUUID(), LocalDate.parse("2026-10-23"), OverrideCommand(OverrideType.CHEAT_DAY, unlimitedCalories = true))
+            target
+        })
+        val initialFacts = owner.query(
+            "SELECT envelope::text FROM progress_source_facts WHERE user_id=? ORDER BY source_seq",
+            { row, _ -> mapper.readTree(row.getString(1)).path("payload") }, user,
+        )
+        assertThat(initialFacts.map { it.path("sourceSeq").longValue() }).containsExactly(1L, 2L, 3L)
+        assertThat(initialFacts.first().path("baseline").booleanValue()).isTrue()
+        assertThat(initialFacts.first().path("hasAcceptedGoal").booleanValue()).isFalse()
+        assertThat(initialFacts[1].path("id").stringValue()).isEqualTo(hydration.id.toString())
+        val boundary = owner.queryForObject(
+            "SELECT date_trunc('second',clock_timestamp()) + interval '1 second'", OffsetDateTime::class.java,
+        )!!
+        owner.query("SELECT pg_sleep_until(?::timestamptz + interval '20 milliseconds')", { _, _ -> Unit }, boundary)
+        service.deleteOverride(user, UUID.randomUUID(), LocalDate.parse("2026-10-23"))
+        val request = mapper.writeValueAsBytes(mapOf(
+            "event_id" to UUID.randomUUID(), "event_type" to "progress.user_cut.requested", "event_version" to 1,
+            "occurred_at" to Instant.now().toString(), "producer" to "progress", "aggregate_type" to "progress_source",
+            "aggregate_id" to user, "payload" to mapOf("userId" to user, "boundary" to boundary.toInstant().toString()),
+        ))
+        UserProgressEvents(store).handle("cookie.events.progress.user_cut.requested.v1", request)
+        CommitMarkerReader(postgres.jdbcUrl, "user_progress_replication", "replication-test", "user_progress", "progress_commit_markers").use { reader ->
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (System.nanoTime() < deadline && owner.queryForObject("SELECT count(*) FROM progress_source_cuts", Int::class.java) == 0) {
+                reader.poll(capture.progress::record)
+                Thread.sleep(30)
+            }
+        }
+        assertThat(owner.queryForList("SELECT last_seq FROM progress_source_commits ORDER BY first_seq", Long::class.java))
+            .containsExactly(1L, 3L, 4L)
+        assertThat(owner.queryForObject("SELECT before_seq FROM progress_source_cuts", Long::class.java)).isEqualTo(3)
+        assertThat(store.jdbc.update("DELETE FROM progress_source_accounts WHERE user_id=?", user)).isZero()
+        events.handle("cookie.events.account.deletion.requested.v1", event(user, "account.deletion.requested"))
+        UserProgressEvents(store).handle("cookie.events.progress.user_cut.requested.v1", request)
+        assertThat(owner.queryForObject("SELECT count(*) FROM progress_source_facts", Int::class.java)).isZero()
     }
     @Test fun `existing account reads share locks while deletion waits for readers`() {
         val user=activate()
@@ -218,5 +266,7 @@ class UserPersistenceIntegrationTest {
         assertThatThrownBy { store.jdbc.update("UPDATE profiles SET user_id=? WHERE user_id=?",id(),user) }.isInstanceOf(org.springframework.dao.DataAccessException::class.java)
         assertThat(service.profile(user).userId).isEqualTo(user)
     }
-    companion object { @Container @JvmStatic val postgres=PostgreSQLContainer("postgres:18-alpine") }
+    companion object {
+        @Container @JvmStatic val postgres=PostgreSQLContainer("postgres:18-alpine").withCommand("postgres", "-c", "wal_level=logical")
+    }
 }

@@ -37,4 +37,8 @@ include(
     "backend:services:health",
     "backend:services:health:domain",
     "backend:services:health:application",
+    "backend:services:progress",
+    "backend:services:progress:domain",
+    "backend:services:progress:application",
+    "backend:clients:progress",
 )

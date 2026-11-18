@@ -12,7 +12,7 @@
   const flows = details.flatMap(d => asArray(d.flows).map(f => ({...f, service: d.serviceId})));
   const facts = details.flatMap(d => asArray(d.facts).map(f => ({...f, service: d.serviceId})));
   const notes = Object.assign({}, ...details.map(d => d.operationNotes || {}));
-  const publicOps = D.operations.filter(o => o.visibility !== "internal");
+  const publicOps = D.operations.filter(o => o.visibility === "public");
   const views = ["map", "api", "events", "flows", "facts"];
   const viewNames = {map:"Карта системы",api:"HTTP-запросы",events:"События",flows:"Сценарии",facts:"Таймауты и правила"};
   let state = {view:"map", item:"notification", service:"", planned:false, direction:"all", flow:"", query:"", response:"", step:-1, zoom:1};
@@ -107,6 +107,9 @@
     if (state.view === "facts") renderFacts();
   }
   const baseNodes = [
+    {id:"progress_gateway",x:18,y:1040,w:176,sub:"Локальный Caddy · :8086",kind:"gateway"},
+    {id:"progress",x:278,y:1040,w:206,sub:"Дневные проекции и серия",kind:"service"},
+    {id:"progress_db",x:516,y:1040,w:210,sub:"PostgreSQL · факты и границы",kind:"store"},
     {id:"user",x:276,y:582,w:182,sub:"Local :8083 · без deploy",kind:"service"},
     {id:"health_gateway",x:18,y:841,w:176,sub:"Только локально · :8085",kind:"gateway"},
     {id:"health",x:278,y:880,w:180,sub:"Kotlin · assessment / import",kind:"service"},
@@ -129,6 +132,8 @@
     {id:"apns",x:1047,y:333,w:165,sub:"iOS · через Firebase",kind:"external"}
   ];
   const baseEdges = [
+    {id:"local-progress",from:"progress_gateway",to:"progress",kind:"http",label:"/v1/progress",path:"M194 1077H278",lx:196,ly:1060},
+    {id:"progress-db",from:"progress",to:"progress_db",kind:"store",label:"Факты / календарь",path:"M484 1077H516",lx:477,ly:1129},
     {id:"local-health",from:"health_gateway",to:"health",kind:"http",label:"/v1/health/*",path:"M194 878H247V915H278",lx:200,ly:867},
     {id:"health-publish",from:"health",to:"nats",kind:"event",label:"Health events",path:"M458 894H740V494H700",lx:744,ly:748},
     {id:"health-db",from:"health",to:"health_db",kind:"store",label:"Weight / outbox / inbox",path:"M458 912H743V967H766",lx:650,ly:904},
@@ -276,7 +281,8 @@
     const op=ops.find(o=>o.id===state.item) || ops[0];
     const renderOperation=o=>`<a href="${esc(hashFor("api",o.id))}" class="catalog-item ${op?.id===o.id?"selected":""}" ${op?.id===o.id?'aria-current="true"':""}><span class="item-heading">${methodPill(o.method)}<code>${esc(o.path)}</code></span><span class="item-description">${esc(o.summary)}</span></a>`;
     const groups=catalogGroups(ops,o=>o.service,group=>[
-      [group.filter(o=>o.visibility!=="internal"),"Публичный API"],
+      [group.filter(o=>o.visibility==="public"),"Публичный API"],
+      [group.filter(o=>o.visibility==="workload"),"Внутренний API"],
       [group.filter(o=>o.visibility==="internal"),"Закрытые probes"]
     ].filter(([items])=>items.length).map(([items,label])=>`<h3 class="catalog-subheading">${label}<span>${items.length}</span></h3>${items.map(renderOperation).join("")}`).join(""));
     $("main").innerHTML=heading("HTTP-запросы","Активные OpenAPI-контракты. Полные поля, ограничения, заголовки и ответы; operational probes выделены отдельно.")+
@@ -301,15 +307,17 @@
     const route=notes[op.id]?.route;
     const configuredFacts=notes[op.id]?.factIds;
     const missingSecurity=[...new Set(security.flatMap(requirement=>Object.keys(requirement)))].filter(name=>!Object.hasOwn(op.securitySchemes||{},name));
-    return `<div class="eyeline">${serviceMark(op.service)}<span class="pill ${op.visibility==="internal"?"internal":"implemented"}">${op.visibility==="internal"?"Закрыт на ingress":"Публичный маршрут"}</span><code>${esc(op.id)}</code></div>
+    const privateRoute = op.visibility !== "public";
+    const caller = op.visibility === "workload" ? "Mobile BFF" : "Оркестратор / оператор";
+    return `<div class="eyeline">${serviceMark(op.service)}<span class="pill ${privateRoute?"internal":"implemented"}">${privateRoute?"Закрыт на ingress":"Публичный маршрут"}</span><code>${esc(op.id)}</code></div>
       <div class="operation-path">${methodPill(op.method)}<code>${esc(op.path)}</code></div><h2>${esc(op.summary)}</h2><p class="description">${esc(op.description||"")}</p>${sourceLink(op.source,op.source?.path||"OpenAPI")}
-      <div class="flow-strip">${op.visibility==="internal"?`Оркестратор / оператор <span class="arrow">→</span> ${esc(title(op.service))} <span class="pill internal">без публичного gateway</span>`:`${route?esc(route):`Клиент <span class="arrow">→</span> ${op.service==="nutrition"?"Локальный HTTP :8083 (ingress не подключён)":"API Gateway"} <span class="arrow">→</span> ${esc(title(op.service))}`} ${flow?`<span class="arrow">·</span>${mapFlowLink(flow,"Путь запроса","")}`:""}`}</div>
+      <div class="flow-strip">${privateRoute?`${caller} <span class="arrow">→</span> ${esc(title(op.service))} <span class="pill internal">без публичного gateway</span>`:`${route?esc(route):`Клиент <span class="arrow">→</span> ${op.service==="nutrition"?"Локальный HTTP :8083 (ingress не подключён)":"API Gateway"} <span class="arrow">→</span> ${esc(title(op.service))}`}`} ${flow?`<span class="arrow">·</span>${mapFlowLink(flow,"Путь запроса","")}`:""}</div>
       ${opNotes.length?`<ul class="note-list">${opNotes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`:""}
       <section class="detail-section"><h3>Авторизация</h3>${security.length?`<div class="callout">${security.map(requirement=>Object.keys(requirement).map(name=>`<code>${esc(name)}</code>${op.securitySchemes?.[name]?.scheme==="bearer"?" · Authorization: Bearer &lt;access JWT&gt;":""}`).join(" + ")).join(" или ")}</div>${missingSecurity.length?`<div class="callout warning">Пробел контракта: ${esc(missingSecurity.join(", "))} используется в security, но не объявлен в components.securitySchemes этого файла.${op.service==="notification"?" Реализация требует Authorization: Bearer &lt;access JWT&gt;; проверка описана в сценарии и исходниках ниже.":""}</div>`:""}${rawDetails("Security schemes",op.securitySchemes||{})}`:`<p class="response-description">${op.visibility==="internal"?"Без пользовательского токена на уровне приложения. Доступ ограничен deployment-сетью.":"Bearer JWT не требуется. Proof, refresh credentials и rate limits могут проверяться самим handler."}</p>`}</section>
       <section class="detail-section"><h3>Параметры пути, query и headers <span class="count">${asArray(op.parameters).length}</span></h3>${parametersMarkup(op.parameters)}</section>
       <section class="detail-section"><h3>Тело запроса ${body?`<span class="pill">${body.required?"Обязательно":"Необязательно"}</span>`:""}</h3>${body?contentMarkup(body.content):'<p class="response-description">Тело запроса не определено контрактом.</p>'}</section>
       <section class="detail-section"><h3>Ответы</h3><div class="response-tabs" role="tablist" aria-label="Коды ответа">${statuses.map(s=>`<button type="button" role="tab" aria-selected="${s===selected}" class="response-tab ${s===selected?"active":""}" data-action="response" data-response="${esc(s)}">${esc(s)}</button>`).join("")}</div><div id="response-body">${responseMarkup(op.responses?.[selected])}</div></section>
-      ${op.visibility!=="internal"?`<section class="detail-section"><div class="code-heading"><span>Пример запроса · замените placeholders</span>${actionButton("copy-curl","Скопировать cURL",`data-operation="${esc(op.id)}"`,"text-button")}</div><div class="code-block"><pre>${esc(curlExample(op))}</pre></div></section>`:""}
+      ${!privateRoute?`<section class="detail-section"><div class="code-heading"><span>Пример запроса · замените placeholders</span>${actionButton("copy-curl","Скопировать cURL",`data-operation="${esc(op.id)}"`,"text-button")}</div><div class="code-block"><pre>${esc(curlExample(op))}</pre></div></section>`:""}
       <section class="detail-section"><h3>Таймауты и ограничения</h3><div class="facts-grid">${facts.filter(f=>(configuredFacts || operationFactIds).includes(f.id)).map(factMarkup).join("")}</div>${linkButton("facts","","Все параметры сервиса","mini-link",{service:op.service})}</section>
       ${flow?`<section class="detail-section"><h3>Что происходит внутри</h3>${timeline(flow)}${mapFlowLink(flow)}</section>${continuations(flow)}`:""}
       ${rawDetails("Полная операция OpenAPI",op)}`;

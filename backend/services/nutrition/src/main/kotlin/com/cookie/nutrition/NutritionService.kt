@@ -2,6 +2,7 @@ package com.cookie.nutrition
 
 import com.cookie.platform.messaging.EventEnvelope
 import com.cookie.platform.messaging.subject
+import com.cookie.platform.postgres.ProgressSourceJournal
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
@@ -16,6 +17,7 @@ import java.util.UUID
 @Service
 class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val mapper: ObjectMapper) {
     val snapshots = Snapshots(mapper)
+    internal val progress = ProgressSourceJournal(jdbc, tx, ::lock, NutritionProgressEvents(jdbc, mapper)::evidence)
     data class Result(val status: Int, val body: JsonNode? = null)
     private data class Row(val id: UUID, val version: Long, val day: LocalDate?, val document: ObjectNode?)
 
@@ -229,9 +231,11 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
     private fun mealEvent(user: UUID,value: ObjectNode,action: String,correlationId: UUID?) = event(user,"nutrition.meal.$action","meal",value.path("id").stringValue(),snapshots.version(value),
         snapshots.obj("mealId" to value.path("id"),"userId" to user,"eatenAt" to value.path("eatenAt")),correlationId)
     private fun dayEvent(user: UUID,date: LocalDate,correlationId: UUID?): JsonNode {
-        val totals=day(user,date).path("total")
+        val meals = documents("meals", user, date)
+        val totals = snapshots.total(meals)
         event(user,"nutrition.day.changed","nutrition_day","$user:$date",nextDayVersion(user,date,"day"),
-            snapshots.obj("userId" to user,"localDate" to date,"nutritionTotals" to totals),correlationId, wireVersion = 2)
+            snapshots.obj("userId" to user,"localDate" to date,"nutritionTotals" to totals,
+                "mealCount" to meals.size, "zoneProvenance" to zoneProvenance(meals)),correlationId, wireVersion = 3)
         return totals
     }
     private fun waterEvent(user: UUID,date: LocalDate,correlationId: UUID?) {
@@ -242,10 +246,27 @@ class NutritionService(val jdbc: JdbcTemplate, val tx: TransactionTemplate, val 
             next
         }
         event(user,"nutrition.water.changed","water_day","$user:$date",nextDayVersion(user,date,"water"),snapshots.obj("userId" to user,"localDate" to date,
-            "totalMl" to total,"lastConsumedAt" to entries.maxOfOrNull { snapshots.timestamp(it,"consumedAt").toInstant() }),correlationId)
+            "totalMl" to total,"lastConsumedAt" to entries.maxOfOrNull { snapshots.timestamp(it,"consumedAt").toInstant() },
+            "zoneProvenance" to zoneProvenance(entries)),correlationId)
     }
+
+    private fun zoneProvenance(entries: List<JsonNode>): JsonNode {
+        val zones = entries.map { it.path("timezone").stringValue() }.distinct()
+        return when {
+            entries.isEmpty() -> snapshots.obj("state" to "EMPTY")
+            zones.size == 1 && zones.single() != null -> snapshots.obj("state" to "SINGLE", "timezone" to zones.single())
+            else -> snapshots.obj("state" to "MIXED")
+        }
+    }
+
     private fun event(user: UUID,type: String,aggregate: String,id: String,version: Long,payload: JsonNode,correlationId: UUID?, wireVersion: Int = 1) {
         val envelope=EventEnvelope(UUID.randomUUID(),type,wireVersion,Instant.now(),"nutrition",aggregate,id,payload,version,correlationId=correlationId)
-        jdbc.update("INSERT INTO outbox_events(event_id,user_id,envelope,subject) VALUES (?,?,?::jsonb,?)",envelope.eventId,user,mapper.writeValueAsString(envelope),envelope.subject())
+        val body = if (type == "nutrition.day.changed" || type == "nutrition.water.changed") {
+            progress.append(user, envelope.eventId) { seq ->
+                val sequenced = (payload.deepCopy() as ObjectNode).put("sourceSeq", seq)
+                mapper.writeValueAsString(envelope.copy(payload = sequenced))
+            }
+        } else mapper.writeValueAsString(envelope)
+        jdbc.update("INSERT INTO outbox_events(event_id,user_id,envelope,subject) VALUES (?,?,?::jsonb,?)",envelope.eventId,user,body,envelope.subject())
     }
 }

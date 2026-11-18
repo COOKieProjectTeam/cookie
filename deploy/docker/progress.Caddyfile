@@ -1,0 +1,9 @@
+:8086 {
+    @progress path /v1/progress /v1/progress/weight /v1/progress/days/*
+    handle @progress {
+        reverse_proxy progress:8080
+    }
+    handle {
+        respond 404
+    }
+}

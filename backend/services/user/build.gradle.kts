@@ -124,6 +124,7 @@ tasks.named<Test>("test") {
 }
 
 val integrationTest = tasks.register<Test>("integrationTest") {
+    inputs.file(layout.projectDirectory.file("ops/progress-capture.sql")).withPathSensitivity(PathSensitivity.RELATIVE)
     description = "Runs User HTTP and JDBC integration tests against required containers."
     group = "verification"
     testClassesDirs = sourceSets["test"].output.classesDirs
