@@ -83,7 +83,8 @@ class DeploymentContractTest(unittest.TestCase):
     def test_consumer_filters_match_service_descriptor(self):
         descriptor = (ROOT / "backend/services/notification/service.yaml").read_text().split("  consumes:", 1)[1].split("synchronous_dependencies:", 1)[0]
         events = re.findall(r"type: ([a-z.]+)\s+version: (\d+)", descriptor)
-        self.assertEqual(len(events), 10)
+        self.assertEqual(len(events), len(set(events)))
+        self.assertCountEqual([version for name, version in events if name == "progress.day.updated"], ["1", "2"])
         config = json.loads((ROOT / "deploy/production/config/notification-consumer.json").read_text())
         self.assertCountEqual(config["filter_subjects"], [f"cookie.events.{name}.v{version}" for name, version in events])
         self.assertEqual(config["durable_name"], "notification-v1")
