@@ -3,6 +3,7 @@ package com.cookie.user.messaging
 import com.cookie.platform.messaging.DevelopmentJetStreamTopology
 import com.cookie.platform.messaging.NatsConnectionLifecycle
 import com.cookie.platform.messaging.NatsConnectionSettings
+import com.cookie.platform.messaging.ProgressSourceRequest
 import com.cookie.user.config.UserProperties
 import com.cookie.user.persistence.GoalAttempts
 import com.cookie.user.persistence.LifecycleEvents
@@ -27,7 +28,7 @@ class UserBroker(properties: UserProperties, environment: Environment) {
         options = { settings.options("cookie-user", "_INBOX.cookie.user") },
         initialize = { connection ->
             if (local && properties.provisionLocalBroker) DevelopmentJetStreamTopology.ensure(connection, STREAM, LifecycleEvents.CONSUMER,
-                LifecycleEvents.TYPES.map { "cookie.events.$it.v1" } + GoalAttempts.SUBJECT)
+                LifecycleEvents.TYPES.map { "cookie.events.$it.v1" } + GoalAttempts.SUBJECT + ProgressSourceRequest.subjects("user"))
         },
     )
 

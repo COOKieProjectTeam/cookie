@@ -115,7 +115,10 @@ services:
       - user.goal_override.changed
       - user.hydration_goal.changed
       - user.goal_assessment.requested
-    consumes: [account.activated, account.deletion.requested, health.goal_assessment.resolved]
+      - user.progress_commit.recorded
+      - user.progress_cut.confirmed
+      - user.progress_fact.replayed
+    consumes: [account.activated, account.deletion.requested, health.goal_assessment.resolved, progress.user_cut.requested, progress.user_replay.requested]
 
   - id: food_catalog
     name: Food Catalog Service
@@ -207,6 +210,8 @@ services:
       - progress.day.updated
       - progress.nutrition_cut.requested
       - progress.nutrition_replay.requested
+      - progress.user_cut.requested
+      - progress.user_replay.requested
     consumes:
       - account.deletion.requested
       - nutrition.day.changed
@@ -220,6 +225,9 @@ services:
       - user.goal.changed
       - user.goal_override.changed
       - user.hydration_goal.changed
+      - user.progress_commit.recorded
+      - user.progress_cut.confirmed
+      - user.progress_fact.replayed
 
   - id: notification
     name: Notification Service

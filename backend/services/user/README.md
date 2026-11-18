@@ -1,5 +1,22 @@
 # User Service
 
+## Progress commit capture
+
+Provision `wal_level=logical`, the capture and replication logins, and
+`ops/progress-capture.sql` before the first write. Run a separate User JAR
+with `--cookie.user.mode=progress-capture`. It needs
+`COOKIE_USER_DATABASE_URL`, `COOKIE_USER_CAPTURE_USER`,
+`COOKIE_USER_CAPTURE_PASSWORD`, `COOKIE_USER_REPLICATION_USER`, and
+`COOKIE_USER_REPLICATION_PASSWORD`. Keep the capture credentials separate
+from the HTTP process. Scope the replication login to the User database
+in an isolated PostgreSQL instance.
+
+Progress requests cut and replay through the subjects in `service.yaml`.
+Apply the full allowlist to the owner-managed consumer and publisher.
+Journal entries cover the confirmed goals, profile/timezone, hydration and
+cheat-day overrides. The asynchronous assessment request itself does
+not change these Progress projections. See [ADR 0017](../../../docs/adr/0017-progress-day-boundaries.md).
+
 Created with the repository service template. Owns profile, dietary preferences,
 allergies, immutable nutrition/hydration goal revisions and daily goal overrides.
 Identity owns accounts and credentials; Health owns weight measurements.

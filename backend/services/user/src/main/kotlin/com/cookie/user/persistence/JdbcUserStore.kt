@@ -1,21 +1,30 @@
 package com.cookie.user.persistence
 
+import com.cookie.platform.messaging.EventEnvelope
+import com.cookie.platform.postgres.ProgressSourceJournal
 import com.cookie.user.application.UserStore
 import com.cookie.user.domain.*
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.ObjectMapper
+import tools.jackson.databind.JsonNode
+import tools.jackson.databind.node.ObjectNode
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Clock
 import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneOffset
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 @Repository
 class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplate,
                     val mapper: ObjectMapper, val clock: Clock) : UserStore {
+    internal val progress = ProgressSourceJournal(jdbc, transactions, { lock(it) }, UserProgressEvents(this)::evidence)
+
     /** Shared readers run concurrently; mutations and lifecycle use the exclusive form. */
     fun lock(userId: UUID, shared: Boolean = false) {
         check(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
@@ -108,11 +117,32 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
     }
     fun profileEvent(profile: Profile,changed: List<String>) = event(profile.userId,"user.profile.updated",
         jdbc.queryForObject("SELECT aggregate_version FROM profiles WHERE user_id=?",Long::class.java,profile.userId)!!,
-        mapOf("userId" to profile.userId,"changedFields" to changed,"timezone" to profile.timezone,"locale" to profile.locale,"onboardingCompleted" to profile.onboardingCompleted))
+        mapOf("userId" to profile.userId,"changedFields" to changed,"timezone" to profile.timezone,"locale" to profile.locale,
+            "onboardingCompleted" to profile.onboardingCompleted, "baseline" to ("created" in changed),
+            "goalRevision" to jdbc.queryForObject("SELECT goal_revision FROM profiles WHERE user_id=?", Long::class.java, profile.userId),
+            "hasAcceptedGoal" to jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM accepted_goal_versions WHERE user_id=?)", Boolean::class.java, profile.userId,
+            )))
     fun event(userId: UUID,type: String,version: Long,payload: Any,wireVersion: Int = 1) {
-        jdbc.update("INSERT INTO outbox_events(event_id,user_id,event_type,aggregate_version,event_version,payload) VALUES (?,?,?,?,?,?::jsonb)",
-            newId(),userId,type,version,wireVersion,mapper.writeValueAsString(payload))
+        val id = newId()
+        val occurredAt = clock.instant().truncatedTo(ChronoUnit.MICROS)
+        val node = mapper.valueToTree<JsonNode>(payload)
+        if (type in progressFactTypes) {
+            progress.append(userId, id) { seq ->
+                (node as ObjectNode).put("sourceSeq", seq)
+                mapper.writeValueAsString(EventEnvelope(id, type, wireVersion, occurredAt, "user", "user", userId.toString(), node, version))
+            }
+        }
+        insertOutbox(id, userId, type, version, wireVersion, occurredAt, node)
     }
+
+    internal fun insertOutbox(id: UUID, userId: UUID, type: String, version: Long, wireVersion: Int, occurred: Instant, payload: JsonNode) {
+        jdbc.update("""INSERT INTO outbox_events(event_id,user_id,event_type,aggregate_version,event_version,occurred_at,payload)
+             VALUES (?,?,?,?,?,?,?::jsonb)""", id, userId, type, version, wireVersion,
+            occurred.atOffset(ZoneOffset.UTC), mapper.writeValueAsString(payload))
+    }
+
+    private val progressFactTypes = setOf("user.profile.updated", "user.goal.changed", "user.goal_override.changed", "user.hydration_goal.changed")
     internal fun bump(userId: UUID): Long = jdbc.queryForObject("UPDATE profiles SET aggregate_version=aggregate_version+1 WHERE user_id=? RETURNING aggregate_version",Long::class.java,userId)!!
     private fun today(userId: UUID): LocalDate {
         val timezone = jdbc.queryForObject("SELECT timezone FROM profiles WHERE user_id=?",String::class.java,userId)!!
@@ -128,7 +158,8 @@ class JdbcUserStore(val jdbc: JdbcTemplate, val transactions: TransactionTemplat
         val goal=HydrationGoal(newId(),today(userId),revision,targetMl)
         jdbc.update("INSERT INTO hydration_goal_versions(id,user_id,revision,effective_from,target_ml,source) VALUES (?,?,?,?,?,'MANUAL')",
             goal.id,userId,goal.revision,goal.effectiveFrom,targetMl)
-        event(userId,"user.hydration_goal.changed",bump(userId),mapOf("userId" to userId,"targetMl" to targetMl,"effectiveFrom" to goal.effectiveFrom))
+        event(userId,"user.hydration_goal.changed",bump(userId),mapOf("userId" to userId,"targetMl" to targetMl,
+            "effectiveFrom" to goal.effectiveFrom, "id" to goal.id, "revision" to goal.revision))
         goal
     }
     override fun override(userId: UUID,date: LocalDate) = read(userId) { loadOverride(userId,date) ?: throw UserFailure("OVERRIDE_NOT_FOUND",404) }
