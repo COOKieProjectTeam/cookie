@@ -1,5 +1,6 @@
 package com.cookie.nutrition
 
+import com.cookie.platform.postgres.CommitMarkerReader
 import com.nimbusds.jose.JOSEObjectType
 import com.nimbusds.jose.JWSAlgorithm
 import com.nimbusds.jose.JWSHeader
@@ -37,6 +38,7 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.Date
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -127,10 +129,99 @@ class NutritionIntegrationTest {
         (meals.reversed()+meals).forEach { e -> val key=e.path("aggregate_id").stringValue();if((projection[key]?.path("aggregate_version")?.longValue()?:0)<e.path("aggregate_version").longValue()) projection[key]=e }
         assertThat(projection.values.single().path("event_type").stringValue()).isEqualTo("nutrition.meal.deleted")
     }
+    @Test fun `cut proves PostgreSQL commit time across midnight and survives WAL redelivery`() {
+        val owner = JdbcTemplate(DriverManagerDataSource(postgres.jdbcUrl, postgres.username, postgres.password))
+        val lost = user()
+        call(lost, "createMeal", meal())
+        owner.execute("CREATE ROLE nutrition_progress_capture LOGIN PASSWORD 'capture-test'")
+        owner.execute("CREATE ROLE nutrition_progress_replication LOGIN REPLICATION PASSWORD 'replication-test'")
+        owner.execute(Path.of("ops/progress-capture.sql").toFile().readLines().filterNot { it.startsWith("\\") }.joinToString("\n"))
+        val capture = JdbcTemplate(DriverManagerDataSource(postgres.jdbcUrl, "nutrition_progress_capture", "capture-test"))
+        val u = user()
+        val empty = user()
+        call(u, "createMeal", meal())
+        assertThatThrownBy {
+            service.tx.executeWithoutResult {
+                call(u, "createMeal", meal())
+                error("rollback")
+            }
+        }.isInstanceOf(IllegalStateException::class.java)
+        val boundary = requireNotNull(service.tx.execute {
+            val next = service.jdbc.queryForObject(
+                "SELECT date_trunc('second', clock_timestamp()) + interval '2 seconds'", OffsetDateTime::class.java,
+            )!!
+            call(u, "createMeal", meal())
+            service.jdbc.query("SELECT pg_sleep_until(?::timestamptz + interval '20 milliseconds')", { _, _ -> Unit }, next)
+            next.toInstant()
+        })
+        for (account in listOf(u, empty, lost)) {
+            val request = json("""{
+                "event_id":"${UUID.randomUUID()}","event_type":"progress.nutrition_cut.requested",
+                "event_version":1,"occurred_at":"${Instant.now()}","producer":"progress",
+                "aggregate_type":"progress_source","aggregate_id":"$account","payload":{"userId":"$account","boundary":"$boundary"}
+            }""")
+            service.handleProgressRequest("cookie.events.progress.nutrition_cut.requested.v1", mapper.writeValueAsBytes(request))
+        }
+        CommitMarkerReader(postgres.jdbcUrl, "nutrition_progress_replication", "replication-test", "nutrition_progress", "progress_commit_markers").use { reader ->
+            val journal = NutritionService(capture, org.springframework.transaction.support.TransactionTemplate(
+                org.springframework.jdbc.datasource.DataSourceTransactionManager(checkNotNull(capture.dataSource)),
+            ), mapper).progress
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+            var simulatedFailure = false
+            while (System.nanoTime() < deadline &&
+                (count(u, "progress_source_cuts") + count(empty, "progress_source_cuts") < 2 ||
+                    owner.queryForObject("SELECT count(*) FROM progress_source_faults WHERE user_id=?", Long::class.java, lost) == 0L)
+            ) {
+                try {
+                    reader.poll {
+                        journal.record(it)
+                        if (!simulatedFailure) {
+                            simulatedFailure = true
+                            throw IllegalStateException("test failure between persistence and WAL feedback")
+                        }
+                    }
+                } catch (e: IllegalStateException) {
+                    if (e.message != "test failure between persistence and WAL feedback") throw e
+                }
+                Thread.sleep(30)
+            }
+        }
+        assertThat(count(u, "progress_source_facts")).isEqualTo(2)
+        assertThat(count(u, "progress_source_commits")).isEqualTo(2)
+        val proof = events(u).single { it.path("event_type").asString() == "nutrition.progress_cut.confirmed" }.path("payload")
+        assertThat(proof.path("beforeSeq").longValue()).isEqualTo(1)
+        assertThat(proof.path("throughSeq").longValue()).isEqualTo(1)
+        val emptyProof = events(empty).single { it.path("event_type").asString() == "nutrition.progress_cut.confirmed" }.path("payload")
+        assertThat(emptyProof.path("throughSeq").longValue()).isZero()
+        assertThat(count(lost, "progress_source_cuts")).isZero()
+        assertThat(owner.queryForObject("SELECT count(*) FROM progress_source_faults WHERE user_id=?", Long::class.java, lost)).isEqualTo(1)
+        assertThat(service.jdbc.update("DELETE FROM progress_source_accounts WHERE user_id=?", u)).isZero()
+        assertThatThrownBy {
+            service.jdbc.update("INSERT INTO progress_source_accounts(user_id,evidence_fault) VALUES (?,false)", user())
+        }.isInstanceOf(org.springframework.dao.DataAccessException::class.java)
+        outbox.publishAvailable()
+        val stream = natsConnection.connected().jetStreamManagement()
+        val last = stream.getLastMessage("COOKIE_EVENTS", "cookie.events.nutrition.progress_cut.confirmed.v1")
+        assertThat(mapper.readTree(last.data).path("payload").path("boundary").asString()).isEqualTo(boundary.toString())
+        val original = events(u).single { it.path("payload").path("sourceSeq").asLong(0) == 2L }
+        val brokerFact = stream.getLastMessage("COOKIE_EVENTS", "cookie.events.nutrition.day.changed.v3")
+        assertThat(mapper.readTree(brokerFact.data)).isEqualTo(original)
+        stream.deleteMessage("COOKIE_EVENTS", brokerFact.seq)
+        val replay = json("""{
+            "event_id":"${UUID.randomUUID()}","event_type":"progress.nutrition_replay.requested",
+            "event_version":1,"occurred_at":"${Instant.now()}","producer":"progress",
+            "aggregate_type":"progress_source","aggregate_id":"$u","payload":{"userId":"$u","firstSeq":2,"lastSeq":2}
+        }""")
+        service.handleProgressRequest("cookie.events.progress.nutrition_replay.requested.v1", mapper.writeValueAsBytes(replay))
+        outbox.publishAvailable()
+        val replayed = stream.getLastMessage("COOKIE_EVENTS", "cookie.events.nutrition.progress_fact.replayed.v1")
+        assertThat(mapper.readTree(replayed.data).path("payload").path("event")).isEqualTo(original)
+    }
+
     private fun assertNotificationContract(e: JsonNode) {
         UUID.fromString(e.path("event_id").stringValue());Instant.parse(e.path("occurred_at").stringValue())
         assertThat(e.path("producer").stringValue()).isEqualTo("nutrition")
-        val expectedWireVersion = if (e.path("event_type").asString()=="nutrition.day.changed") 2 else 1
+        val expectedWireVersion = if (e.path("event_type").asString()=="nutrition.day.changed") 3 else 1
         assertThat(e.path("event_version").intValue()).isEqualTo(expectedWireVersion)
         assertThat(e.path("aggregate_version").longValue()).isPositive()
         val p=e.path("payload");UUID.fromString(p.path("userId").stringValue())
@@ -138,7 +229,11 @@ class NutritionIntegrationTest {
             "nutrition.meal.created","nutrition.meal.updated" -> { UUID.fromString(p.path("mealId").stringValue());Instant.parse(p.path("eatenAt").stringValue());assertThat(p.has("dishes")).isFalse() }
             "nutrition.meal.deleted" -> UUID.fromString(p.path("mealId").stringValue())
             "nutrition.water.changed" -> { java.time.LocalDate.parse(p.path("localDate").stringValue());assertThat(p.path("totalMl").longValue()).isNotNegative();assertThat(p.has("lastConsumedAt")).isTrue();if(!p.path("lastConsumedAt").isNull) Instant.parse(p.path("lastConsumedAt").stringValue()) }
-            "nutrition.day.changed" -> assertThat(p.path("nutritionTotals").isObject).isTrue()
+            "nutrition.day.changed" -> {
+                assertThat(p.path("nutritionTotals").isObject).isTrue()
+                assertThat(p.path("mealCount").isIntegralNumber).isTrue()
+                assertThat(p.path("sourceSeq").longValue()).isPositive()
+            }
             else -> fail("Unexpected producer event")
         }
     }
@@ -334,7 +429,7 @@ class NutritionIntegrationTest {
             val result = http(account,"POST","/v1/diary/meals",raw=input)
             assertThat(result.statusCode()).withFailMessage(result.body()).isEqualTo(201)
             val day = events(account).single { it.path("event_type").asString()=="nutrition.day.changed" }
-            assertThat(day.path("event_version").asInt()).isEqualTo(2)
+            assertThat(day.path("event_version").asInt()).isEqualTo(3)
             return json(result.body()).path("dayTotals")
         }
         val european = create(""" "proteinG":10,"carbsG":12,"fiberG":5 """.trim())
@@ -368,7 +463,7 @@ class NutritionIntegrationTest {
         val roundTrip=clientJson.encodeToString(com.cookie.mobile.generated.model.MealCreatedResponse.serializer(),generated)
         assertThat(json(roundTrip).path("dayTotals").path("calories").stringValue()).isEqualTo(exact)
         outbox.publishAvailable()
-        val published=natsConnection.connected().jetStreamManagement().getLastMessage("COOKIE_EVENTS","cookie.events.nutrition.day.changed.v2")
+        val published=natsConnection.connected().jetStreamManagement().getLastMessage("COOKIE_EVENTS","cookie.events.nutrition.day.changed.v3")
         assertThat(json(String(requireNotNull(published.data))).path("payload").path("nutritionTotals").path("calories").decimalValue()).isEqualByComparingTo(exact)
         assertThat(json(http(u,"GET","/v1/diary/days/2026-10-21").body()).path("total").path("calories").stringValue()).isEqualTo(exact)
     }
@@ -483,7 +578,7 @@ class NutritionIntegrationTest {
             owner.execute("DROP TRIGGER test_quarantine_fault ON rejected_events")
             owner.execute("DROP FUNCTION test_quarantine_fault()")
             // The recovery may be pending; test-only pull redelivery cleanup avoids order-dependent tests.
-            val cleanup=natsConnection.connected().jetStream().subscribe(DeletionConsumer.SUBJECT,
+            val cleanup=natsConnection.connected().jetStream().subscribe(null,
                 io.nats.client.PullSubscribeOptions.bind("COOKIE_EVENTS","nutrition-account-deletion-v1"))
             natsConnection.connected().jetStreamManagement().deleteConsumer("COOKIE_EVENTS","nutrition-account-deletion-v1")
             org.springframework.test.util.ReflectionTestUtils.setField(consumer,"subscription",null)
@@ -619,6 +714,7 @@ class NutritionIntegrationTest {
         val jwks=Files.createTempFile("nutrition-jwks-",".json").also { Files.writeString(it,JWKSet(key.toPublicJWK()).toString());it.toFile().deleteOnExit() }
         class NatsContainer: GenericContainer<NatsContainer>("nats:2.14.6-alpine")
         @Container @JvmStatic val postgres=PostgreSQLContainer("postgres:18.6").withDatabaseName("nutrition").withUsername("owner").withPassword("test")
+            .withCommand("postgres", "-c", "wal_level=logical")
         @Container @JvmStatic val nats=NatsContainer().withCommand("-js").withExposedPorts(4222)
         @DynamicPropertySource @JvmStatic fun properties(r: DynamicPropertyRegistry) {
             Flyway.configure().dataSource(postgres.jdbcUrl,postgres.username,postgres.password).load().migrate()

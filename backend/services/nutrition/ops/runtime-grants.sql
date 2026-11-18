@@ -18,6 +18,22 @@ GRANT USAGE ON SCHEMA public TO nutrition_runtime;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM nutrition_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON meals, saved_dishes, water_entries, day_versions, outbox_events TO nutrition_runtime;
 GRANT SELECT, INSERT ON account_tombstones, inbox_events, rejected_events TO nutrition_runtime;
+GRANT SELECT, DELETE ON progress_source_accounts TO nutrition_runtime;
+GRANT INSERT(user_id,latest_seq) ON progress_source_accounts TO nutrition_runtime;
+GRANT UPDATE(latest_seq,admission_boundary) ON progress_source_accounts TO nutrition_runtime;
+GRANT SELECT, INSERT ON progress_source_facts, progress_commit_markers TO nutrition_runtime;
+GRANT SELECT ON progress_source_commits, progress_source_cuts TO nutrition_runtime;
+ALTER TABLE progress_source_accounts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS progress_runtime_read ON progress_source_accounts;
+DROP POLICY IF EXISTS progress_runtime_insert ON progress_source_accounts;
+DROP POLICY IF EXISTS progress_runtime_update ON progress_source_accounts;
+DROP POLICY IF EXISTS progress_runtime_delete ON progress_source_accounts;
+CREATE POLICY progress_runtime_read ON progress_source_accounts FOR SELECT TO nutrition_runtime USING (true);
+CREATE POLICY progress_runtime_insert ON progress_source_accounts FOR INSERT TO nutrition_runtime
+ WITH CHECK (NOT EXISTS (SELECT 1 FROM account_tombstones AS t WHERE t.user_id=progress_source_accounts.user_id));
+CREATE POLICY progress_runtime_update ON progress_source_accounts FOR UPDATE TO nutrition_runtime USING (true) WITH CHECK (true);
+CREATE POLICY progress_runtime_delete ON progress_source_accounts FOR DELETE TO nutrition_runtime
+ USING (EXISTS (SELECT 1 FROM account_tombstones AS t WHERE t.user_id=progress_source_accounts.user_id));
 DO $$
 DECLARE relation record; permission text;
 BEGIN
@@ -31,6 +47,18 @@ BEGIN
           THEN has_any_column_privilege('nutrition_runtime',relation.oid,permission) ELSE false END)
        AND NOT (relation.relname IN ('meals','saved_dishes','water_entries','day_versions','outbox_events') AND permission IN ('SELECT','INSERT','UPDATE','DELETE'))
        AND NOT (relation.relname IN ('account_tombstones','inbox_events','rejected_events') AND permission IN ('SELECT','INSERT')) THEN
+       IF relation.relname = 'progress_source_accounts' AND permission IN ('SELECT','INSERT','UPDATE','DELETE') THEN
+         IF permission IN ('SELECT','DELETE') OR (
+            NOT has_table_privilege('nutrition_runtime',relation.oid,permission)
+            AND NOT EXISTS (SELECT 1 FROM pg_attribute att
+              WHERE att.attrelid=relation.oid AND att.attnum>0 AND NOT att.attisdropped
+                AND att.attname<>'latest_seq' AND NOT (permission='INSERT' AND att.attname='user_id')
+                AND NOT (permission='UPDATE' AND att.attname='admission_boundary')
+                AND has_column_privilege('nutrition_runtime',relation.oid,att.attnum,permission))
+         ) THEN CONTINUE; END IF;
+       END IF;
+       IF relation.relname IN ('progress_source_facts','progress_commit_markers') AND permission IN ('SELECT','INSERT')
+          OR relation.relname IN ('progress_source_commits','progress_source_cuts') AND permission='SELECT' THEN CONTINUE; END IF;
        RAISE EXCEPTION 'Unsafe effective runtime privilege % on %',permission,relation.relname;
      END IF;
    END LOOP;

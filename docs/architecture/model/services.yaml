@@ -147,7 +147,10 @@ services:
       - nutrition.meal.deleted
       - nutrition.day.changed
       - nutrition.water.changed
-    consumes: [account.deletion.requested]
+      - nutrition.progress_commit.recorded
+      - nutrition.progress_cut.confirmed
+      - nutrition.progress_fact.replayed
+    consumes: [account.deletion.requested, progress.nutrition_cut.requested, progress.nutrition_replay.requested]
     synchronous_dependencies: []
     planned_synchronous_dependencies: [recipe, media]
     implementation_note: Autonomous diary; Recipe import and Media attachments await real callees.
@@ -202,10 +205,15 @@ services:
     dbml: contracts/dbml/progress.dbml
     publishes:
       - progress.day.updated
+      - progress.nutrition_cut.requested
+      - progress.nutrition_replay.requested
     consumes:
       - account.deletion.requested
       - nutrition.day.changed
       - nutrition.water.changed
+      - nutrition.progress_commit.recorded
+      - nutrition.progress_cut.confirmed
+      - nutrition.progress_fact.replayed
       - health.activity.changed
       - health.weight.changed
       - user.profile.updated

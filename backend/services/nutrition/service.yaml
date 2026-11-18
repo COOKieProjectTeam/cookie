@@ -15,11 +15,21 @@ messaging:
     - type: nutrition.meal.deleted
       version: 1
     - type: nutrition.day.changed
-      version: 2
+      version: 3
     - type: nutrition.water.changed
+      version: 1
+    - type: nutrition.progress_commit.recorded
+      version: 1
+    - type: nutrition.progress_cut.confirmed
+      version: 1
+    - type: nutrition.progress_fact.replayed
       version: 1
   consumes:
     - type: account.deletion.requested
+      version: 1
+    - type: progress.nutrition_cut.requested
+      version: 1
+    - type: progress.nutrition_replay.requested
       version: 1
 synchronous_dependencies: []
 infrastructure_dependencies: [postgresql, nats_jetstream, identity_public_jwks]

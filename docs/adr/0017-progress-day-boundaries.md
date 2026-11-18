@@ -50,8 +50,10 @@ Group evidence includes the account and exact contiguous sequence range.
 
 Progress sends `progress.nutrition_cut.requested.v1` and
 `progress.user_cut.requested.v1` after its fixed boundary. Under the same
-account lock as mutations, the owner records a marker after the boundary.
-Decode its commit to prove all earlier account commits were processed.
+account lock as mutations, the owner records a marker after the boundary,
+including the latest sequence, and fences subsequent writes at that instant.
+Decode its commit and require a continuous captured prefix through its
+recorded sequence to prove all earlier account commits were processed.
 The owner returns `nutrition.progress_cut.confirmed.v1` or
 `user.progress_cut.confirmed.v1` with the requested instant and cursors
 for commits strictly before and at or before that instant. An empty
@@ -63,7 +65,10 @@ Source clocks must remain UTC-synchronised and nondecreasing across serialized
 commits. Check the decoded stream for timestamp regressions and reject
 promotion of the affected evidence. Enforce the last certified lower bound
 under the account lock, fail closed when clock integrity is lost, and require
-operator reconciliation before advancing across a discontinuity. Retain
+operator reconciliation before advancing across a discontinuity. Retain raw
+timestamps, position and marker IDs for a faulted account before acknowledging
+WAL, so unrelated accounts can keep progressing and the operator can reconcile.
+Retain
 the WAL cursor and monitor slot retention. Lost WAL cannot be replaced by a
 new empty slot. See the PostgreSQL
 [logical replication message format](https://www.postgresql.org/docs/18/protocol-logicalrep-message-formats.html).

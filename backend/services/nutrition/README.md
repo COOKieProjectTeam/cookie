@@ -94,7 +94,7 @@ Provision stream `COOKIE_EVENTS` with `cookie.events.>` and durable consumer
 and max 20 unacknowledged messages. Production runtime must only publish
 the five exact subjects `cookie.events.nutrition.meal.created.v1`,
 `cookie.events.nutrition.meal.updated.v1`, `cookie.events.nutrition.meal.deleted.v1`,
-`cookie.events.nutrition.day.changed.v2`, and `cookie.events.nutrition.water.changed.v1`;
+`cookie.events.nutrition.day.changed.v3`, and `cookie.events.nutrition.water.changed.v1`;
 use its `_INBOX.cookie.nutrition.>` replies,
 pull/ACK its own consumer, and bind/read consumer information. It does not need
 stream administration or arbitrary stream-message retrieval. Operator replay
@@ -137,3 +137,27 @@ The [HTML atlas](../../../docs/architecture/explorer/index.html) includes Nutrit
 API flows, source-linked limits, its database, mounted public JWKS and actual
 JetStream paths. Local implementation is distinguished from production wiring.
 The former handwritten-map deferral is complete.
+## Progress commit capture
+
+See [ADR 0017](../../../docs/adr/0017-progress-day-boundaries.md). Before
+allowing writes on a fresh Nutrition database, enable `wal_level=logical`,
+provision `nutrition_progress_capture` and `nutrition_progress_replication`,
+and run `ops/progress-capture.sql` as an operator. Provision replication
+access only to the Nutrition database and restrict the credential to the
+capture process. PostgreSQL's replication privilege can read WAL beyond a
+single publication. Use a dedicated cluster or equivalent operator-enforced
+credential and network isolation. Apply `ops/runtime-grants.sql` separately.
+
+Run the same Nutrition JAR in a separate process with the single argument
+`--progress-commit-worker`. Set `COOKIE_NUTRITION_DATABASE_URL`,
+`COOKIE_NUTRITION_CAPTURE_USER`, `COOKIE_NUTRITION_CAPTURE_PASSWORD`,
+`COOKIE_NUTRITION_REPLICATION_USER` and `COOKIE_NUTRITION_REPLICATION_PASSWORD`
+for that process. Keep replication and capture credentials out of the HTTP
+process. The worker persists evidence and the PostgreSQL position before
+acknowledging WAL. The normal Nutrition publisher delivers the evidence.
+
+Extend the operator-managed Nutrition durable filter to the exact deletion,
+Nutrition cut and replay subjects in `service.yaml`. Publish grants come from
+the descriptor, including the three Nutrition evidence/replay subjects.
+Keep the slot and database position together in recovery. Creating a slot
+after writes or replacing an invalidated slot cannot prove completeness.
