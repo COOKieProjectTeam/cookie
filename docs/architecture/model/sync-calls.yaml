@@ -1,6 +1,6 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-10-20
+updated_at: 2026-11-24
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
 
@@ -31,23 +31,31 @@ calls:
 
   - caller: meal_planner
     callee: shopping
-    purpose: create asynchronous add-to-cart import job and poll its status
+    purpose: import distinct planned cooks for a selected date range; poll import job
   - caller: meal_planner
     callee: recipe
-    purpose: retrieve and filter recipe candidates for plan generation
+    purpose: resolve versioned author variants and filter candidates for plan generation
   - caller: meal_planner
     callee: user
     purpose: retrieve current profile, goals, diet and allergies
 
   - caller: nutrition
     callee: recipe
-    purpose: resolve a personalized immutable recipe snapshot before creating a dish
+    purpose: resolve immutable catalog selection or owned completed cook for diary import
+  - caller: nutrition
+    callee: meal_planner
+    purpose: validate owned plan-item assignment against selection and planned cook before linked import
+    implementation: planned
+  - caller: recipe
+    callee: meal_planner
+    purpose: validate owned planned cook and pinned selection when starting a linked cooking session
+    implementation: planned
   - caller: nutrition
     callee: media
     purpose: validate ownership/readiness and resolve media URLs for dishes
   - caller: shopping
     callee: recipe
-    purpose: retrieve recipe version and ingredient snapshot
+    purpose: resolve pinned selection into scaled purchase ingredients
   - caller: recipe
     callee: media
     purpose: resolve temporary recipe photo URLs

@@ -468,7 +468,6 @@ Table recipe_versions as RV {
   version_number integer [not null]
   title varchar [not null]
   description text
-  default_servings decimal(6,2) [not null]
   prep_seconds integer
   cook_seconds integer
   difficulty varchar [note: 'EASY | MEDIUM | HARD']
@@ -481,8 +480,20 @@ Table recipe_versions as RV {
   Note: 'Service: Recipe'
 }
 
+Table recipe_variants as RVAR {
+  id uuid [pk]
+  recipe_version_id uuid [not null, ref: > RV.id]
+  label varchar [not null]
+  is_default boolean [not null]
+  yield_amount decimal(12,3) [not null]
+  yield_unit varchar [not null, note: 'G | ML | PIECE']
+  piece_label varchar [note: 'packet, strip, bar, etc.']
+  serving_amount decimal(12,3) [not null, note: 'positive, in yield_unit']
+  Note: 'Published revision has exactly one default variant and positive yield.'
+}
+
 Table recipe_version_nutrition as RVN {
-  recipe_version_id uuid [pk, ref: - RV.id]
+  variant_id uuid [pk, ref: - RVAR.id]
   calories_total decimal(10,3)
   protein_total decimal(10,3)
   fat_total decimal(10,3)
@@ -509,55 +520,35 @@ Table recipe_version_photos as RVP {
   Note: 'Service: Recipe'
 }
 
-Table recipe_version_ingredients as RVI {
+Table recipe_variant_lines as RVL {
   id uuid [pk]
-  recipe_version_id uuid [not null, ref: > RV.id]
-  ingredient_id uuid [not null, ref: > RI.id]
-  amount_base decimal(12,3) [not null]
+  variant_id uuid [not null, ref: > RVAR.id]
+  ingredient_id uuid [ref: > RI.id]
+  subrecipe_variant_id uuid [ref: > RVAR.id]
+  layer varchar [not null]
+  optional boolean [not null]
+  input_amount decimal(12,3) [not null]
+  input_unit varchar [not null]
+  prepared_amount decimal(12,3)
+  prepared_unit varchar
+  nutrient_basis jsonb [note: 'Leaf: published name, food state, source, base G/ML, values per 100, allergens']
   position integer [not null]
-
-  Note: 'Service: Recipe'
+  Note: 'Exactly one ingredient or pinned subrecipe. Leaf input uses nutrient base unit; subrecipe uses its yield unit. Prepared amount and unit are paired.'
 }
 
 Table recipe_steps as RS {
   id uuid [pk]
-  recipe_version_id uuid [not null, ref: > RV.id]
+  variant_id uuid [not null, ref: > RVAR.id]
+  optional_line_id uuid [ref: > RVL.id, note: 'omit step when its optional line is excluded']
   position integer [not null]
   text text [not null]
   duration_seconds integer [null]
-
-  Note: 'Service: Recipe'
 }
 
 Table recipe_tags as RT {
   recipe_version_id uuid [not null, ref: > RV.id]
   tag_type varchar [not null]
   tag_value varchar [not null]
-
-  Note: 'Service: Recipe'
-}
-
-Table recipe_user_customizations as RUC {
-  id uuid [pk]
-  user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  recipe_id uuid [not null, ref: > R.id]
-  base_recipe_version_id uuid [not null, ref: > RV.id]
-  revision bigint [not null, default: 1]
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-
-  indexes {
-    (user_id, recipe_id) [unique]
-  }
-
-  Note: 'Service: Recipe'
-}
-
-Table recipe_customization_ingredients as RCI {
-  customization_id uuid [not null, ref: > RUC.id]
-  ingredient_id uuid [not null, ref: > RI.id]
-  amount_base decimal(12,3) [not null]
-  position integer [not null]
 
   Note: 'Service: Recipe'
 }
@@ -590,10 +581,12 @@ Table recipe_feedback as RFB {
 Table recipe_cooking_sessions as RCS {
   id uuid [pk]
   user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
-  recipe_id uuid [not null, ref: > R.id]
-  recipe_version integer [not null]
-  customization_revision bigint [null]
-  servings decimal(6,2) [not null]
+  variant_id uuid [not null, ref: > RVAR.id]
+  excluded_line_ids jsonb [not null, note: 'Distinct optional IDs from the selected variant']
+  planned_cook_id uuid [note: 'Logical ref to Meal Planner, optional for catalog cooks']
+  ingredient_scale decimal(12,6) [not null]
+  actual_yield_amount decimal(12,3)
+  actual_yield_unit varchar [note: 'Paired, positive and required on completion']
   status varchar [not null, note: 'IN_PROGRESS | COMPLETED | CANCELLED']
   started_at timestamptz [not null]
   completed_at timestamptz [null]
@@ -619,11 +612,18 @@ Table shopping_cart_recipe_items as SCR {
   cart_id uuid [not null, ref: > SC.id]
   recipe_id uuid [not null, note: 'logical ref -> Recipe.recipes.id']
   recipe_version integer [not null]
-  customization_revision bigint [null]
+  variant_id uuid [not null]
+  excluded_line_ids jsonb [not null]
+  planned_cook_id uuid [note: 'Logical ref to Meal Planner; absent for direct catalog adds']
+  available_prep_line_ids jsonb [not null, note: 'Cart-only subset of subrecipe lines already prepared']
   recipe_title_snapshot varchar [not null]
   servings decimal(6,2) [not null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  indexes {
+    (cart_id, planned_cook_id) [unique]
+  }
 
   Note: 'Service: Shopping'
 }
@@ -631,6 +631,8 @@ Table shopping_cart_recipe_items as SCR {
 Table shopping_cart_import_jobs as SCIJ {
   id uuid [pk]
   user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  client_generated_id uuid [not null]
+  request_hash varchar [not null]
   meal_plan_id uuid [not null, note: 'logical ref -> Meal Planner.meal_plans.id']
   from_date date [not null]
   to_date date [not null]
@@ -641,6 +643,7 @@ Table shopping_cart_import_jobs as SCIJ {
   completed_at timestamptz [null]
 
   indexes {
+    (user_id, client_generated_id) [unique]
     (user_id, created_at) [name: 'idx_cart_import_jobs_user_created']
   }
 
@@ -651,6 +654,7 @@ Table shopping_cart_recipe_ingredients as SCI {
   cart_recipe_item_id uuid [not null, ref: > SCR.id]
   ingredient_id uuid [not null, note: 'logical ref -> Recipe.ingredients.id']
   ingredient_name_snapshot varchar [not null]
+  source_line_path jsonb [not null, note: 'Parent line and leaf line, or leaf alone']
   base_amount_for_item decimal(12,3) [not null]
   base_unit varchar [not null]
 
@@ -990,13 +994,27 @@ Table meal_plan_days as MPD {
   Note: 'Service: Meal Planner'
 }
 
+Table meal_planned_cooks as MPC {
+  id uuid [pk]
+  plan_id uuid [not null, ref: > MP.id]
+  cook_date date [not null]
+  recipe_id uuid [not null]
+  recipe_version integer [not null]
+  variant_id uuid [not null]
+  excluded_line_ids jsonb [not null]
+  ingredient_scale decimal(12,6) [not null]
+  planned_yield_amount decimal(12,3) [not null]
+  planned_yield_unit varchar [not null]
+  Note: 'Pinned Recipe selection. One planned cook can cover several days in the same plan.'
+}
+
 Table meal_plan_items as MPI {
   id uuid [pk]
   meal_plan_day_id uuid [not null, ref: > MPD.id]
   meal_type varchar [not null, note: 'BREAKFAST | LUNCH | DINNER | SNACK']
-  recipe_id uuid [not null, note: 'logical ref -> Recipe.recipes.id']
-  recipe_version integer [not null]
-  servings decimal(6,2) [not null]
+  planned_cook_id uuid [not null, ref: > MPC.id]
+  planned_amount decimal(12,3) [not null]
+  planned_unit varchar [not null]
   position integer [not null]
 
   Note: 'Service: Meal Planner'

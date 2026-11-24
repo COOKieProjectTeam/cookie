@@ -38,13 +38,27 @@ Table plan_days as PlanDays {
   Note: 'Service: Meal Planner'
 }
 
+Table planned_cooks as PlannedCooks {
+  id uuid [pk]
+  plan_id uuid [not null, ref: > Plans.id]
+  cook_date date [not null]
+  recipe_id uuid [not null]
+  recipe_version integer [not null]
+  variant_id uuid [not null]
+  excluded_line_ids jsonb [not null]
+  ingredient_scale decimal(12,6) [not null]
+  planned_yield_amount decimal(12,3) [not null]
+  planned_yield_unit varchar [not null]
+  Note: 'Pinned Recipe selection. One planned cook can cover several days in the same plan.'
+}
+
 Table plan_items as PlanItems {
   id uuid [pk]
   meal_plan_day_id uuid [not null, ref: > PlanDays.id]
   meal_type varchar [not null, note: 'BREAKFAST | LUNCH | DINNER | SNACK']
-  recipe_id uuid [not null, note: 'logical ref -> Recipe.recipes.id']
-  recipe_version integer [not null]
-  servings decimal(6,2) [not null]
+  planned_cook_id uuid [not null, ref: > PlannedCooks.id]
+  planned_amount decimal(12,3) [not null]
+  planned_unit varchar [not null]
   position integer [not null]
 
   Note: 'Service: Meal Planner'

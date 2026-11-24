@@ -17,11 +17,18 @@ Table cart_recipe_items as CartRecipeItems {
   cart_id uuid [not null, ref: > Carts.id]
   recipe_id uuid [not null, note: 'logical ref -> Recipe.recipes.id']
   recipe_version integer [not null]
-  customization_revision bigint [null]
+  variant_id uuid [not null]
+  excluded_line_ids jsonb [not null]
+  planned_cook_id uuid [note: 'Logical ref to Meal Planner; absent for direct catalog adds']
+  available_prep_line_ids jsonb [not null, note: 'Cart-only subset of subrecipe lines already prepared']
   recipe_title_snapshot varchar [not null]
   servings decimal(6,2) [not null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  indexes {
+    (cart_id, planned_cook_id) [unique]
+  }
 
   Note: 'Service: Shopping'
 }
@@ -29,6 +36,8 @@ Table cart_recipe_items as CartRecipeItems {
 Table cart_import_jobs as CartImportJobs {
   id uuid [pk]
   user_id uuid [not null, note: 'logical ref -> Identity.accounts.id']
+  client_generated_id uuid [not null]
+  request_hash varchar [not null]
   meal_plan_id uuid [not null, note: 'logical ref -> Meal Planner.meal_plans.id']
   from_date date [not null]
   to_date date [not null]
@@ -39,6 +48,7 @@ Table cart_import_jobs as CartImportJobs {
   completed_at timestamptz [null]
 
   indexes {
+    (user_id, client_generated_id) [unique]
     (user_id, created_at) [name: 'idx_cart_import_jobs_user_created']
   }
 
@@ -49,6 +59,7 @@ Table cart_recipe_ingredients as CartRecipeIngredients {
   cart_recipe_item_id uuid [not null, ref: > CartRecipeItems.id]
   ingredient_id uuid [not null, note: 'logical ref -> Recipe.ingredients.id']
   ingredient_name_snapshot varchar [not null]
+  source_line_path jsonb [not null, note: 'Parent line and leaf line, or leaf alone']
   base_amount_for_item decimal(12,3) [not null]
   base_unit varchar [not null]
 

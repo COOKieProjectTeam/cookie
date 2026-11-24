@@ -1,6 +1,6 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-10-20
+updated_at: 2026-11-24
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
   authority: docs/architecture/README.md
@@ -150,21 +150,18 @@ services:
       - nutrition.water.changed
     consumes: [account.deletion.requested]
     synchronous_dependencies: []
-    planned_synchronous_dependencies: [recipe, media]
+    planned_synchronous_dependencies: [recipe, media, meal_planner]
     implementation_note: Autonomous diary; Recipe import and Media attachments await real callees.
 
   - id: recipe
     name: Recipe Service
     kind: domain_service
     stateful: true
-    purpose: recipes, versions, personal customizations, favorites and cooking history
+    purpose: published recipes, author variants, ingredient snapshots, favorites and actual cooking yields
     openapi_tags: [recipes]
     dbml: contracts/dbml/recipe.dbml
-    publishes:
-      - recipe.customization.updated
-      - recipe.customization.deleted
     consumes: [account.deletion.requested]
-    synchronous_dependencies: [media]
+    synchronous_dependencies: [media, meal_planner]
 
   - id: shopping
     name: Shopping Service
@@ -175,8 +172,6 @@ services:
     dbml: contracts/dbml/shopping.dbml
     consumes:
       - account.deletion.requested
-      - recipe.customization.updated
-      - recipe.customization.deleted
     synchronous_dependencies: [recipe]
 
   - id: health
@@ -250,7 +245,7 @@ services:
     name: Meal Planner Service
     kind: domain_service
     stateful: true
-    purpose: asynchronous generation and execution of 14-day meal plans
+    purpose: 14-day plans, planned cooks and per-meal allocations
     openapi_tags: [meal-plan]
     dbml: contracts/dbml/meal-planner.dbml
     consumes: [account.deletion.requested]

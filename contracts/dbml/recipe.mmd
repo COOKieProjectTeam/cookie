@@ -33,15 +33,25 @@ erDiagram
     integer version_number
     varchar title
     text description
-    decimal default_servings
     integer prep_seconds
     integer cook_seconds
     varchar difficulty
     timestamptz published_at
   }
 
+  Variants {
+    uuid id PK
+    uuid recipe_version_id
+    varchar label
+    boolean is_default
+    decimal yield_amount
+    varchar yield_unit
+    varchar piece_label
+    decimal serving_amount
+  }
+
   VersionNutrition {
-    uuid recipe_version_id PK
+    uuid variant_id PK
     decimal calories_total
     decimal protein_total
     decimal fat_total
@@ -60,17 +70,25 @@ erDiagram
     integer position
   }
 
-  VersionIngredients {
+  VariantLines {
     uuid id PK
-    uuid recipe_version_id
+    uuid variant_id
     uuid ingredient_id
-    decimal amount_base
+    uuid subrecipe_variant_id
+    varchar layer
+    boolean optional
+    decimal input_amount
+    varchar input_unit
+    decimal prepared_amount
+    varchar prepared_unit
+    jsonb nutrient_basis
     integer position
   }
 
   Steps {
     uuid id PK
-    uuid recipe_version_id
+    uuid variant_id
+    uuid optional_line_id
     integer position
     text text
     integer duration_seconds
@@ -80,23 +98,6 @@ erDiagram
     uuid recipe_version_id
     varchar tag_type
     varchar tag_value
-  }
-
-  UserCustomizations {
-    uuid id PK
-    uuid user_id
-    uuid recipe_id
-    uuid base_recipe_version_id
-    bigint revision
-    timestamptz created_at
-    timestamptz updated_at
-  }
-
-  CustomizationIngredients {
-    uuid customization_id
-    uuid ingredient_id
-    decimal amount_base
-    integer position
   }
 
   Favorites {
@@ -115,10 +116,12 @@ erDiagram
   CookingSessions {
     uuid id PK
     uuid user_id
-    uuid recipe_id
-    integer recipe_version
-    bigint customization_revision
-    decimal servings
+    uuid variant_id
+    jsonb excluded_line_ids
+    uuid planned_cook_id
+    decimal ingredient_scale
+    decimal actual_yield_amount
+    varchar actual_yield_unit
     varchar status
     timestamptz started_at
     timestamptz completed_at
@@ -126,16 +129,15 @@ erDiagram
 
   Ingredients ||--o{ IngredientAllergens : "ingredient_id"
   Recipes ||--o{ Versions : "recipe_id"
-  Versions ||--|| VersionNutrition : "recipe_version_id"
+  Versions ||--o{ Variants : "recipe_version_id"
+  Variants ||--o| VersionNutrition : "variant_id"
   Versions ||--o{ VersionPhotos : "recipe_version_id"
-  Versions ||--o{ VersionIngredients : "recipe_version_id"
-  Ingredients ||--o{ VersionIngredients : "ingredient_id"
-  Versions ||--o{ Steps : "recipe_version_id"
+  Variants ||--o{ VariantLines : "variant_id"
+  Ingredients |o--o{ VariantLines : "ingredient_id"
+  Variants |o--o{ VariantLines : "subrecipe_variant_id"
+  Variants ||--o{ Steps : "variant_id"
+  VariantLines |o--o{ Steps : "optional_line_id"
   Versions ||--o{ Tags : "recipe_version_id"
-  Recipes ||--o{ UserCustomizations : "recipe_id"
-  Versions ||--o{ UserCustomizations : "base_recipe_version_id"
-  UserCustomizations ||--o{ CustomizationIngredients : "customization_id"
-  Ingredients ||--o{ CustomizationIngredients : "ingredient_id"
   Recipes ||--o{ Favorites : "recipe_id"
   Recipes ||--o{ Feedback : "recipe_id"
-  Recipes ||--o{ CookingSessions : "recipe_id"
+  Variants ||--o{ CookingSessions : "variant_id"
