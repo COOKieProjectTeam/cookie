@@ -21,7 +21,7 @@ tags:
   - name: diary
     description: Meals, food entries, saved dishes, and water.
   - name: recipes
-    description: Recipe discovery, personalization, and cooking.
+    description: Recipe discovery, editorial variants, and cooking.
   - name: shopping
     description: Shopping cart and ingredient list.
   - name: health
@@ -523,18 +523,78 @@ paths:
             schema:
               $ref: "#/components/schemas/AddRecipeToDiaryInput"
       responses:
+        "200":
+          description: Идентичный повтор возвращает текущую запись
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecipeDiaryFact'}
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          description: Источник временно недоступен при первом импорте
         "201":
           description: Приём пищи и блюдо из рецепта созданы
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MealCreatedResponse"
+                $ref: "#/components/schemas/RecipeDiaryFact"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /diary/dishes/{dishId}/recipe-amount:
+    patch:
+      tags: [diary]
+      operationId: updateDiaryRecipeAmount
+      summary: Пересчитать порцию по сохранённой базе блюда
+      parameters:
+        - {name: dishId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, consumedAmount]
+              properties:
+                version: {type: integer, format: int64, minimum: 1}
+                consumedAmount: {$ref: '#/components/schemas/OutputAmount'}
+      responses:
+        "200":
+          description: Актуальный факт
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecipeDiaryFact'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "409": {$ref: '#/components/responses/Conflict'}
+
+  /diary/plan-item-facts:
+    post:
+      tags: [diary]
+      operationId: listDiaryPlanItemFacts
+      summary: Прочитать действующие записи своего дневника по позициям плана, независимо от даты еды
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planItemIds]
+              properties:
+                planItemIds: {type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: {type: string, format: uuid}}
+      responses:
+        "200":
+          description: Все совпадения в дневнике текущего аккаунта; без совпадений возвращается пустой массив
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/RecipeDiaryFact'}}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
 
   /saved-dishes:
     get:
@@ -846,7 +906,14 @@ paths:
     get:
       tags: [recipes]
       operationId: getRecipe
-      summary: Получить рецепт (персонализированный, с учётом кастомизации пользователя)
+      summary: Получить состав и шаги выбранного авторского варианта
+      description: Без параметров возвращает текущую редакцию и вариант по умолчанию. При передаче variantId требуется recipeVersion. Исключать можно только необязательные строки выбранного варианта.
+      parameters:
+        - {name: recipeVersion, in: query, schema: {type: integer, minimum: 1}}
+        - {name: variantId, in: query, schema: {type: string, format: uuid}}
+        - name: excludedLineIds
+          in: query
+          schema: {type: array, uniqueItems: true, items: {type: string, format: uuid}}
       responses:
         "200":
           description: Рецепт
@@ -863,7 +930,7 @@ paths:
     get:
       tags: [recipes]
       operationId: searchIngredients
-      summary: Поиск канонических ингредиентов (для редактирования рецепта)
+      summary: Поиск кулинарных ингредиентов
       parameters:
         - name: q
           in: query
@@ -883,55 +950,6 @@ paths:
                 $ref: "#/components/schemas/IngredientPage"
         "401":
           $ref: "#/components/responses/Unauthorized"
-
-  /recipes/{recipeId}/customization:
-    parameters:
-      - name: recipeId
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-    put:
-      tags: [recipes]
-      operationId: setRecipeCustomization
-      summary: Задать пользовательскую кастомизацию ингредиентов рецепта
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RecipeCustomizationInput"
-      responses:
-        "200":
-          description: Рецепт с пересчитанным КБЖУ
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Recipe"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-    delete:
-      tags: [recipes]
-      operationId: deleteRecipeCustomization
-      summary: Сбросить кастомизацию, вернуться к оригинальному рецепту
-      parameters:
-        - $ref: "#/components/parameters/IfMatchRevision"
-      responses:
-        "204":
-          description: Кастомизация удалена
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
 
   /recipes/{recipeId}/favorite:
     parameters:
@@ -1014,18 +1032,18 @@ paths:
       tags: [recipes]
       operationId: startCookingSession
       summary: Начать готовку по рецепту
+      description: selection.recipeId должен совпадать с recipeId в пути. plannedCookId указывает на готовку своего аккаунта с тем же составом.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [servings]
+              required: [selection, ingredientScale]
               properties:
-                servings:
-                  type: number
-                  format: double
-                  minimum: 0.1
+                selection: {$ref: '#/components/schemas/RecipeSelection'}
+                ingredientScale: {type: number, minimum: 0, exclusiveMinimum: true}
+                plannedCookId: {type: string, format: uuid}
       responses:
         "201":
           description: Сессия готовки создана
@@ -1052,6 +1070,15 @@ paths:
       tags: [recipes]
       operationId: completeCookingSession
       summary: Завершить сессию готовки
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actualYield]
+              properties:
+                actualYield: {$ref: '#/components/schemas/OutputAmount'}
       responses:
         "200":
           description: Сессия завершена
@@ -1144,15 +1171,10 @@ paths:
             schema:
               type: object
               minProperties: 1
-              required: [recipeId, servings]
+              required: [selection, servings]
               properties:
-                recipeId:
-                  type: string
-                  format: uuid
-                servings:
-                  type: number
-                  format: double
-                  minimum: 0.1
+                selection: {$ref: '#/components/schemas/RecipeSelection'}
+                servings: {type: number, minimum: 0, exclusiveMinimum: true}
       responses:
         "201":
           description: Рецепт добавлен в корзину
@@ -1181,15 +1203,17 @@ paths:
     patch:
       tags: [shopping]
       operationId: updateCartRecipeServings
-      summary: Изменить количество порций рецепта в корзине
+      summary: Изменить порции или отметить готовую заготовку в этой позиции корзины
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [servings]
+              minProperties: 1
+              additionalProperties: false
               properties:
+                availablePrepLineIds: {type: array, uniqueItems: true, items: {type: string, format: uuid}}
                 servings:
                   type: number
                   format: double
@@ -1843,7 +1867,7 @@ paths:
     get:
       tags: [meal-plan]
       operationId: getMealPlanIngredients
-      summary: Предпросмотр ингредиентов плана за диапазон дней
+      summary: Предпросмотр покупки на полные объёмы уникальных запланированных готовок за диапазон дней
       parameters:
         - name: from
           in: query
@@ -1885,15 +1909,17 @@ paths:
     post:
       tags: [meal-plan]
       operationId: addMealPlanToCart
-      summary: Добавить рецепты плана за диапазон дней в корзину покупок (batch)
+      summary: Добавить в корзину каждую запланированную готовку из диапазона один раз
+      description: Идентичный повтор ключа возвращает ту же задачу. Другой диапазон с тем же ключом даёт 409. Пересечение разных запросов дедуплицируется по паре корзина и plannedCookId.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [from, to]
+              required: [from, to, clientGeneratedId]
               properties:
+                clientGeneratedId: {type: string, format: uuid}
                 from:
                   type: string
                   format: date
@@ -1907,6 +1933,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartImportJob"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -1981,13 +2009,6 @@ components:
       schema:
         type: integer
         minimum: 1
-    IfMatchRevision:
-      name: If-Match-Revision
-      in: header
-      required: true
-      schema:
-        type: integer
-        minimum: 0
 
   responses:
     BadRequest:
@@ -2577,7 +2598,14 @@ components:
           type: string
           format: uuid
         source:
-          $ref: "#/components/schemas/FoodRef"
+          oneOf:
+            - {$ref: '#/components/schemas/FoodRef'}
+            - type: object
+              required: [type, ingredientId, lineId]
+              properties:
+                type: {type: string, enum: [RECIPE_INGREDIENT]}
+                ingredientId: {type: string, format: uuid}
+                lineId: {type: string, format: uuid}
         name:
           type: string
         brand:
@@ -2673,6 +2701,7 @@ components:
         name:
           type: string
           nullable: true
+        recipeFact: {$ref: '#/components/schemas/RecipeDiaryFact'}
         photos:
           type: array
           items:
@@ -2792,22 +2821,46 @@ components:
               source:
                 $ref: "#/components/schemas/FoodRef"
 
+    DiaryRecipeSource:
+      oneOf:
+        - type: object
+          required: [selection]
+          additionalProperties: false
+          properties:
+            selection: {$ref: '#/components/schemas/RecipeSelection'}
+        - type: object
+          required: [cookingSessionId]
+          additionalProperties: false
+          properties:
+            cookingSessionId: {type: string, format: uuid}
+
     AddRecipeToDiaryInput:
       type: object
-      required: [recipeId, servings, localDate, eatenAt]
+      required: [source, consumedAmount, clientGeneratedId, eatenAt, localDate, timezone]
       properties:
-        recipeId:
-          type: string
-          format: uuid
-        servings:
-          type: number
-          format: double
-        localDate:
-          type: string
-          format: date
-        eatenAt:
-          type: string
-          format: date-time
+        source: {$ref: '#/components/schemas/DiaryRecipeSource'}
+        consumedAmount: {$ref: '#/components/schemas/OutputAmount'}
+        clientGeneratedId: {type: string, format: uuid}
+        planItemId: {type: string, format: uuid}
+        eatenAt: {type: string, format: date-time}
+        localDate: {type: string, format: date}
+        timezone: {type: string, description: IANA time zone}
+
+    RecipeDiaryFact:
+      type: object
+      required: [dishId, mealId, version, selection, basisYield, consumedAmount, eatenAt, localDate, nutrition]
+      properties:
+        dishId: {type: string, format: uuid}
+        mealId: {type: string, format: uuid}
+        version: {type: integer, format: int64, minimum: 1, description: Dish optimistic version}
+        selection: {$ref: '#/components/schemas/RecipeSelection'}
+        cookingSessionId: {type: string, format: uuid}
+        planItemId: {type: string, format: uuid}
+        basisYield: {$ref: '#/components/schemas/OutputAmount'}
+        consumedAmount: {$ref: '#/components/schemas/OutputAmount'}
+        eatenAt: {type: string, format: date-time}
+        localDate: {type: string, format: date}
+        nutrition: {$ref: './public/nutrition.yaml#/components/schemas/Nutrition'}
 
     SavedDishInput:
       type: object
@@ -2947,17 +3000,6 @@ components:
           type: string
           enum: [G, ML]
 
-    RecipeIngredientAmount:
-      type: object
-      required: [value, unit]
-      properties:
-        value:
-          type: number
-          minimum: 0
-        unit:
-          type: string
-          enum: [G, ML]
-
     IngredientPage:
       type: object
       required: [items, nextCursor]
@@ -2983,11 +3025,12 @@ components:
 
     RecipeSummary:
       type: object
-      required: [id, title, coverPhotoUrl, time, difficulty, nutritionPerServing]
+      required: [id, selection, title, coverPhotoUrl, time, difficulty, nutritionPerServing]
       properties:
         id:
           type: string
           format: uuid
+        selection: {$ref: '#/components/schemas/RecipeSelection'}
         title:
           type: string
         coverPhotoUrl:
@@ -3025,41 +3068,72 @@ components:
           type: integer
           nullable: true
 
-    RecipeIngredientLine:
+    RecipeSelection:
       type: object
-      required: [ingredient, amount]
+      additionalProperties: false
+      required: [recipeId, recipeVersion, variantId, excludedLineIds]
       properties:
-        ingredient:
-          $ref: "#/components/schemas/IngredientRef"
-        amount:
-          $ref: "#/components/schemas/RecipeIngredientAmount"
+        recipeId: {type: string, format: uuid}
+        recipeVersion: {type: integer, minimum: 1}
+        variantId: {type: string, format: uuid}
+        excludedLineIds: {type: array, uniqueItems: true, items: {type: string, format: uuid}}
+
+    OutputAmount:
+      type: object
+      required: [value, unit]
+      properties:
+        value: {type: number, minimum: 0, exclusiveMinimum: true}
+        unit: {type: string, enum: [G, ML, PIECE]}
+
+    AuthorVariant:
+      type: object
+      required: [id, label, isDefault, publishedYield, serving]
+      properties:
+        id: {type: string, format: uuid}
+        label: {type: string}
+        isDefault: {type: boolean}
+        publishedYield: {$ref: '#/components/schemas/OutputAmount'}
+        serving: {$ref: '#/components/schemas/OutputAmount'}
+        pieceLabel: {type: string}
+
+    RecipeIngredientLine:
+      oneOf:
+        - allOf:
+            - {$ref: '#/components/schemas/RecipeLineBase'}
+            - type: object
+              required: [ingredient]
+              properties:
+                ingredient: {$ref: '#/components/schemas/IngredientRef'}
+        - allOf:
+            - {$ref: '#/components/schemas/RecipeLineBase'}
+            - type: object
+              required: [subrecipe]
+              properties:
+                subrecipe: {$ref: '#/components/schemas/RecipeSelection'}
+
+    RecipeLineBase:
+      type: object
+      required: [lineId, layer, optional, amount]
+      properties:
+        lineId: {type: string, format: uuid}
+        layer: {type: string}
+        optional: {type: boolean}
+        amount: {$ref: '#/components/schemas/OutputAmount'}
+        preparedAmount: {$ref: '#/components/schemas/OutputAmount'}
 
     RecipeUserState:
       type: object
-      required: [favorite, feedback, customized, customization]
+      required: [favorite, feedback]
       properties:
         favorite:
           type: boolean
         feedback:
           type: string
           enum: [LIKE, DO_NOT_RECOMMEND, NONE]
-        customized:
-          type: boolean
-        customization:
-          type: object
-          nullable: true
-          properties:
-            basedOnVersion:
-              type: integer
-            revision:
-              type: integer
-              minimum: 0
-            updateAvailable:
-              type: boolean
 
     Recipe:
       type: object
-      required: [id, version, title, description, photos, servings, time, difficulty, mealTypes, dietTags, nutritionPerServing, ingredients, steps, userState]
+      required: [id, version, title, description, photos, selection, variants, resolvedYield, serving, allergens, nutritionTotal, servings, time, difficulty, mealTypes, dietTags, nutritionPerServing, ingredients, steps, userState]
       properties:
         id:
           type: string
@@ -3075,6 +3149,12 @@ components:
           items:
             type: string
             format: uri
+        selection: {$ref: '#/components/schemas/RecipeSelection'}
+        resolvedYield: {$ref: '#/components/schemas/OutputAmount'}
+        serving: {$ref: '#/components/schemas/OutputAmount'}
+        allergens: {type: array, uniqueItems: true, items: {type: string}}
+        nutritionTotal: {$ref: '#/components/schemas/Nutrition'}
+        variants: {type: array, minItems: 1, items: {$ref: '#/components/schemas/AuthorVariant'}}
         servings:
           type: number
         time:
@@ -3102,78 +3182,31 @@ components:
         userState:
           $ref: "#/components/schemas/RecipeUserState"
 
-    RecipeCustomizationInput:
-      type: object
-      required: [recipeVersion, revision, ingredients]
-      properties:
-        recipeVersion:
-          type: integer
-          minimum: 1
-        revision:
-          type: integer
-          minimum: 0
-        ingredients:
-          type: array
-          minItems: 1
-          items:
-            type: object
-            required: [ingredientId, amount]
-            properties:
-              ingredientId:
-                type: string
-                format: uuid
-              amount:
-                $ref: "#/components/schemas/RecipeIngredientAmount"
-
     CookingSession:
       type: object
-      required: [id, status, recipe, recipeVersion, customizationRevision, servings, startedAt, completedAt]
+      required: [id, status, selection, ingredientScale, startedAt]
+      description: actualYield and completedAt are required for a completed cook.
       properties:
-        id:
-          type: string
-          format: uuid
-        status:
-          type: string
-          enum: [IN_PROGRESS, COMPLETED, CANCELLED]
-        recipe:
-          $ref: "#/components/schemas/RecipeSummary"
-        recipeVersion:
-          type: integer
-        customizationRevision:
-          type: integer
-          nullable: true
-        servings:
-          type: number
-          minimum: 0.1
-        startedAt:
-          type: string
-          format: date-time
-        completedAt:
-          type: string
-          nullable: true
-          format: date-time
+        id: {type: string, format: uuid}
+        status: {type: string, enum: [IN_PROGRESS, COMPLETED, CANCELLED]}
+        selection: {$ref: '#/components/schemas/RecipeSelection'}
+        ingredientScale: {type: number, minimum: 0, exclusiveMinimum: true}
+        plannedCookId: {type: string, format: uuid}
+        actualYield: {$ref: '#/components/schemas/OutputAmount'}
+        startedAt: {type: string, format: date-time}
+        completedAt: {type: string, format: date-time}
 
     # ------------------------------------------------------------ shopping
     CartRecipe:
       type: object
-      required: [id, recipeId, recipeVersion, customizationRevision, title, servings]
+      required: [id, selection, title, servings, availablePrepLineIds]
       properties:
-        id:
-          type: string
-          format: uuid
-        recipeId:
-          type: string
-          format: uuid
-        recipeVersion:
-          type: integer
-        customizationRevision:
-          type: integer
-          nullable: true
-        title:
-          type: string
-        servings:
-          type: number
-          format: double
+        id: {type: string, format: uuid}
+        selection: {$ref: '#/components/schemas/RecipeSelection'}
+        availablePrepLineIds: {type: array, uniqueItems: true, items: {type: string, format: uuid}}
+        plannedCookId: {type: string, format: uuid}
+        title: {type: string}
+        servings: {type: number, minimum: 0, exclusiveMinimum: true}
 
     ShoppingListItem:
       type: object
@@ -3643,19 +3676,25 @@ components:
           nullable: true
           format: date-time
 
+    PlannedCook:
+      type: object
+      required: [id, cookDate, selection, ingredientScale, plannedYield]
+      properties:
+        id: {type: string, format: uuid}
+        cookDate: {type: string, format: date}
+        selection: {$ref: '#/components/schemas/RecipeSelection'}
+        ingredientScale: {type: number, minimum: 0, exclusiveMinimum: true}
+        plannedYield: {$ref: '#/components/schemas/OutputAmount'}
+
     MealPlanItem:
       type: object
-      required: [id, type, recipe, servings]
+      required: [id, type, recipe, plannedCook, plannedAmount]
       properties:
-        id:
-          type: string
-          format: uuid
-        type:
-          $ref: "#/components/schemas/MealType"
-        recipe:
-          $ref: "#/components/schemas/RecipeSummary"
-        servings:
-          type: number
+        id: {type: string, format: uuid}
+        type: {$ref: '#/components/schemas/MealType'}
+        recipe: {$ref: '#/components/schemas/RecipeSummary'}
+        plannedCook: {$ref: '#/components/schemas/PlannedCook'}
+        plannedAmount: {$ref: '#/components/schemas/OutputAmount'}
 
     MealPlanDay:
       type: object
@@ -3704,14 +3743,10 @@ components:
 
     MealPlanItemReplacementInput:
       type: object
-      required: [excludedRecipeIds]
+      required: [selection, plannedAmount]
       properties:
-        excludedRecipeIds:
-          type: array
-          uniqueItems: true
-          items:
-            type: string
-            format: uuid
+        selection: {$ref: '#/components/schemas/RecipeSelection'}
+        plannedAmount: {$ref: '#/components/schemas/OutputAmount'}
 
     CartImportJob:
       type: object

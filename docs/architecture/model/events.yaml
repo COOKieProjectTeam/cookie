@@ -1,6 +1,6 @@
 schema_version: 1
 model_status: target
-updated_at: 2026-09-17
+updated_at: 2026-11-24
 source:
   miro_board: https://miro.com/app/board/uXjVGuhJKXc=/
 
@@ -134,18 +134,6 @@ events:
     implementation_note: totalMl is an integer in [0, 2147483647]; overflow is rejected atomically by Nutrition. lastConsumedAt is explicitly null when totalMl is zero; complete snapshot, never a delta
 
     aggregate_version_required: true
-
-  - type: recipe.customization.updated
-    version: 1
-    producer: recipe
-    consumers: [shopping]
-    payload: [recipeId, userId, revision, ingredients]
-
-  - type: recipe.customization.deleted
-    version: 1
-    producer: recipe
-    consumers: [shopping]
-    payload: [recipeId, userId]
 
   - type: health.weight.changed
     version: 1

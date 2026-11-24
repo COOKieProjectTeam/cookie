@@ -30,15 +30,30 @@ erDiagram
     date local_date
   }
 
+  PlannedCooks {
+    uuid id PK
+    uuid plan_id
+    date cook_date
+    uuid recipe_id
+    integer recipe_version
+    uuid variant_id
+    jsonb excluded_line_ids
+    decimal ingredient_scale
+    decimal planned_yield_amount
+    varchar planned_yield_unit
+  }
+
   PlanItems {
     uuid id PK
     uuid meal_plan_day_id
     varchar meal_type
-    uuid recipe_id
-    integer recipe_version
-    decimal servings
+    uuid planned_cook_id
+    decimal planned_amount
+    varchar planned_unit
     integer position
   }
 
   Plans ||--o{ PlanDays : "meal_plan_id"
+  Plans ||--o{ PlannedCooks : "plan_id"
   PlanDays ||--o{ PlanItems : "meal_plan_day_id"
+  PlannedCooks ||--o{ PlanItems : "planned_cook_id"

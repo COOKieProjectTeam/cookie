@@ -3,7 +3,7 @@
 erDiagram
   Carts {
     uuid id PK
-    uuid user_id UK
+    uuid user_id
     timestamptz created_at
     timestamptz updated_at
   }
@@ -13,7 +13,10 @@ erDiagram
     uuid cart_id
     uuid recipe_id
     integer recipe_version
-    bigint customization_revision
+    uuid variant_id
+    jsonb excluded_line_ids
+    uuid planned_cook_id
+    jsonb available_prep_line_ids
     varchar recipe_title_snapshot
     decimal servings
     timestamptz created_at
@@ -23,6 +26,8 @@ erDiagram
   CartImportJobs {
     uuid id PK
     uuid user_id
+    uuid client_generated_id
+    varchar request_hash
     uuid meal_plan_id
     date from_date
     date to_date
@@ -37,6 +42,7 @@ erDiagram
     uuid cart_recipe_item_id
     uuid ingredient_id
     varchar ingredient_name_snapshot
+    jsonb source_line_path
     decimal base_amount_for_item
     varchar base_unit
   }
@@ -51,6 +57,6 @@ erDiagram
   }
 
   Carts ||--o{ CartRecipeItems : "cart_id"
-  Carts ||--o{ CartImportJobs : "cart_id"
+  Carts |o--o{ CartImportJobs : "cart_id"
   CartRecipeItems ||--o{ CartRecipeIngredients : "cart_recipe_item_id"
   Carts ||--o{ Adjustments : "cart_id"
